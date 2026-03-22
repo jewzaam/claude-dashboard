@@ -1,0 +1,10 @@
+{
+  "window_x": 100,
+  "window_y": 200,
+  "always_on_top": false,
+  "row_height": 40,
+  "row_width": 500,
+  "poll_interval_seconds": 3,
+  "color_working": "#223344",
+  "window_bg": "#111111"
+}

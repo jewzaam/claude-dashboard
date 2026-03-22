@@ -191,12 +191,12 @@ The transcript path is constructed directly from `sessions/{PID}.json` data — 
 
 ```
 Session file (sessions/{PID}.json)
-  → cwd (e.g., "C:\Users\jewza\source\claude-dashboard")
+  → cwd (e.g., "C:\Users\user\source\claude-dashboard")
   → sessionId (e.g., "5fda2c96-...")
 
 Encode CWD as project key:
   → Replace path separators and colons with dashes
-  → e.g., "C--Users-jewza-source-claude-dashboard"
+  → e.g., "C--Users-user-source-claude-dashboard"
 
 Construct transcript path:
   → ~/.claude/projects/{project_key}/{sessionId}.jsonl

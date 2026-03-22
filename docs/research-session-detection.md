@@ -39,7 +39,7 @@ PID-keyed JSON files, one per running session.
 {
   "pid": 46700,
   "sessionId": "5fda2c96-993d-4902-8c23-8d449fdc3654",
-  "cwd": "C:\\Users\\jewza\\source\\claude-dashboard",
+  "cwd": "C:\\Users\\user\\source\\claude-dashboard",
   "startedAt": 1774183458505
 }
 ```
@@ -103,7 +103,7 @@ When Claude wants to read `settings.json` and the user hasn't responded:
     "content": [{
       "type": "tool_use",
       "name": "Read",
-      "input": {"file_path": "C:\\Users\\jewza\\.claude\\settings.json"}
+      "input": {"file_path": "C:\\Users\\user\\.claude\\settings.json"}
     }]
   }
 }
