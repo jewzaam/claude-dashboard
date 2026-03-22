@@ -1,4 +1,4 @@
-# Implementation Plan: Claude Orchestrator
+# Implementation Plan: Claude Dashboard
 
 - **Date**: 2026-03-22
 - **Spec**: `docs/spec.md`
@@ -14,7 +14,7 @@ A cross-platform Python/Tkinter dashboard that discovers running Claude Code ses
 
 - **Language/Version**: Python 3.11+
 - **Primary Dependencies**: Tkinter (stdlib), psutil, pystray, Pillow
-- **Storage**: JSON settings file (`%APPDATA%/claude-orchestrator/settings.json` on Windows, `~/.config/claude-orchestrator/settings.json` on Linux)
+- **Storage**: JSON settings file (`%APPDATA%/claude-dashboard/settings.json` on Windows, `~/.config/claude-dashboard/settings.json` on Linux)
 - **Testing**: pytest, pytest-cov (80%+ coverage target per standards)
 - **Target Platform**: Windows 11, Linux (X11; Wayland deferred)
 - **Project Type**: Desktop application (single-user utility)
@@ -40,19 +40,19 @@ This project is self-contained. All data dependencies are core Claude CLI files 
 - `~/.claude/sessions/*.json` — session registry (PID, CWD, session ID)
 - `~/.claude/projects/{project}/{sessionId}.jsonl` — session transcripts
 
-No dependency on user-configured hooks, scripts, or external tooling. If future features need additional data from Claude (e.g., statusline metadata), the orchestrator will implement its own hooks. If a hook is not configured, functionality must degrade gracefully — never break.
+No dependency on user-configured hooks, scripts, or external tooling. If future features need additional data from Claude (e.g., statusline metadata), the dashboard will implement its own hooks. If a hook is not configured, functionality must degrade gracefully — never break.
 
 ## Project Structure
 
 ### Source Code
 
 ```text
-claude_orchestrator/
+claude_dashboard/
 ├── __init__.py
 ├── __main__.py              # Entry point (--debug, --quiet flags)
 ├── config.py                # Constants, defaults
 ├── settings.py              # Settings dataclass, JSON load/save
-├── controller.py            # Main orchestrator (poll loop, state management)
+├── controller.py            # Main dashboard (poll loop, state management)
 ├── session.py               # Session discovery, state detection
 ├── transcript.py            # Transcript JSONL parser, state machine
 ├── tray.py                  # System tray icon (pystray)
@@ -92,7 +92,7 @@ README.md
 
 | File | Responsibility | Pattern From d4-timer-w11 |
 |------|---------------|---------------------------|
-| `controller.py` | Central orchestrator: owns root Tk, poll loop, coordinates subsystems | `controller.py` — AppController |
+| `controller.py` | Central dashboard: owns root Tk, poll loop, coordinates subsystems | `controller.py` — AppController |
 | `settings.py` | Dataclass + atomic JSON I/O with validation | `settings.py` — Settings dataclass |
 | `session.py` | Read `sessions/*.json`, validate PIDs, resolve transcript paths | `api.py` — external data fetch |
 | `transcript.py` | Tail JSONL, apply state machine, return StatusState | New (no equivalent) |
@@ -191,12 +191,12 @@ The transcript path is constructed directly from `sessions/{PID}.json` data — 
 
 ```
 Session file (sessions/{PID}.json)
-  → cwd (e.g., "C:\Users\jewza\source\claude-orchestrator")
+  → cwd (e.g., "C:\Users\jewza\source\claude-dashboard")
   → sessionId (e.g., "5fda2c96-...")
 
 Encode CWD as project key:
   → Replace path separators and colons with dashes
-  → e.g., "C--Users-jewza-source-claude-orchestrator"
+  → e.g., "C--Users-jewza-source-claude-dashboard"
 
 Construct transcript path:
   → ~/.claude/projects/{project_key}/{sessionId}.jsonl
@@ -238,7 +238,7 @@ dev = [
 ]
 
 [project.scripts]
-claude-orchestrator = "claude_orchestrator.__main__:main"
+claude-dashboard = "claude_dashboard.__main__:main"
 ```
 
 ## Build Sequence

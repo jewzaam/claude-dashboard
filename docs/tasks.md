@@ -1,4 +1,4 @@
-# Tasks: Claude Orchestrator
+# Tasks: Claude Dashboard
 
 - **Input**: `docs/plan.md`, `docs/spec.md`, `docs/research-session-detection.md`
 - **Prerequisites**: Plan complete, spec clarified, session detection research verified
@@ -14,12 +14,12 @@
 
 **Purpose**: Project initialization and build tooling
 
-- [ ] T001 Create project directory structure per plan (`claude_orchestrator/`, `tests/`, `scripts/`)
+- [ ] T001 Create project directory structure per plan (`claude_dashboard/`, `tests/`, `scripts/`)
 - [ ] T002 Create `pyproject.toml` with dependencies (psutil, pystray, Pillow, dev deps)
 - [ ] T003 [P] Create `Makefile` with standard targets (check, install-dev, format, lint, typecheck, test, coverage)
 - [ ] T004 [P] Create `.gitignore` (venv, __pycache__, .mypy_cache, *.egg-info, settings.json)
 - [ ] T005 [P] Create `.github/workflows/` CI configs (test, lint, typecheck, format-check, coverage)
-- [ ] T006 Create `claude_orchestrator/__init__.py` and `claude_orchestrator/__main__.py` (entry point with `--debug`, `--quiet` flags)
+- [ ] T006 Create `claude_dashboard/__init__.py` and `claude_dashboard/__main__.py` (entry point with `--debug`, `--quiet` flags)
 
 **Checkpoint**: `make install-dev && make check` passes (empty test suite)
 
@@ -29,8 +29,8 @@
 
 **Purpose**: Core data types, settings, and config that all stories depend on
 
-- [ ] T007 Create `claude_orchestrator/config.py` — constants, paths (`CLAUDE_HOME`, `SESSIONS_DIR`), defaults
-- [ ] T008 Create `claude_orchestrator/settings.py` — Settings dataclass, `load_settings()`, `save_settings()` with atomic JSON I/O and validation
+- [ ] T007 Create `claude_dashboard/config.py` — constants, paths (`CLAUDE_HOME`, `SESSIONS_DIR`), defaults
+- [ ] T008 Create `claude_dashboard/settings.py` — Settings dataclass, `load_settings()`, `save_settings()` with atomic JSON I/O and validation
 - [ ] T009 [P] Create `tests/test_settings.py` — load/save roundtrip, defaults, missing file, invalid data, atomic write
 - [ ] T010 [P] Create `tests/fixtures/sample_session.json` — sample session registry entry
 - [ ] T011 [P] Create `tests/fixtures/sample_transcript.jsonl` — transcript entries covering all state machine transitions (working, idle, permission pending, denied, unknown)
@@ -44,7 +44,7 @@
 
 **Goal**: Discover running sessions, detect their state, display as rows in a dashboard
 
-**Independent Test**: Launch 3+ Claude sessions. Orchestrator shows all with correct CWD and status.
+**Independent Test**: Launch 3+ Claude sessions. Dashboard shows all with correct CWD and status.
 
 ### Tests for US1
 
@@ -53,21 +53,21 @@
 
 ### Implementation for US1
 
-- [ ] T015 [US1] Create `claude_orchestrator/session.py`:
+- [ ] T015 [US1] Create `claude_dashboard/session.py`:
   - `discover_sessions()` — read `~/.claude/sessions/*.json`, return list of SessionInfo
   - `validate_pid(pid)` — check PID is alive and is `claude.exe`/`claude`
   - `resolve_transcript_path(cwd, session_id)` — construct path from CWD encoding
-- [ ] T016 [US1] Create `claude_orchestrator/transcript.py`:
+- [ ] T016 [US1] Create `claude_dashboard/transcript.py`:
   - `detect_state(transcript_path)` — tail last N lines, apply state machine, return StatusState
   - `tail_jsonl(path, *, max_lines=10)` — efficient tail read (seek from end)
   - StatusState enum: Working, AwaitingInput, PermissionRequired, Unknown
-- [ ] T017 [US1] Create `claude_orchestrator/ui/main_window.py`:
+- [ ] T017 [US1] Create `claude_dashboard/ui/main_window.py`:
   - Dashboard window with dynamic row grid
   - Each row: CWD (relative to ~), status emoji, status color
   - Fixed row width, text truncation
   - Rows ordered by PID ascending
   - Rows added/removed/updated on each tick
-- [ ] T018 [US1] Create `claude_orchestrator/controller.py`:
+- [ ] T018 [US1] Create `claude_dashboard/controller.py`:
   - AppController: owns root Tk, poll loop via `root.after()`
   - `_tick()` — discover sessions, validate PIDs, detect states, update UI
   - Remove rows for dead PIDs
@@ -85,13 +85,13 @@
 
 ### Implementation for US2
 
-- [ ] T020 [US2] Create `claude_orchestrator/platform/base.py` — abstract interface: `detect_container(pid)`, `foreground_window(handle)`
-- [ ] T021 [US2] Create `claude_orchestrator/platform/windows.py`:
+- [ ] T020 [US2] Create `claude_dashboard/platform/base.py` — abstract interface: `detect_container(pid)`, `foreground_window(handle)`
+- [ ] T021 [US2] Create `claude_dashboard/platform/windows.py`:
   - `detect_container(pid)` — walk parent process chain, identify container type
   - `find_window(cwd, container)` — enumerate main VS Code process windows, match by CWD folder name in title
   - `foreground_window(hwnd)` — `SetForegroundWindow` with Alt-key fallback
   - Port logic from `scripts/detect_sessions.py`
-- [ ] T022 [P] [US2] Create `claude_orchestrator/platform/linux.py` — stub implementation with xdotool/wmctrl (basic, to be tested on Linux)
+- [ ] T022 [P] [US2] Create `claude_dashboard/platform/linux.py` — stub implementation with xdotool/wmctrl (basic, to be tested on Linux)
 - [ ] T023 [US2] Wire click handler in `ui/main_window.py` — row click calls `platform.foreground_window()`
 - [ ] T024 [US2] Cache container detection results — only re-detect on new sessions, not every tick
 
@@ -139,10 +139,10 @@
 
 ### Implementation for US5
 
-- [ ] T031 [US5] Create `claude_orchestrator/tray.py` — pystray icon, context menu (Show, Settings, Quit)
+- [ ] T031 [US5] Create `claude_dashboard/tray.py` — pystray icon, context menu (Show, Settings, Quit)
 - [ ] T032 [US5] Wire close button to minimize-to-tray instead of exit
 - [ ] T033 [US5] Implement tray icon attention indicator — change icon/color when any session is in PermissionRequired state
-- [ ] T034 [US5] Create `claude_orchestrator/ui/settings_window.py` — modal dialog for all configurable values
+- [ ] T034 [US5] Create `claude_dashboard/ui/settings_window.py` — modal dialog for all configurable values
 - [ ] T035 [US5] Wire Settings menu item to open settings_window
 
 **Checkpoint**: Full P2 complete. Tray persistence, attention indicator, settings editor.
@@ -157,7 +157,7 @@
 - [ ] T037 [P] Create `README.md` per standards (badges, install, usage)
 - [ ] T038 Run `make check` — ensure all targets pass (format, lint, typecheck, test, coverage ≥ 80%)
 - [ ] T039 Verify GitHub workflows pass
-- [ ] T040 End-to-end validation: launch orchestrator, start/stop sessions, click to navigate, close to tray, edit settings, restart
+- [ ] T040 End-to-end validation: launch dashboard, start/stop sessions, click to navigate, close to tray, edit settings, restart
 
 ---
 

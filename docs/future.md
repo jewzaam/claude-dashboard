@@ -1,18 +1,18 @@
-# Claude Orchestrator — Future Work
+# Claude Dashboard — Future Work
 
 > Ideas and features deferred from MVP. Captured from initial voice transcript, 2026-03-22.
 
 ## Interactive Features
 
-### Permission Handling in Orchestrator
+### Permission Handling in Dashboard
 - Expand a session row to see the pending permission request (the command being requested)
-- Accept or deny the permission directly from the orchestrator UI
+- Accept or deny the permission directly from the dashboard UI
 - Eliminates need to switch to the Claude terminal for permission prompts
 - **Open question**: How to communicate approval/denial back to the Claude process (stdin injection? hooks? file-based signaling?)
 
 ### Input Injection
 - When Claude is waiting for user input, show the last response in an expandable panel
-- Allow typing a reply directly in the orchestrator
+- Allow typing a reply directly in the dashboard
 - Inject that text as if typed in the Claude terminal
 - **Open question**: stdin injection is hacky. Alternatives — hooks, file-watch convention, Claude Code API
 

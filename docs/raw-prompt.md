@@ -1,4 +1,4 @@
-# Raw Prompt — Claude Orchestrator
+# Raw Prompt — Claude Dashboard
 
 > Voice transcript captured 2026-03-22. Unedited.
 

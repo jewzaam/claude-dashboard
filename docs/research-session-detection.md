@@ -39,7 +39,7 @@ PID-keyed JSON files, one per running session.
 {
   "pid": 46700,
   "sessionId": "5fda2c96-993d-4902-8c23-8d449fdc3654",
-  "cwd": "C:\\Users\\jewza\\source\\claude-orchestrator",
+  "cwd": "C:\\Users\\jewza\\source\\claude-dashboard",
   "startedAt": 1774183458505
 }
 ```
@@ -175,7 +175,7 @@ Code.exe (VS Code)
 1. Walk parent PIDs via `psutil` from Claude PID → bash → bash → Code.exe (utility) → Code.exe (main)
 2. VS Code uses a single main process (parent=explorer.exe) that owns all windows. Renderer/utility subprocesses do NOT own windows.
 3. Enumerate visible windows on the main process via `EnumWindows` + `GetWindowTextW`
-4. Match CWD folder name against window titles (e.g., `claude-orchestrator` matches `...claude-orchestrator - Visual Studio Code`)
+4. Match CWD folder name against window titles (e.g., `claude-dashboard` matches `...claude-dashboard - Visual Studio Code`)
 5. `SetForegroundWindow` with Alt-key fallback for foreground permission restrictions
 
 Key finding: all VS Code terminals route through a single `--type=utility` Code.exe subprocess regardless of which VS Code window they belong to. Window matching must use title-based CWD matching, not process tree alone.
@@ -223,7 +223,7 @@ For instant permission detection (no polling lag), configure a hook:
   "hooks": {
     "PreToolUse": [{
       "matcher": "",
-      "hooks": [{"type": "command", "command": "...write event to orchestrator pipe..."}]
+      "hooks": [{"type": "command", "command": "...write event to dashboard pipe..."}]
     }]
   }
 }

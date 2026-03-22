@@ -1,4 +1,4 @@
-# Claude Orchestrator Constitution
+# Claude Dashboard Constitution
 
 ## Core Principles
 
@@ -6,7 +6,7 @@
 Every feature must work on Windows 11 and Linux. Platform-specific code is isolated behind abstractions — never scattered through the codebase. If a feature can't be made cross-platform, it's gated by platform detection and degrades gracefully.
 
 ### II. Low Profile
-The orchestrator is a utility, not a main application. Minimal resource usage, small visual footprint, no unsolicited noise. The user controls when to look and when to act. No popups, no sounds, no notifications unless explicitly configured.
+The dashboard is a utility, not a main application. Minimal resource usage, small visual footprint, no unsolicited noise. The user controls when to look and when to act. No popups, no sounds, no notifications unless explicitly configured.
 
 ### III. Proven Stack
 Python + Tkinter. Patterns proven in d4-timer-w11: dataclass settings with atomic JSON persistence, threaded polling with tkinter `after()` callbacks, lazy window creation, dynamic row management via grid. No framework churn — use what works.
