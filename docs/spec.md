@@ -1,0 +1,163 @@
+# Feature Specification: Claude Orchestrator
+
+**Created**: 2026-03-22
+**Status**: Draft
+**Version**: 0.1.0
+**Input**: Voice transcript (see `raw-prompt.md`)
+
+## User Scenarios & Testing
+
+### User Story 1 — Session Awareness Dashboard (Priority: P1)
+
+As a user running multiple Claude Code sessions across terminals and VS Code instances, I want a persistent, always-available dashboard that shows every active session with its workspace and current status, so I can see at a glance what needs my attention without hunting through windows.
+
+**Why this priority**: This is the core value proposition. Without session discovery and display, nothing else matters. Replaces the failed OS notification approach (noisy, ungrouped, not actionable).
+
+**Independent Test**: Launch 3+ Claude sessions in different directories. The orchestrator shows all of them with correct CWD and status indicators. Close one session — it disappears or shows as stopped.
+
+**Acceptance Scenarios**:
+
+1. **Given** the orchestrator is running and 3 Claude sessions are active, **When** I look at the dashboard, **Then** I see 3 rows, each showing the session's workspace directory and a status indicator.
+2. **Given** a Claude session is actively processing, **When** I view its row, **Then** it shows the "working" indicator (🔄) with the corresponding row color.
+3. **Given** a Claude session is waiting for user input, **When** I view its row, **Then** it shows the "awaiting input" indicator (❓).
+4. **Given** a Claude session has a pending permission prompt, **When** I view its row, **Then** it shows the "permission required" indicator (⚠️).
+5. **Given** a Claude session terminates, **When** the next poll cycle runs, **Then** the row disappears (removed, not shown as stopped).
+6. **Given** the orchestrator cannot determine a session's status, **When** I view its row, **Then** it shows an "unknown" indicator (🤷).
+7. **Given** I have configured custom row height, width, and colors in settings, **When** the dashboard renders, **Then** it uses my configured values.
+8. **Given** text in a row exceeds the configured fixed width, **When** the row renders, **Then** the text is truncated (not wrapped, not expanding the row width).
+
+---
+
+### User Story 2 — Session Navigation (Priority: P1)
+
+As a user with sessions spread across VS Code instances and virtual desktops, I want to click a session row and have the containing application (VS Code window, terminal) become the foreground window, so I can immediately interact with that session without manually searching.
+
+**Why this priority**: The primary pain point is finding the right session among many. Discovery without navigation solves only half the problem.
+
+**Independent Test**: Run Claude in two different VS Code windows on different virtual desktops. Click each row — the correct VS Code instance comes to the foreground, switching virtual desktops if needed.
+
+**Acceptance Scenarios**:
+
+1. **Given** a Claude session is running inside VS Code (Git Bash) on Windows, **When** I click its row, **Then** that VS Code window becomes the foreground window.
+2. **Given** a Claude session is running in a terminal emulator on Linux, **When** I click its row, **Then** that terminal window becomes the foreground window.
+3. **Given** the target window is on a different virtual desktop, **When** I click the row, **Then** the OS switches to that desktop and foregrounds the window.
+4. **Given** a Claude session is running inside `screen` on Linux, **When** I click its row, **Then** the terminal hosting that screen session is foregrounded. **Note**: We foreground the terminal window only — we do not attempt to switch to a specific `screen` window within the screen session.
+5. **Given** two Claude sessions share the same containing process (e.g., two terminals in one VS Code instance), **When** I click either row, **Then** the same VS Code window is foregrounded. Each session remains an independent row.
+
+---
+
+### User Story 3 — Persistent Settings & Window Position (Priority: P1)
+
+As a user, I want my dashboard configuration (row dimensions, colors, emoji choices, window position, poll interval) to persist across restarts, so I don't have to reconfigure every time.
+
+**Why this priority**: Fundamental UX requirement. Without persistence, the orchestrator becomes a nuisance to use.
+
+**Independent Test**: Configure settings, reposition the window, restart the orchestrator. Everything restores.
+
+**Acceptance Scenarios**:
+
+1. **Given** I move the orchestrator window to a specific position, **When** I close and reopen it, **Then** it appears at the same position.
+2. **Given** I change row height/width/colors/poll interval in settings, **When** I restart, **Then** settings are preserved.
+3. **Given** a settings file does not exist, **When** the orchestrator starts, **Then** it uses sensible defaults and creates the settings file.
+4. **Given** I right-click the system tray icon and select "Settings", **When** the settings window opens, **Then** I can edit all configurable values (row height, width, colors, emojis, poll interval, always-on-top) in a modal dialog.
+
+---
+
+### User Story 4 — Container Process Indicator (Priority: P2)
+
+As a user, I want each session row to show an icon or indicator of the containing process (VS Code, terminal emulator, etc.) so I know what window will appear when I click the row.
+
+**Why this priority**: Usability — with many sessions, knowing whether clicking will bring up VS Code vs a terminal vs something else helps set expectations. The process tree already provides this data.
+
+**Independent Test**: Run Claude in VS Code and in a standalone terminal. Each row shows the correct container icon.
+
+**Acceptance Scenarios**:
+
+1. **Given** a Claude session is running inside VS Code, **When** I view its row, **Then** I see a VS Code icon or label.
+2. **Given** a Claude session is running in a standalone terminal, **When** I view its row, **Then** I see a terminal icon or label.
+3. **Given** the containing process cannot be identified, **When** I view its row, **Then** a generic/unknown icon is shown.
+
+---
+
+### User Story 5 — System Tray Persistence (Priority: P2)
+
+As a user, I want the orchestrator to minimize to the system tray when closed, and indicate via the tray icon when something needs my attention, so it stays out of the way but remains accessible.
+
+**Why this priority**: The orchestrator should be persistent but not take up taskbar space. The d4-timer-w11 reference project already implements this pattern with pystray.
+
+**Independent Test**: Close the orchestrator window. It appears in the system tray. A session enters "permission required" state. The tray icon changes to indicate attention needed. Double-click the tray icon to restore the window.
+
+**Acceptance Scenarios**:
+
+1. **Given** the orchestrator is open, **When** I close the window, **Then** it minimizes to the system tray and continues running.
+2. **Given** any session enters a state requiring attention (permission pending, question asked), **When** I look at the tray icon, **Then** it shows a notification indicator (dot, badge, or color change).
+3. **Given** no sessions need attention, **When** I look at the tray icon, **Then** it shows the default/idle icon.
+4. **Given** the orchestrator is in the tray, **When** I double-click the tray icon, **Then** the dashboard window reopens at its saved position.
+
+---
+
+### Edge Cases
+
+- **Session starts/stops between polls**: The dashboard shows state as of the last poll. If a session started and stopped between two polls, it was never visible. This is acceptable — if the session file was cleaned up, there's nothing to show.
+- **Unknown status**: If status cannot be inferred from the transcript, show the "unknown" indicator (🤷). Do not guess.
+- **Process foregrounding fails**: Show a brief error or do nothing. Do not crash.
+- **Two sessions share the same CWD**: Display as independent rows. Order deterministically by PID (lower PID first). Both rows click-navigate to the same containing window if they share a parent process.
+- **No running Claude sessions**: Show an empty dashboard (no rows). Not an error state.
+- **Lock screen**: No special behavior. The orchestrator is not visible on the lock screen.
+
+## Clarifications
+
+### Session 2026-03-22
+
+- Q: Should terminated sessions disappear or show as stopped? → A: Disappear immediately (row removed when PID is dead).
+- Q: How does the user edit settings? → A: Modal settings window accessible from tray right-click menu.
+- Q: What is the default poll interval? → A: 5 seconds.
+- Q: What should the row label show for CWD? → A: Path relative to `~` (e.g., `~/source/claude-orchestrator`).
+- Q: How is session-tracker metadata (cost, context %, rate limits) displayed? → A: Not displayed in MVP. Read internally for future use.
+
+## Requirements
+
+### Functional Requirements
+
+- **FR-001**: System MUST discover sessions by reading `~/.claude/sessions/*.json` (PID, CWD, session ID, start time)
+- **FR-002**: System MUST display each session as a row in a vertical stack
+- **FR-003**: Each row MUST show the session's workspace directory as a path relative to `~` (e.g., `~/source/claude-orchestrator`)
+- **FR-004**: Each row MUST show a status indicator (emoji + row color)
+- **FR-005**: Status states MUST include: Working, Awaiting Input, Permission Required, Unknown. Dead sessions are removed (no Stopped state displayed).
+- **FR-006**: Row width MUST be fixed (configurable, not dynamic). Text exceeding width is truncated.
+- **FR-007**: System MUST persist settings to a JSON file (row height, width, colors, emojis, window position, poll interval)
+- **FR-008**: System MUST restore window position on restart
+- **FR-009**: System MUST support always-on-top mode (user-togglable)
+- **FR-010**: System MUST work on Windows 11 and Linux
+- **FR-011**: System MUST use Python and Tkinter
+- **FR-012**: Clicking a row MUST bring the containing application window to the foreground
+- **FR-013**: System MUST handle parent process chain traversal (Claude → shell → VS Code / terminal)
+- **FR-014**: System MUST handle virtual desktop switching when foregrounding
+- **FR-015**: System MUST detect session state by tailing `~/.claude/projects/{project}/{sessionId}.jsonl` (transcript) — the last entries determine state per the state machine in `research-session-detection.md`
+- **FR-016**: System MUST poll for session changes at a user-configurable interval (default: 5 seconds)
+- **FR-017**: System MUST validate session PIDs are still alive (cross-reference with OS process list) to handle stale session files
+- **FR-018**: [DEFERRED] Enriched metadata (model, cost, context window %, rate limits) is not consumed in MVP. If needed later, the orchestrator will configure its own statusline hook rather than depending on external tooling.
+- **FR-019**: [REMOVED — was session-tracker date rollover, no longer applicable]
+- **FR-020**: System MUST NOT read files it does not need access to — in particular, `~/.claude/ide/*.lock` files contain auth tokens and must never be read
+- **FR-021**: Each row MUST show the containing process type (VS Code, terminal, etc.) as an icon or label
+- **FR-022**: System MUST minimize to system tray on close, with tray icon reflecting aggregate attention state
+- **FR-023**: Rows MUST be ordered deterministically by PID (ascending)
+- **FR-024**: System MUST handle the denial flow — when a tool use is rejected (with or without user text), the state transitions back to Working (if user provided text) or Idle (if no text / end_turn)
+
+### Key Entities
+
+- **Session**: A running Claude Code process. Attributes: PID, CWD, status, parent window handle, container process type, session ID, slug (human-readable name), start time.
+- **Settings**: User preferences. Attributes: row height, row width, status colors (per-state), status emojis (per-state), window position (x, y), always-on-top flag, poll interval.
+- **StatusState**: Enum of session states: Working, AwaitingInput, PermissionRequired, Unknown. (Dead sessions are removed, not displayed.)
+- **ContainerType**: Enum of containing process types: VSCode, Terminal, GitBash, Screen, Unknown.
+
+## Success Criteria
+
+### Measurable Outcomes
+
+- **SC-001**: All running Claude sessions appear in the dashboard within one poll cycle of starting
+- **SC-002**: Clicking a session row foregrounds the correct window within 1 second on both Windows and Linux
+- **SC-003**: Settings and window position survive application restart with no data loss
+- **SC-004**: The orchestrator uses < 1% CPU at idle
+- **SC-005**: The dashboard updates status indicators within one poll cycle of a state change
+- **SC-006**: The user can identify which session needs attention without reading text (via color + emoji alone)
