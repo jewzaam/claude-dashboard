@@ -34,7 +34,8 @@ HTTP hooks are documented by Claude Code but don't work in practice (tested 2026
 | `claude_dashboard/controller.py` | Session lifecycle, hook wiring, UI coordination |
 | `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers |
 | `claude_dashboard/ui/main_window.py` | Dashboard window with session rows |
-| `claude_dashboard/ui/settings_window.py` | Modal settings editor with color pickers |
+| `claude_dashboard/ui/settings_window.py` | Modal settings editor |
+| `claude_dashboard/ui/color_picker.py` | Custom color picker with palette grid, hex entry, live preview |
 | `claude_dashboard/tray.py` | System tray icon |
 | `claude_dashboard/platform/base.py` | Platform dispatch (ContainerType enum) |
 | `claude_dashboard/platform/windows.py` | Win32 window foregrounding |
