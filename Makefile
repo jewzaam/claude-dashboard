@@ -53,4 +53,4 @@ run: ## Start the app
 	$(PYTHON) -m claude_dashboard
 
 run-debug: ## Start the app with debug logging
-	$(PYTHON) -m claude_dashboard --debug
+	$(PYTHON) -m claude_dashboard --debug 2> claude-dashboard-stderr.log > claude-dashboard-stdout.log

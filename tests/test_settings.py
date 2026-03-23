@@ -93,3 +93,14 @@ class TestSaveSettings:
         save_settings(original, path=tmp_settings_path)
         loaded = load_settings(path=tmp_settings_path)
         assert loaded.color_ready == "#00ff00"
+
+
+class TestRunOnStartup:
+    def test_default_is_false(self):
+        assert Settings().run_on_startup is False
+
+    def test_roundtrip(self, tmp_settings_path):
+        original = Settings(run_on_startup=True)
+        save_settings(original, path=tmp_settings_path)
+        loaded = load_settings(path=tmp_settings_path)
+        assert loaded.run_on_startup is True

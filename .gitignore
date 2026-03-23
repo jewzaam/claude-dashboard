@@ -24,3 +24,5 @@ htmlcov/
 settings.local.json
 
 .obsidian
+
+*.log

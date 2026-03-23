@@ -21,6 +21,7 @@ from claude_dashboard.session import (
     validate_pid,
 )
 from claude_dashboard.settings import Settings, load_settings, save_settings
+from claude_dashboard.startup import set_run_on_startup
 from claude_dashboard.config import StatusState
 from claude_dashboard.tray import create_tray_icon, update_tray_icon
 from claude_dashboard.ui.main_window import MainWindow
@@ -32,12 +33,13 @@ logger = logging.getLogger(__name__)
 class _SessionEntry:
     """Tracks a live session: its info, container, and current state."""
 
-    __slots__ = ("session", "container", "state")
+    __slots__ = ("session", "container", "state", "hidden")
 
     def __init__(self, session: SessionInfo):
         self.session = session
         self.container: ContainerInfo | None = None
         self.state: StatusState = StatusState.UNKNOWN
+        self.hidden: bool = False
 
 
 class AppController:
@@ -75,6 +77,9 @@ class AppController:
             port=config.HOOK_PORT,
         )
 
+        # Sync OS auto-start with settings
+        set_run_on_startup(self._settings.run_on_startup)
+
         # Tray
         self._tray_icon = create_tray_icon(
             on_show=lambda icon, item: self._root.after(0, self._show_window),
@@ -84,13 +89,10 @@ class AppController:
         )
         self._tray_state: StatusState | None = None
 
-        # Context menu
+        # Context menu (rebuilt dynamically in _on_right_click)
         self._context_menu = tk.Menu(self._root, tearoff=0)
-        self._context_menu.add_command(label="Show", command=self._menu_show)
-        self._context_menu.add_command(label="Hide", command=self._menu_hide)
-        self._context_menu.add_command(label="Settings", command=self._menu_settings)
-        self._context_menu.add_separator()
-        self._context_menu.add_command(label="Quit", command=self._menu_quit)
+        self._sessions_menu = tk.Menu(self._context_menu, tearoff=0)
+        self._session_vars: list[tk.BooleanVar] = []
 
     # ------------------------------------------------------------------
     # Main loop
@@ -246,14 +248,23 @@ class AppController:
     # UI refresh
     # ------------------------------------------------------------------
 
-    def _refresh_ui(self):
-        session_states = sorted(
-            [(entry.session, entry.state, entry.container) for entry in self._sessions.values()],
-            key=lambda t: cwd_relative_to_home(t[0].cwd).lower(),
+    def _sorted_entries(self) -> list["_SessionEntry"]:
+        """Return all session entries sorted by display name."""
+        return sorted(
+            self._sessions.values(),
+            key=lambda e: cwd_relative_to_home(e.session.cwd).lower(),
         )
-        self._main_window.update_sessions(session_states)
 
-        highest = self._highest_priority_state(session_states)
+    def _refresh_ui(self):
+        all_entries = self._sorted_entries()
+        visible_states = [
+            (entry.session, entry.state, entry.container)
+            for entry in all_entries
+            if not entry.hidden
+        ]
+        self._main_window.update_sessions(visible_states)
+
+        highest = self._highest_priority_state(visible_states)
         if highest != self._tray_state:
             self._tray_state = highest
             update_tray_icon(self._tray_icon, color=self._tray_color_for_state(highest))
@@ -289,29 +300,55 @@ class AppController:
     # ------------------------------------------------------------------
 
     def _on_right_click(self, x: int, y: int):
+        # Rebuild Sessions submenu with current sessions
+        self._sessions_menu.destroy()
+        self._sessions_menu = tk.Menu(self._context_menu, tearoff=0)
+        self._session_vars.clear()
+        all_entries = self._sorted_entries()
+        for entry in all_entries:
+            var = tk.BooleanVar(value=not entry.hidden)
+            self._session_vars.append(var)
+            display_name = cwd_relative_to_home(entry.session.cwd)
+
+            def make_toggle(e=entry, v=var):
+                def toggle():
+                    e.hidden = not v.get()
+                    self._refresh_ui()
+
+                return toggle
+
+            self._sessions_menu.add_checkbutton(
+                label=display_name,
+                variable=var,
+                command=make_toggle(),
+            )
+
+        # Rebuild context menu
+        self._context_menu.delete(0, tk.END)
+        self._context_menu.add_cascade(label="Sessions", menu=self._sessions_menu)
+        self._context_menu.add_separator()
+        self._context_menu.add_command(label="Show", command=self._menu_show)
+        self._context_menu.add_command(label="Hide", command=self._menu_hide)
+        self._context_menu.add_command(label="Settings", command=self._menu_settings)
+        self._context_menu.add_separator()
+        self._context_menu.add_command(label="Quit", command=self._menu_quit)
+
         try:
             self._context_menu.tk_popup(x, y)
         finally:
             self._context_menu.grab_release()
 
-    def _dismiss_menu(self):
-        self._context_menu.unpost()
-
     def _menu_show(self):
-        self._dismiss_menu()
         self._show_window()
 
     def _menu_hide(self):
-        self._dismiss_menu()
         self._hide_window()
 
     def _menu_settings(self):
-        self._dismiss_menu()
         self._open_settings()
 
     def _menu_quit(self):
-        self._dismiss_menu()
-        self._quit()
+        self._root.after(0, self._quit)
 
     # ------------------------------------------------------------------
     # Window management
@@ -329,6 +366,7 @@ class AppController:
     def _on_settings_save(self, new_settings: Settings):
         self._settings = new_settings
         self._save_settings_safe()
+        set_run_on_startup(new_settings.run_on_startup)
         self._main_window.apply_settings(new_settings)
         self._refresh_ui()
         logger.info("settings saved and applied")
