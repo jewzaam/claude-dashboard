@@ -48,6 +48,7 @@ class MainWindow:
         self._on_position_save = on_position_save
         self._on_right_click = on_right_click
         self._rows: dict[int, dict[str, Any]] = {}
+        self._row_order: list[int] = []
         self._drag_start_x = 0
         self._drag_start_y = 0
         self._dragged = False  # True if mouse moved significantly since button-down
@@ -181,10 +182,12 @@ class MainWindow:
         sessions: list[tuple[SessionInfo, StatusState, ContainerInfo | None]],
     ):
         current_pids = {s.pid for s, _, _ in sessions}
+        changed = False
 
         # Remove stale rows
         for pid in set(self._rows.keys()) - current_pids:
             self._remove_row(pid)
+            changed = True
 
         # Add or update rows
         for session, state, container in sessions:
@@ -192,13 +195,18 @@ class MainWindow:
                 self._update_row(session, state, container)
             else:
                 self._add_row(session, state, container)
+                changed = True
 
-        # Re-order rows to match the sorted session list
-        for session, _, _ in sessions:
-            row = self._rows.get(session.pid)
-            if row:
-                row["frame"].pack_forget()
-                row["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
+        # Re-order rows only if the order changed
+        desired_order = [s.pid for s, _, _ in sessions]
+        if desired_order != self._row_order:
+            for session, _, _ in sessions:
+                row = self._rows.get(session.pid)
+                if row:
+                    row["frame"].pack_forget()
+                    row["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
+            self._row_order = desired_order
+            changed = True
 
         # Empty state label
         if sessions:
@@ -206,10 +214,17 @@ class MainWindow:
         else:
             self._empty_label.pack(pady=10)
 
+        # Only recalculate geometry when rows were added/removed/reordered
+        if not changed:
+            return
+
         # Resize height, preserve position (or anchor bottom edge if grow_up)
         self._window.update_idletasks()
         old_height = self._window.winfo_height()
-        new_height = max(1, len(sessions) * (self._settings.row_height + _ROW_PAD_Y * 2))
+        if sessions:
+            new_height = len(sessions) * (self._settings.row_height + _ROW_PAD_Y * 2)
+        else:
+            new_height = self._settings.row_height + _ROW_PAD_Y * 2
         x = self._window.winfo_x()
         y = self._window.winfo_y()
 
