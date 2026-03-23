@@ -25,7 +25,7 @@
 ### Sub-Agent Awareness
 - The main Claude process can be "done" (idle) while background sub-agents are still running. Current state detection may show the session as idle when significant work is in progress.
 - **Why**: Without this, the user has no visibility into ongoing background work. A session that looks idle may actually have 5 agents churning. The user can't make informed decisions about when to interact or wait.
-- **Open question**: How are sub-agents represented in the transcript or process list? Are they child processes of claude.exe, or are they API-level constructs invisible to the OS? Need to investigate whether sub-agent count/status is discoverable from the transcript JSONL (sub-agent entries exist in `{sessionId}/subagents/`).
+- **Open question**: How are sub-agents represented in the process list or hook events? Are they child processes of claude.exe, or are they API-level constructs invisible to the OS? `SubagentStart` and `SubagentStop` hook events are now wired but not yet consumed by the dashboard. Sub-agent entries also exist in `{sessionId}/subagents/` directories.
 - Desired display: indicator showing "waiting on N agents" with some visual signal that work is happening even though the main prompt is idle.
 
 ### Elapsed Time Indicator
@@ -51,13 +51,8 @@
 
 ## Technical Investigation Needed
 
-### Session Status Detection
-- How does Claude Code expose its current state?
-- Options to investigate:
-  - Claude Code status line / internal state files
-  - Hooks that fire on state changes
-  - Polling process state and inferring from behavior
-  - Claude Code MCP or API for session metadata
+### Session Status Detection — RESOLVED
+- **Resolved (2026-03-22)**: State detection uses Claude Code command hooks via `scripts/hook_relay.py` → HTTP POST to `hook_server.py`. HTTP hooks (documented by Claude Code) don't work in practice. Transcript parsing was the original approach but was replaced by hooks during live testing. See `docs/research-session-detection.md` for the full evolution.
 
 ### Process Foregrounding Edge Cases
 - `screen` sessions on Linux — can we activate the terminal hosting the screen session?

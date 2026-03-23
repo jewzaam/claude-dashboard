@@ -8,7 +8,7 @@
 
 ## Summary
 
-A cross-platform Python/Tkinter dashboard that discovers running Claude Code sessions via `~/.claude/sessions/*.json`, detects their state via HTTP hooks from Claude Code, displays them as a configurable vertical stack of rows, and enables click-to-foreground navigation by walking the process tree to the containing application window.
+A cross-platform Python/Tkinter dashboard that discovers running Claude Code sessions via `~/.claude/sessions/*.json`, detects their state via command hooks relayed through `scripts/hook_relay.py` to a local HTTP server, displays them as a configurable vertical stack of rows, and enables click-to-foreground navigation by walking the process tree to the containing application window.
 
 ## Technical Context
 
@@ -19,7 +19,7 @@ A cross-platform Python/Tkinter dashboard that discovers running Claude Code ses
 - **Target Platform**: Windows 11, Linux (X11; Wayland deferred)
 - **Project Type**: Desktop application (single-user utility)
 - **Performance Goals**: < 1% CPU at idle, poll cycle completes in < 100ms
-- **Constraints**: No elevated privileges, localhost HTTP only (port 17384 for hook events), read-only access to Claude CLI files
+- **Constraints**: No elevated privileges, localhost HTTP only (port 17384 for hook relay), read-only access to Claude CLI files
 - **Scale/Scope**: 1-10 concurrent sessions, single user
 
 ## Constitution Check
@@ -56,7 +56,7 @@ claude_dashboard/
 ├── settings.py              # Settings dataclass, JSON load/save
 ├── controller.py            # Main dashboard (poll loop, state management)
 ├── session.py               # Session discovery, PID validation
-├── transcript.py            # StatusState enum, map_event_to_state()
+├── # transcript.py removed — StatusState enum moved to config.py, map_event_to_state() moved to hook_server.py
 ├── hook_server.py           # HTTP server receiving hook events (port 17384)
 ├── tray.py                  # System tray icon (pystray)
 ├── platform/
@@ -81,6 +81,7 @@ tests/
 
 scripts/
 ├── detect_sessions.py       # Standalone diagnostic tool (already written)
+├── hook_relay.py            # Command hook → HTTP POST relay (reads stdin, POSTs to dashboard)
 └── install_hooks.py         # Deep-merge hooks-settings.json into ~/.claude/settings.json
 
 hooks-settings.json          # Hook configuration for Claude Code
@@ -101,7 +102,7 @@ README.md
 | `controller.py` | Central dashboard: owns root Tk, poll loop, coordinates subsystems | `controller.py` — AppController |
 | `settings.py` | Dataclass + atomic JSON I/O with validation | `settings.py` — Settings dataclass |
 | `session.py` | Read `sessions/*.json`, validate PIDs | `api.py` — external data fetch |
-| `transcript.py` | StatusState enum, `map_event_to_state()` | New (no equivalent) |
+| ~~`transcript.py`~~ | Removed. StatusState enum moved to `config.py`; `map_event_to_state()` moved to `hook_server.py` | — |
 | `hook_server.py` | HTTP server on port 17384, receives hook events, dispatches to callbacks | New (no equivalent) |
 | `ui/main_window.py` | Dynamic row grid, status indicators, click handlers | `ui/main_window.py` — countdown grid |
 | `ui/settings_window.py` | Modal dialog for editing settings | `ui/settings_window.py` — modal |
@@ -201,11 +202,13 @@ See `scripts/detect_sessions.py` for working implementation.
 
 ### Hook Configuration
 
-The dashboard ships `hooks-settings.json` which configures Claude Code to POST hook events to `http://localhost:17384/hook`. The `scripts/install_hooks.py` script deep-merges this into `~/.claude/settings.json`.
+The dashboard uses Claude Code **command hooks** (not HTTP hooks — HTTP hooks are documented but don't work in practice, tested 2026-03-22). Each hook fires `scripts/hook_relay.py` as a command, which reads the hook payload from stdin and POSTs it to `http://127.0.0.1:17384/hook` where `hook_server.py` receives and processes it.
 
-Hook events: `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `Stop`, `SessionEnd`.
+The `hooks-settings.json` file defines these command hooks. The `scripts/install_hooks.py` script deep-merges this config into `~/.claude/settings.json`.
 
-Port 17384 is fixed (not configurable). The hooks are non-blocking — if the dashboard is not running, the POST fails silently and Claude sessions are unaffected.
+Hook events: `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `Stop`, `StopFailure`, `SessionEnd`, `Notification`, `SubagentStart`, `SubagentStop`.
+
+Port 17384 is fixed (not configurable). The hooks are non-blocking — if the dashboard is not running, the POST from `hook_relay.py` fails silently and Claude sessions are unaffected.
 
 ## Coding Standards (from ~/source/standards/)
 
@@ -249,7 +252,7 @@ claude-dashboard = "claude_dashboard.__main__:main"
 ### Phase 1 — Session Discovery & State Detection (P1, no UI)
 
 1. `session.py` — read `sessions/*.json`, validate PIDs
-2. `transcript.py` — StatusState enum, `map_event_to_state()`
+2. `config.py` — StatusState enum (formerly in transcript.py); `hook_server.py` — `map_event_to_state()`
 3. `hook_server.py` — HTTP server on port 17384, hook event dispatch
 4. `hooks-settings.json` + `scripts/install_hooks.py` — hook configuration installer
 5. Tests for all with fixture data and live HTTP tests
