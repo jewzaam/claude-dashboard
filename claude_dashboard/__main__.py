@@ -21,6 +21,8 @@ def main():
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
+    # Suppress noisy third-party debug logging
+    logging.getLogger("PIL").setLevel(logging.WARNING)
 
     # Controller import deferred until args are parsed
     from claude_dashboard.controller import AppController

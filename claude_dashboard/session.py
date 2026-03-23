@@ -96,10 +96,7 @@ def resolve_transcript_path(
     transcript_path = directory / project_key / f"{session_id}.jsonl"
 
     if transcript_path.exists():
-        logger.debug("transcript found via key path=%s", transcript_path)
         return transcript_path
-
-    logger.debug("transcript not at key=%s, scanning projects_dir", project_key)
 
     # Fallback 1: scan all project dirs for this session ID
     if directory.is_dir():
@@ -108,7 +105,6 @@ def resolve_transcript_path(
                 continue
             candidate = project_dir / f"{session_id}.jsonl"
             if candidate.exists():
-                logger.debug("transcript found via fallback scan path=%s", candidate)
                 return candidate
 
     # Fallback 2: session may have been resumed — find the most recently
@@ -125,10 +121,8 @@ def resolve_transcript_path(
                 newest = candidate
                 newest_mtime = mtime
         if newest:
-            logger.debug("transcript found via newest in project dir path=%s", newest)
             return newest
 
-    logger.debug("transcript not found for session_id=%s", session_id)
     return None
 
 

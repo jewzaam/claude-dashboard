@@ -2,8 +2,15 @@
 """Tests for transcript parsing and state machine."""
 
 import json
+import threading
+import time
 
-from claude_dashboard.transcript import StatusState, detect_state, tail_jsonl
+from claude_dashboard.transcript import (
+    StatusState,
+    TranscriptWatcher,
+    _classify_entry,
+    detect_state,
+)
 
 
 def _write_jsonl(path, entries):
@@ -13,41 +20,64 @@ def _write_jsonl(path, entries):
             fh.write(json.dumps(entry) + "\n")
 
 
-class TestTailJsonl:
-    def test_reads_last_n_lines(self, tmp_path):
-        path = tmp_path / "transcript.jsonl"
-        entries = [{"n": i} for i in range(20)]
-        _write_jsonl(path, entries)
+class TestClassifyEntry:
+    def test_user_text_returns_working(self):
+        entry = {"type": "user", "message": {"content": [{"type": "text", "text": "hello"}]}}
+        assert _classify_entry(entry) == StatusState.WORKING
 
-        result = tail_jsonl(path, max_lines=5)
-        assert len(result) == 5
-        assert result[-1]["n"] == 19
+    def test_tool_result_returns_working(self):
+        entry = {
+            "type": "user",
+            "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]},
+        }
+        assert _classify_entry(entry) == StatusState.WORKING
 
-    def test_returns_empty_for_missing_file(self, tmp_path):
-        result = tail_jsonl(tmp_path / "nonexistent.jsonl")
-        assert result == []
+    def test_interruption_returns_idle(self):
+        entry = {
+            "type": "user",
+            "message": {"content": [{"type": "text", "text": "[Request interrupted by user]"}]},
+        }
+        assert _classify_entry(entry) == StatusState.IDLE
 
-    def test_returns_empty_for_empty_file(self, tmp_path):
-        path = tmp_path / "empty.jsonl"
-        path.write_text("", encoding="utf-8")
-        result = tail_jsonl(path)
-        assert result == []
+    def test_end_turn_returns_idle(self):
+        entry = {"type": "assistant", "message": {"stop_reason": "end_turn", "content": []}}
+        assert _classify_entry(entry) == StatusState.IDLE
 
-    def test_handles_malformed_lines(self, tmp_path):
-        path = tmp_path / "mixed.jsonl"
-        path.write_text(
-            '{"good": true}\nnot json\n{"also_good": true}\n',
-            encoding="utf-8",
-        )
-        result = tail_jsonl(path)
-        assert len(result) == 2
+    def test_tool_use_returns_permission_required(self):
+        entry = {
+            "type": "assistant",
+            "message": {
+                "stop_reason": "tool_use",
+                "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}],
+            },
+        }
+        assert _classify_entry(entry) == StatusState.PERMISSION_REQUIRED
 
-    def test_reads_all_when_fewer_than_max(self, tmp_path):
-        path = tmp_path / "small.jsonl"
-        entries = [{"n": i} for i in range(3)]
-        _write_jsonl(path, entries)
-        result = tail_jsonl(path, max_lines=10)
-        assert len(result) == 3
+    def test_ask_user_question_returns_awaiting_input(self):
+        entry = {
+            "type": "assistant",
+            "message": {
+                "stop_reason": "tool_use",
+                "content": [
+                    {"type": "tool_use", "id": "q1", "name": "AskUserQuestion", "input": {}}
+                ],
+            },
+        }
+        assert _classify_entry(entry) == StatusState.AWAITING_INPUT
+
+    def test_progress_returns_none(self):
+        entry = {"type": "progress", "data": {"type": "hook_progress"}}
+        assert _classify_entry(entry) is None
+
+    def test_system_returns_none(self):
+        entry = {"type": "system", "message": {"content": "system prompt"}}
+        assert _classify_entry(entry) is None
+
+    def test_missing_file_returns_unknown(self, tmp_path):
+        assert detect_state(tmp_path / "missing.jsonl") == StatusState.UNKNOWN
+
+    def test_none_path_returns_unknown(self):
+        assert detect_state(None) == StatusState.UNKNOWN
 
 
 class TestDetectState:
@@ -263,8 +293,8 @@ class TestDetectState:
         )
         assert detect_state(path) == StatusState.UNKNOWN
 
-    def test_unknown_for_orphaned_tool_result(self, tmp_path):
-        """User entry with tool_result but no assistant entry returns UNKNOWN."""
+    def test_tool_result_without_assistant_returns_working(self, tmp_path):
+        """Tool result without preceding assistant → WORKING (Claude is processing it)."""
         path = tmp_path / "t.jsonl"
         _write_jsonl(
             path,
@@ -283,4 +313,66 @@ class TestDetectState:
                 },
             ],
         )
-        assert detect_state(path) == StatusState.UNKNOWN
+        assert detect_state(path) == StatusState.WORKING
+
+
+class TestTranscriptWatcher:
+    def test_reads_initial_state(self, tmp_path):
+        path = tmp_path / "t.jsonl"
+        _write_jsonl(
+            path,
+            [{"type": "assistant", "message": {"stop_reason": "end_turn", "content": []}}],
+        )
+
+        states: list[StatusState] = []
+        event = threading.Event()
+
+        def on_change(state: StatusState):
+            states.append(state)
+            event.set()
+
+        watcher = TranscriptWatcher(path, on_state_change=on_change, poll_interval=0.1)
+        watcher.start()
+        event.wait(timeout=2)
+        watcher.stop()
+        assert StatusState.IDLE in states
+
+    def test_detects_new_entries(self, tmp_path):
+        path = tmp_path / "t.jsonl"
+        _write_jsonl(
+            path,
+            [{"type": "assistant", "message": {"stop_reason": "end_turn", "content": []}}],
+        )
+
+        states: list[StatusState] = []
+        event = threading.Event()
+
+        def on_change(state: StatusState):
+            states.append(state)
+            if state == StatusState.WORKING:
+                event.set()
+
+        watcher = TranscriptWatcher(path, on_state_change=on_change, poll_interval=0.1)
+        watcher.start()
+        time.sleep(0.3)
+
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {"type": "user", "message": {"content": [{"type": "text", "text": "hi"}]}}
+                )
+                + "\n"
+            )
+
+        event.wait(timeout=2)
+        watcher.stop()
+        assert StatusState.IDLE in states
+        assert StatusState.WORKING in states
+
+    def test_stop_terminates(self, tmp_path):
+        path = tmp_path / "t.jsonl"
+        path.write_text("", encoding="utf-8")
+        watcher = TranscriptWatcher(path, on_state_change=lambda s: None, poll_interval=0.1)
+        watcher.start()
+        watcher.stop()
+        assert watcher.state == StatusState.UNKNOWN
