@@ -15,6 +15,7 @@ from claude_dashboard.platform.base import (
 )
 from claude_dashboard.session import (
     SessionInfo,
+    cwd_basename,
     discover_sessions,
     validate_pid,
 )
@@ -157,7 +158,7 @@ class AppController:
         if buffered is not None:
             entry.state = buffered
 
-        cwd_short = session.cwd.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+        cwd_short = cwd_basename(session.cwd)
         logger.debug(
             "pid=%d project=%s new_state=%s prior_state=None",
             session.pid,
@@ -211,7 +212,7 @@ class AppController:
             return
 
         entry.state = new_state
-        cwd_short = entry.session.cwd.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+        cwd_short = cwd_basename(entry.session.cwd)
         logger.debug(
             "pid=%d project=%s new_state=%s prior_state=%s event=%s",
             pid,
@@ -259,8 +260,8 @@ class AppController:
             if entry:
                 entry.container = container
 
-        if container and container.window_handle:
-            success = foreground_window(container)
+        if container and (container.window_handle or container.process_pid):
+            success = foreground_window(container, cwd=session.cwd)
             if not success:
                 logger.warning("failed to foreground pid=%d", session.pid)
 
@@ -308,14 +309,14 @@ class AppController:
 
     def _on_settings_save(self, new_settings: Settings):
         self._settings = new_settings
-        save_settings(self._settings)
+        self._save_settings_safe()
         self._main_window.apply_settings(new_settings)
         self._refresh_ui()
         logger.info("settings saved and applied")
 
     def _quit(self):
         self._save_window_position()
-        save_settings(self._settings)
+        self._save_settings_safe()
         self._hook_server.stop()
         if self._tray_icon:
             self._tray_icon.stop()
@@ -324,7 +325,13 @@ class AppController:
     def _on_position_save(self, x: int, y: int):
         self._settings.window_x = x
         self._settings.window_y = y
-        save_settings(self._settings)
+        self._save_settings_safe()
+
+    def _save_settings_safe(self):
+        try:
+            save_settings(self._settings)
+        except OSError as exc:
+            logger.error("failed to save settings: %s", exc)
 
     def _save_window_position(self):
         x, y = self._main_window.get_position()

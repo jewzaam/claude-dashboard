@@ -38,7 +38,7 @@ HTTP hooks are documented by Claude Code but don't work in practice (tested 2026
 | `claude_dashboard/tray.py` | System tray icon |
 | `claude_dashboard/platform/base.py` | Platform dispatch (ContainerType enum) |
 | `claude_dashboard/platform/windows.py` | Win32 window foregrounding |
-| `claude_dashboard/platform/linux.py` | xdotool stub |
+| `claude_dashboard/platform/linux.py` | Window foregrounding via `window-calls` D-Bus, xdotool fallback |
 | `scripts/hook_relay.py` | Command hook → HTTP POST relay |
 | `scripts/install_hooks.py` | Deep-merge hook config into Claude settings |
 | `hooks-settings.json` | Hook config shipped with the project |

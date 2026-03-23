@@ -2,7 +2,9 @@
 """Modal settings editor dialog."""
 
 import logging
+import platform as _plat
 import tkinter as tk
+from dataclasses import asdict
 from tkinter import colorchooser
 from typing import Callable
 
@@ -14,8 +16,9 @@ logger = logging.getLogger(__name__)
 _CHROME_BG = "#2a2a2a"
 _CHROME_FG = "#e0e0e0"
 _CHROME_HEADING_FG = "#aaaaaa"
-_CHROME_FONT = ("Segoe UI", 9)
-_CHROME_HEADING_FONT = ("Segoe UI", 9, "bold")
+_FONT_FAMILY = "Segoe UI" if _plat.system() == "Windows" else "Noto Sans"
+_CHROME_FONT = (_FONT_FAMILY, 9)
+_CHROME_HEADING_FONT = (_FONT_FAMILY, 9, "bold")
 
 
 class SettingsWindow:
@@ -195,8 +198,6 @@ class SettingsWindow:
 
     def _on_save_click(self):
         """Merge form values into existing settings and invoke save callback."""
-        from dataclasses import asdict
-
         merged = {**asdict(self._base_settings)}
         for key, var in self._vars.items():
             try:

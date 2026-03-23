@@ -42,7 +42,7 @@ omit = [
     "claude_dashboard/tray.py",
     "claude_dashboard/controller.py",
     "claude_dashboard/__main__.py",
-    "claude_dashboard/platform/*",
+    "claude_dashboard/platform/windows.py",
 ]
 
 [tool.coverage.report]

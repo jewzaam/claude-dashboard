@@ -151,3 +151,27 @@ class TestHookServer:
                 assert e.code == 400
         finally:
             server.stop()
+
+    def test_invalid_path_returns_404(self):
+        """POST to a non-/hook path returns 404."""
+        server = HookServer(
+            on_hook_event=lambda *a: None,
+            on_session_end=lambda s: None,
+            port=0,
+        )
+        server.start()
+
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{server.port}/invalid",
+                data=b"{}",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                urllib.request.urlopen(req, timeout=5)
+                assert False, "Expected HTTP error"
+            except urllib.error.HTTPError as e:
+                assert e.code == 404
+        finally:
+            server.stop()

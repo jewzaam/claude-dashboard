@@ -16,7 +16,7 @@ A cross-platform Python/Tkinter dashboard that discovers running Claude Code ses
 - **Primary Dependencies**: Tkinter (stdlib), psutil, pystray, Pillow
 - **Storage**: JSON settings file (`%APPDATA%/claude-dashboard/settings.json` on Windows, `~/.config/claude-dashboard/settings.json` on Linux)
 - **Testing**: pytest, pytest-cov (80%+ coverage target per standards)
-- **Target Platform**: Windows 11, Linux (X11; Wayland deferred)
+- **Target Platform**: Windows 11, Linux (GNOME/Wayland via `window-calls` extension; X11 via `xdotool`)
 - **Project Type**: Desktop application (single-user utility)
 - **Performance Goals**: < 1% CPU at idle, poll cycle completes in < 100ms
 - **Constraints**: No elevated privileges, localhost HTTP only (port 17384 for hook relay), read-only access to Claude CLI files
@@ -193,12 +193,19 @@ class Settings:
 ### Container Detection & Window Matching (verified)
 
 1. Walk parent PIDs via `psutil` until hitting a known application name
-2. For VS Code: all windows owned by the main process (parent=explorer.exe), not renderers
-3. Match CWD folder name against window titles
-4. `SetForegroundWindow` with Alt-key fallback on Windows
-5. Linux: `xdotool` or `wmctrl` (to be implemented)
+2. Match container process to a visible window, then foreground it
 
-See `scripts/detect_sessions.py` for working implementation.
+**Windows 11**:
+- `EnumWindows` to find windows owned by the main VS Code process (parent=explorer.exe)
+- Match CWD folder name against window titles
+- `SetForegroundWindow` with Alt-key fallback
+- See `scripts/detect_sessions.py` for implementation
+
+**Linux (GNOME/Wayland)** (verified on Fedora 42 / GNOME 48.7, 2026-03-23):
+- The `window-calls` GNOME Shell extension exposes D-Bus methods: `List` (enumerate all windows with PID, title, ID) and `Activate` (foreground by ID, switches workspaces)
+- Match container PID against window PIDs from `List`, disambiguate VS Code windows by CWD folder name in title
+- Fallback chain: `window-calls` D-Bus → `code /path` CLI (VS Code only)
+- See `scripts/detect_sessions_linux.py` for the diagnostic script that validated this approach
 
 ### Hook Configuration
 
@@ -267,7 +274,7 @@ claude-dashboard = "claude_dashboard.__main__:main"
 ### Phase 3 — Navigation & Container Detection (P1)
 
 1. `platform/windows.py` — process tree, window matching, foregrounding
-2. `platform/linux.py` — stub with xdotool/wmctrl (basic implementation)
+2. `platform/linux.py` — `window-calls` GNOME extension via D-Bus, `code /path` fallback
 3. Wire click handlers in `ui/main_window.py`
 
 ### Phase 4 — System Tray & Settings (P2)
@@ -288,6 +295,6 @@ claude-dashboard = "claude_dashboard.__main__:main"
 | Hook event format changes in Claude CLI update | State detection breaks | Validate hook payloads; unknown events are ignored; graceful fallback to Unknown |
 | `sessions/` directory behavior changes | Session discovery breaks | Fallback to process enumeration via psutil |
 | VS Code window title format changes | Window matching breaks | Fuzzy match; fallback to foregrounding any Code.exe window |
-| Wayland on Linux lacks xdotool | Foregrounding fails on Wayland | Detect compositor; degrade gracefully with error message |
+| `window-calls` GNOME extension not installed | Foregrounding fails on Wayland | Fallback to `code /path` for VS Code; log warning for terminals; documented in README |
 | Port 17384 already in use | Hook server fails to start | Log error clearly; dashboard still works for session discovery but state is Unknown |
 | Hooks not installed | No state updates received | Dashboard shows Unknown for all sessions; `make install-hooks` documented in README |

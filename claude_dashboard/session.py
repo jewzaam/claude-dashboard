@@ -49,7 +49,7 @@ def discover_sessions(*, sessions_dir: Path | None = None) -> list[SessionInfo]:
         except (json.JSONDecodeError, OSError) as exc:
             logger.debug("failed to read session file=%s error=%s", session_file, exc)
 
-    return sorted(sessions, key=lambda s: s.pid)
+    return sorted(sessions, key=lambda s: cwd_relative_to_home(s.cwd).lower())
 
 
 def validate_pid(pid: int) -> bool:
@@ -79,6 +79,11 @@ def encode_project_key(cwd: str) -> str:
     # Collapse leading dash from root slash on Linux (e.g., /home -> -home)
     normalized = normalized.lstrip("-")
     return normalized
+
+
+def cwd_basename(cwd: str) -> str:
+    """Extract the last path component from a CWD, handling both / and \\ separators."""
+    return cwd.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
 
 
 def cwd_relative_to_home(cwd: str) -> str:

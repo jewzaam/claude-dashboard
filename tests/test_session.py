@@ -47,20 +47,21 @@ class TestDiscoverSessions:
         sessions = discover_sessions(sessions_dir=sessions_dir)
         assert sessions == []
 
-    def test_orders_by_pid(self, tmp_path):
+    def test_orders_by_cwd_lexicographically(self, tmp_path):
         sessions_dir = tmp_path / "sessions"
         sessions_dir.mkdir()
-        for pid in [300, 100, 200]:
+        cwds = ["/home/user/source/zebra", "/home/user/source/alpha", "/home/user/source/middle"]
+        for i, cwd in enumerate(cwds):
             data = {
-                "pid": pid,
-                "sessionId": f"session-{pid}",
-                "cwd": f"/tmp/{pid}",
+                "pid": 100 + i,
+                "sessionId": f"session-{i}",
+                "cwd": cwd,
                 "startedAt": 1000,
             }
-            (sessions_dir / f"{pid}.json").write_text(json.dumps(data), encoding="utf-8")
+            (sessions_dir / f"{100 + i}.json").write_text(json.dumps(data), encoding="utf-8")
         sessions = discover_sessions(sessions_dir=sessions_dir)
-        pids = [s.pid for s in sessions]
-        assert pids == [100, 200, 300]
+        result_cwds = [s.cwd for s in sessions]
+        assert result_cwds == sorted(cwds)
 
 
 class TestEncodeProjectKey:

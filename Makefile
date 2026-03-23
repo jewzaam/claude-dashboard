@@ -5,66 +5,52 @@ PYTHON := python3
 
 default: check
 
-check: format-check lint typecheck test coverage
+check: format lint typecheck test coverage ## Run format, lint, typecheck, test, coverage (default)
 
-help:
-	@echo "Targets:"
-	@echo "  install        Install package"
-	@echo "  install-dev    Install package and dev dependencies (run once)"
-	@echo "  uninstall      Uninstall package"
-	@echo "  clean          Remove build artifacts and caches"
-	@echo "  format         Run black formatter (modifies files)"
-	@echo "  format-check   Check formatting without modifying files"
-	@echo "  lint           Run flake8"
-	@echo "  typecheck      Run mypy"
-	@echo "  test           Run tests"
-	@echo "  test-verbose   Run tests with verbose output"
-	@echo "  coverage       Run tests with coverage report"
-	@echo "  check          Run format-check, lint, typecheck, test, coverage (default)"
-	@echo "  run            Start the app"
-	@echo "  run-debug      Start the app with debug logging"
+help: ## Show available targets
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
 
-install:
+install: ## Install package
 	$(PYTHON) -m pip install .
 
-install-dev:
+install-dev: ## Install package and dev dependencies (editable)
 	$(PYTHON) -m pip install -e ".[dev]"
 
-install-hooks:
+install-hooks: ## Merge hook config into ~/.claude/settings.json
 	$(PYTHON) scripts/install_hooks.py
 
-uninstall:
+uninstall: ## Uninstall package
 	$(PYTHON) -m pip uninstall -y claude-dashboard
 
-clean:
+clean: ## Remove build artifacts and caches
 	rm -rf build/ dist/ *.egg-info
 	find . -type d -name __pycache__ -exec rm -r {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	rm -rf .pytest_cache .mypy_cache .coverage htmlcov
 
-format: install-dev
+format: install-dev ## Run black formatter (modifies files)
 	$(PYTHON) -m black claude_dashboard/ tests/
 
-format-check: install-dev
+format-check: install-dev ## Check formatting without modifying files
 	$(PYTHON) -m black --check claude_dashboard/ tests/
 
-lint: install-dev
+lint: install-dev ## Run flake8
 	$(PYTHON) -m flake8 claude_dashboard/ tests/
 
-typecheck: install-dev
+typecheck: install-dev ## Run mypy
 	$(PYTHON) -m mypy claude_dashboard/
 
-test: install-dev
+test: install-dev ## Run tests
 	$(PYTHON) -m pytest
 
-test-verbose: install-dev
+test-verbose: install-dev ## Run tests with verbose output
 	$(PYTHON) -m pytest -v
 
-coverage: install-dev
+coverage: install-dev ## Run tests with coverage report
 	$(PYTHON) -m pytest --cov=claude_dashboard --cov-report=term-missing
 
-run:
+run: ## Start the app
 	$(PYTHON) -m claude_dashboard
 
-run-debug:
+run-debug: ## Start the app with debug logging
 	$(PYTHON) -m claude_dashboard --debug
