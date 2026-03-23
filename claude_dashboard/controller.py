@@ -175,9 +175,7 @@ class AppController:
     # Hook event callback (fired from HTTP server thread)
     # ------------------------------------------------------------------
 
-    def _on_hook_event(
-        self, session_id: str, event: str, new_state: StatusState, cwd: str = ""
-    ):
+    def _on_hook_event(self, session_id: str, event: str, new_state: StatusState, cwd: str = ""):
         """Called from hook server thread. Marshal to main thread."""
         self._root.after(0, self._apply_hook_state, session_id, event, new_state, cwd)
 
@@ -185,9 +183,7 @@ class AppController:
         """Called from hook server thread on SessionEnd."""
         self._root.after(0, self._handle_session_end, session_id)
 
-    def _apply_hook_state(
-        self, session_id: str, event: str, new_state: StatusState, cwd: str = ""
-    ):
+    def _apply_hook_state(self, session_id: str, event: str, new_state: StatusState, cwd: str = ""):
         """Apply a hook-driven state change on the main thread."""
         pid = self._session_id_to_pid.get(session_id)
 

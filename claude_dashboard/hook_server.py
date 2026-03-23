@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 _EVENT_STATE_MAP: dict[str, StatusState] = {
     "UserPromptSubmit": StatusState.WORKING,
     "PostToolUse": StatusState.WORKING,
+    "PostToolUseFailure": StatusState.WORKING,
     "Stop": StatusState.IDLE,
+    "StopFailure": StatusState.IDLE,
 }
 
 
@@ -63,14 +65,16 @@ class _HookHandler(BaseHTTPRequestHandler):
         event = body.get("hook_event_name", "")
         tool_name = body.get("tool_name", "")
         cwd = body.get("cwd", "")
-        logger.debug(
-            "hook event session_id=%s event=%s tool_name=%s",
-            session_id,
-            event,
-            tool_name,
-        )
 
         state = map_event_to_state(event, tool_name=tool_name)
+        mapped = state.value if state else "ignored"
+        logger.debug(
+            "event=%s tool=%s mapped=%s session=%s",
+            event,
+            tool_name or "-",
+            mapped,
+            session_id[:8] if session_id else "-",
+        )
 
         if state is not None and session_id:
             self.server.on_hook_event(session_id, event, state, cwd)  # type: ignore[attr-defined]
