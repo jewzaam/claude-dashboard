@@ -2,6 +2,7 @@
 """Dashboard window — dynamic row grid showing Claude sessions."""
 
 import logging
+import platform as _plat
 import tkinter as tk
 from typing import Any, Callable
 
@@ -12,10 +13,17 @@ from claude_dashboard.config import StatusState
 
 logger = logging.getLogger(__name__)
 
-# Dashboard UI constants
-_FONT_BODY = ("Segoe UI", 9)
-_FONT_EMOJI = ("Segoe UI Emoji", 12)
-_FONT_CONTAINER = ("Segoe UI", 7)
+# Dashboard UI constants — platform-aware font selection
+if _plat.system() == "Windows":
+    _FONT_FAMILY = "Segoe UI"
+    _FONT_EMOJI_FAMILY = "Segoe UI Emoji"
+else:
+    _FONT_FAMILY = "Noto Sans"
+    _FONT_EMOJI_FAMILY = "Noto Color Emoji"
+
+_FONT_BODY = (_FONT_FAMILY, 9)
+_FONT_EMOJI = (_FONT_EMOJI_FAMILY, 12)
+_FONT_CONTAINER = (_FONT_FAMILY, 7)
 _COLOR_EMPTY_FG = "#666666"
 _COLOR_CONTAINER_FG = "#888888"
 _ROW_PAD_X = 1
@@ -179,7 +187,7 @@ class MainWindow:
 
         # Resize height, preserve position
         self._window.update_idletasks()
-        height = max(1, len(sessions) * self._settings.row_height)
+        height = max(1, len(sessions) * (self._settings.row_height + _ROW_PAD_Y * 2))
         x = self._window.winfo_x()
         y = self._window.winfo_y()
         self._window.geometry(f"{self._settings.row_width}x{height}+{x}+{y}")

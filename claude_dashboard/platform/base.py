@@ -44,20 +44,19 @@ def detect_container(pid: int) -> ContainerInfo:
         return detect_container_linux(pid)
 
 
-def foreground_window(container: ContainerInfo) -> bool:
+def foreground_window(container: ContainerInfo, *, cwd: str = "") -> bool:
     """Bring the container's window to the foreground."""
-    if container.window_handle == 0:
-        logger.debug("no window handle for container pid=%d", container.process_pid)
-        return False
-
     if _PLATFORM == "Windows":
+        if container.window_handle == 0:
+            logger.debug("no window handle for container pid=%d", container.process_pid)
+            return False
         from claude_dashboard.platform.windows import foreground_window_windows
 
         return foreground_window_windows(container.window_handle)
-    else:
-        from claude_dashboard.platform.linux import foreground_window_linux
 
-        return foreground_window_linux(container.window_handle)
+    from claude_dashboard.platform.linux import foreground_window_linux
+
+    return foreground_window_linux(container, cwd=cwd)
 
 
 def find_window_for_session(
@@ -70,5 +69,6 @@ def find_window_for_session(
 
         return match_window_by_cwd(cwd, container)
 
-    logger.debug("find_window not implemented on %s", _PLATFORM)
+    # On Linux/Wayland, window matching happens at foreground time
+    # via `code /path` or similar — no window handle to discover.
     return container

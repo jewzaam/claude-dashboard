@@ -96,7 +96,7 @@
   - `find_window(cwd, container)` — enumerate main VS Code process windows, match by CWD folder name in title
   - `foreground_window(hwnd)` — `SetForegroundWindow` with Alt-key fallback
   - Port logic from `scripts/detect_sessions.py`
-- [ ] T022 [P] [US2] Create `claude_dashboard/platform/linux.py` — stub implementation with xdotool/wmctrl (basic, to be tested on Linux)
+- [x] T022 [P] [US2] Create `claude_dashboard/platform/linux.py` — window-calls GNOME extension via D-Bus, `code /path` fallback (tested on Fedora 42 / GNOME 48.7 / Wayland, 2026-03-23)
 - [ ] T023 [US2] Wire click handler in `ui/main_window.py` — row click calls `platform.foreground_window()`
 - [ ] T024 [US2] Cache container detection results — only re-detect on new sessions, not every tick
 

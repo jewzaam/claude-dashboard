@@ -35,5 +35,15 @@ class TestMapEventToState:
     def test_unknown_event_returns_none(self):
         assert map_event_to_state("SomeUnknownEvent") is None
 
+    def test_post_tool_use_failure(self):
+        assert map_event_to_state("PostToolUseFailure") == StatusState.WORKING
+
+    def test_stop_failure(self):
+        assert map_event_to_state("StopFailure") == StatusState.IDLE
+
+    def test_permission_request_ask_user_question(self):
+        result = map_event_to_state("PermissionRequest", tool_name="AskUserQuestion")
+        assert result == StatusState.AWAITING_INPUT
+
     def test_progress_returns_none(self):
         assert map_event_to_state("SubagentStart") is None

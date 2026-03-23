@@ -182,7 +182,7 @@ Key finding: all VS Code terminals route through a single `--type=utility` Code.
 
 See `scripts/detect_sessions.py` for the implementation.
 
-**Linux**: Not yet tested. Will need `xdotool`/`wmctrl` equivalent.
+**Linux (tested 2026-03-23, Fedora 42 / GNOME 48.7 / Wayland)**: The `window-calls` GNOME Shell extension provides D-Bus methods (`List`, `Activate`) for window enumeration and foregrounding. Container detection works via psutil process tree walking (same as Windows). Window matching uses PID from `List` results + CWD folder name in title for VS Code disambiguation. Falls back to `code /path` CLI for VS Code if extension is not installed. See `scripts/detect_sessions_linux.py` for the full diagnostic script.
 
 ## Useful Transcript Fields
 

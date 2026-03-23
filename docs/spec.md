@@ -146,11 +146,11 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 - **FR-007**: System MUST persist settings to a JSON file (row height, width, colors, emojis, window position, poll interval). Settings changes MUST apply live to the dashboard without hiding or repositioning it — the dashboard redraws in place with updated values.
 - **FR-008**: System MUST restore window position on restart
 - **FR-009**: System MUST support always-on-top mode (user-togglable)
-- **FR-010**: System MUST work on Windows 11 and Linux
+- **FR-010**: System MUST work on Windows 11 and Linux (GNOME/Wayland). On Linux, window foregrounding requires the [Window Calls](https://extensions.gnome.org/extension/4724/window-calls/) GNOME Shell extension, which exposes window listing and activation via D-Bus — the only reliable method on Wayland where direct window manipulation is blocked by design.
 - **FR-011**: System MUST use Python and Tkinter
 - **FR-012**: Clicking a row MUST bring the containing application window to the foreground. Click vs drag MUST be distinguished: a short click (< 5px of movement) navigates to the session window; a click-hold+drag (>= 5px of movement) moves the dashboard window. This prevents accidental navigation when repositioning the dashboard.
 - **FR-013**: System MUST handle parent process chain traversal (Claude → shell → VS Code / terminal)
-- **FR-014**: System MUST handle virtual desktop switching when foregrounding
+- **FR-014**: System MUST handle virtual desktop switching when foregrounding. On Windows, `SetForegroundWindow` handles this natively. On Linux/GNOME Wayland, the `window-calls` extension's `Activate` method switches workspaces automatically.
 - **FR-015**: System MUST detect session state via command hooks. Claude Code fires command hooks that execute `scripts/hook_relay.py`, which reads the hook payload from stdin and POSTs it to the dashboard's local HTTP server (`POST http://127.0.0.1:17384/hook`). The server maps hook event names to StatusState values using `map_event_to_state()` in `hook_server.py`. No transcript parsing is performed.
 - **FR-016**: System MUST poll for session changes at a user-configurable interval (default: 5 seconds)
 - **FR-017**: System MUST validate session PIDs are still alive (cross-reference with OS process list) to handle stale session files
@@ -159,7 +159,7 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 - **FR-020**: System MUST NOT read files it does not need access to — in particular, `~/.claude/ide/*.lock` files contain auth tokens and must never be read
 - **FR-021**: Each row MUST show the containing process type (VS Code, terminal, etc.) as an icon or label
 - **FR-022**: System MUST minimize to system tray on close, with tray icon reflecting aggregate attention state. The Settings window MUST also be visible across all virtual desktops (topmost attribute), matching the dashboard's cross-desktop visibility behavior.
-- **FR-023**: Rows MUST be ordered deterministically by PID (ascending)
+- **FR-023**: Rows MUST be ordered lexicographically by the displayed CWD text (the `~/...` relative path). This gives a stable, predictable order that groups related projects together.
 - **FR-024**: System MUST handle the denial flow — when a tool use is rejected, subsequent hook events (PostToolUse or Stop) transition the state accordingly. No special transcript parsing is required.
 - **FR-025**: System MUST resolve transcript paths with a fallback strategy — the session ID in `sessions/{PID}.json` does not always match the transcript filename (sessions can be resumed under a new session ID). When the expected transcript file is not found, the system MUST fall back to the most recently modified `.jsonl` file in the project directory (`~/.claude/projects/{project}/`).
 - **FR-026**: System MUST run a local HTTP server (`hook_server.py`) on port 17384 to receive hook events relayed from `scripts/hook_relay.py`. The server MUST be non-blocking — if the dashboard is not running, the relay script's POST fails silently and Claude sessions are unaffected. The server accepts POST requests to `/hook` with JSON payloads containing `session_id`, `hook_event_name`, and optional fields (`tool_name`, `tool_input`, `cwd`).

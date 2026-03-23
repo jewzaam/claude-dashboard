@@ -55,8 +55,8 @@
 - **Resolved (2026-03-22)**: State detection uses Claude Code command hooks via `scripts/hook_relay.py` → HTTP POST to `hook_server.py`. HTTP hooks (documented by Claude Code) don't work in practice. Transcript parsing was the original approach but was replaced by hooks during live testing. See `docs/research-session-detection.md` for the full evolution.
 
 ### Process Foregrounding Edge Cases
-- `screen` sessions on Linux — can we activate the terminal hosting the screen session?
-- Wayland compatibility (xdotool is X11-specific)
+- `screen` sessions on Linux — terminal window is foregrounded but we cannot switch to a specific screen window within the session
+- **Resolved (2026-03-23)**: Wayland compatibility — the `window-calls` GNOME Shell extension provides D-Bus window listing and activation. Works on Fedora 42 / GNOME 48.7. See `scripts/detect_sessions_linux.py`.
 - Multiple monitors + virtual desktops on both platforms
 
 ### Input/Output Channel to Claude Sessions

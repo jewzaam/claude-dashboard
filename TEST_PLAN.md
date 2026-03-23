@@ -6,7 +6,7 @@ Every functional requirement (FR-xxx) and success criterion (SC-xxx) from the sp
 
 ## Coverage Target
 
-80%+ line coverage of testable modules (`session.py`, `transcript.py`, `hook_server.py`, `settings.py`). Currently at 93%.
+80%+ line coverage of testable modules (`session.py`, `transcript.py`, `hook_server.py`, `settings.py`, `platform/linux.py`). Currently at ~94%.
 
 ## Requirement Traceability
 
@@ -111,7 +111,7 @@ Row width is fixed and configurable. Text exceeding width is truncated.
 | Test | Type | Scenario |
 |------|------|----------|
 | Run on Windows 11 | Manual | Full end-to-end: discovery, hook-based state detection, navigation, tray |
-| Run on Linux (X11) | Manual | Full end-to-end: discovery, hook-based state detection, navigation (xdotool) |
+| Run on Linux (GNOME/Wayland) | Manual | Full end-to-end: discovery, hook-based state detection, navigation (window-calls D-Bus) |
 
 ### FR-011: Python + Tkinter
 
@@ -126,11 +126,33 @@ Verified by implementation — no separate test needed.
 
 ### FR-013: Process Chain Traversal
 
-| Test | Type | Scenario |
-|------|------|----------|
+| Test | Type | File | Scenario |
+|------|------|------|----------|
+| `test_detects_vscode_container` | Unit | `test_linux.py` | Parent chain includes "code" → ContainerType.VSCODE |
+| `test_detects_terminal_container` | Unit | `test_linux.py` | Parent chain includes terminal emulator → ContainerType.TERMINAL |
+| `test_detects_screen_container` | Unit | `test_linux.py` | Parent chain includes "screen" → ContainerType.SCREEN |
+| `test_detects_tmux_container` | Unit | `test_linux.py` | Parent chain includes "tmux" → ContainerType.TERMINAL |
+| `test_fallback_to_term_program_env` | Unit | `test_linux.py` | No known parent but TERM_PROGRAM=vscode → ContainerType.VSCODE |
+| `test_unknown_container` | Unit | `test_linux.py` | No recognizable parent → ContainerType.UNKNOWN |
 | Verify container detection for VS Code | Manual | Session in VS Code → container type shows "VS Code" |
 | Verify container detection for terminal | Manual | Session in standalone terminal → container type shows "Term" |
-| Verify process chain walks correctly | Manual | Run `scripts/detect_sessions.py` → chain shows claude → bash → Code.exe |
+| Verify process chain walks correctly | Manual | Run `scripts/detect_sessions_linux.py` → chain shows claude → bash → code → systemd |
+
+### FR-013a: Linux Window Matching (D-Bus)
+
+| Test | Type | File | Scenario |
+|------|------|------|----------|
+| `test_list_windows_dbus_parses_json` | Unit | `test_linux.py` | Mock gdbus returning JSON window list → parsed correctly |
+| `test_list_windows_dbus_empty_on_failure` | Unit | `test_linux.py` | gdbus returns error → empty list |
+| `test_list_windows_dbus_gdbus_not_found` | Unit | `test_linux.py` | gdbus not installed → empty list |
+| `test_activate_window_dbus_success` | Unit | `test_linux.py` | gdbus Activate returns 0 → True |
+| `test_activate_window_dbus_failure` | Unit | `test_linux.py` | gdbus Activate returns nonzero → False |
+| `test_find_window_id_matches_by_pid` | Unit | `test_linux.py` | Window list contains matching PID → returns window ID |
+| `test_find_window_id_disambiguates_by_title` | Unit | `test_linux.py` | Multiple windows for same PID, CWD folder in title → correct window |
+| `test_find_window_id_no_match` | Unit | `test_linux.py` | No windows match container PID → returns 0 |
+| `test_foreground_window_linux_dbus` | Unit | `test_linux.py` | window-calls available → uses D-Bus activation |
+| `test_foreground_window_linux_code_fallback` | Unit | `test_linux.py` | window-calls unavailable, VS Code container → falls back to `code /path` |
+| `test_foreground_window_linux_no_method` | Unit | `test_linux.py` | No method available, non-VS Code → returns False |
 
 ### FR-014: Virtual Desktop Switching
 
@@ -201,7 +223,7 @@ Not applicable.
 
 | Test | Type | File | Scenario |
 |------|------|------|----------|
-| `test_orders_by_pid` | Unit | `test_session.py` | Sessions with PIDs 300, 100, 200 → ordered 100, 200, 300 |
+| `test_orders_by_cwd_lexicographically` | Unit | `test_session.py` | Sessions with CWDs zebra, alpha, middle → ordered alpha, middle, zebra |
 
 ### FR-024: Denial Flow
 

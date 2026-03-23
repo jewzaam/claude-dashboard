@@ -11,6 +11,8 @@ from claude_dashboard.config import StatusState
 
 logger = logging.getLogger(__name__)
 
+_MAX_PAYLOAD_BYTES = 65536  # 64 KB — hook payloads are small JSON
+
 # Event → state mapping
 _EVENT_STATE_MAP: dict[str, StatusState] = {
     "UserPromptSubmit": StatusState.WORKING,
@@ -53,6 +55,11 @@ class _HookHandler(BaseHTTPRequestHandler):
 
         try:
             length = int(self.headers.get("Content-Length", 0))
+            if length > _MAX_PAYLOAD_BYTES:
+                logger.debug("payload too large length=%d", length)
+                self.send_response(413)
+                self.end_headers()
+                return
             raw = self.rfile.read(length) if length else b"{}"
             body = json.loads(raw)
         except (json.JSONDecodeError, ValueError) as exc:
