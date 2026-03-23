@@ -284,6 +284,15 @@ class AppController:
         entry = self._sessions.get(session.pid)
         container = entry.container if entry else None
 
+        # Clicking a Ready session clears it to Idle (user has seen it)
+        if entry and entry.state == StatusState.READY:
+            if entry.ready_timer_id is not None:
+                self._root.after_cancel(entry.ready_timer_id)
+                entry.ready_timer_id = None
+            entry.state = StatusState.IDLE
+            logger.debug("pid=%d clicked while ready, now idle", session.pid)
+            self._refresh_ui()
+
         if not container:
             container = detect_container(session.pid)
             container = find_window_for_session(session.cwd, container)
