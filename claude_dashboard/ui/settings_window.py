@@ -84,13 +84,6 @@ class SettingsWindow:
             settings.poll_interval_seconds,
             row,
         )
-        row = self._add_int_field(
-            frame,
-            "Ready duration (seconds)",
-            "ready_seconds",
-            settings.ready_seconds,
-            row,
-        )
 
         self._section_label(frame, "Status Colors", row)
         row += 1

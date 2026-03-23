@@ -152,9 +152,10 @@ The poll loop handles session discovery and PID validation. State detection is e
 │   SessionEnd ──────────────────────► (remove row)        │
 │                                                          │
 │ Controller intercepts Idle → Ready:                      │
-│   Stop ──► Ready (transient) ──timer──► Idle             │
+│   Stop ──► Ready (persists until row click)              │
 │                    │                                     │
-│                    └──new activity──► Working (cancel)    │
+│                    ├──row click──► Idle                   │
+│                    └──new activity──► Working             │
 │                                                          │
 │ No hook received yet ──────────────► Unknown              │
 │ PID not alive (poll) ──────────────► (remove row)        │
@@ -182,9 +183,6 @@ class Settings:
 
     # Poll
     poll_interval_seconds: int = 5
-
-    # Ready state
-    ready_seconds: int = 300
 
     # Status indicators (emoji)
     emoji_working: str = "🔄"

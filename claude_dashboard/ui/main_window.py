@@ -193,6 +193,13 @@ class MainWindow:
             else:
                 self._add_row(session, state, container)
 
+        # Re-order rows to match the sorted session list
+        for session, _, _ in sessions:
+            row = self._rows.get(session.pid)
+            if row:
+                row["frame"].pack_forget()
+                row["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
+
         # Empty state label
         if sessions:
             self._empty_label.pack_forget()
