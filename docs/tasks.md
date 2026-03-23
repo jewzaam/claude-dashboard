@@ -1,5 +1,10 @@
 # Tasks: Claude Dashboard
 
+> **Note (2026-03-23)**: This file reflects the original build plan. The hook migration
+> (equivalent to Phases 6-8 in scope) happened organically during live testing and is not
+> captured as discrete tasks here. See `docs/research-session-detection.md` for the
+> transcript-to-hooks evolution and `docs/plan.md` for the current architecture.
+
 - **Input**: `docs/plan.md`, `docs/spec.md`, `docs/research-session-detection.md`
 - **Prerequisites**: Plan complete, spec clarified, session detection research verified
 
