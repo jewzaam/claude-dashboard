@@ -18,7 +18,7 @@ class TestStartupCmd:
         assert "-m claude_dashboard" in cmd
         assert cmd.startswith('"')
 
-    @patch("sys.platform", "win32")
+    @patch("claude_dashboard.startup._IS_WINDOWS", True)
     def test_prefers_pythonw_on_windows(self, tmp_path):
         pythonw = tmp_path / "pythonw.exe"
         pythonw.touch()
@@ -26,7 +26,7 @@ class TestStartupCmd:
             cmd = _startup_cmd()
             assert "pythonw.exe" in cmd
 
-    @patch("sys.platform", "linux")
+    @patch("claude_dashboard.startup._IS_WINDOWS", False)
     def test_uses_sys_executable_on_linux(self):
         cmd = _startup_cmd()
         assert sys.executable in cmd or "python" in cmd
