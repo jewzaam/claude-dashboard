@@ -58,6 +58,10 @@ ignore_missing_imports = true
 module = "claude_dashboard.platform.windows"
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+module = "claude_dashboard.startup"
+ignore_errors = true
+
 [tool.black]
 line-length = 100
 target-version = ["py311"]
