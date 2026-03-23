@@ -14,15 +14,93 @@ _DEFAULT_COLOR = (128, 128, 128)  # Gray
 
 
 def generate_icon_image(*, color: tuple[int, int, int] = _DEFAULT_COLOR) -> Image.Image:
-    """Generate a PIL Image for the tray icon — filled circle with the given color."""
-    size = TRAY_ICON_SIZE
-    image = Image.new("RGBA", size, (0, 0, 0, 0))
+    """Generate a PIL Image for the tray icon — robot face with status badge.
+
+    Draws a vector robot face that fills the icon, with a small colored
+    dot in the bottom-right corner indicating session state.
+    """
+    size = TRAY_ICON_SIZE[0]
+    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    margin = 4
+
+    # --- Robot head (rounded rectangle fills most of the icon) ---
+    head_margin = 4
+    head_top = 8
+    head_bottom = size - 8
+    head_left = head_margin
+    head_right = size - head_margin
+    head_radius = 12
+    head_color = (180, 190, 205)  # Light steel blue-gray
+
+    draw.rounded_rectangle(
+        [head_left, head_top, head_right, head_bottom],
+        radius=head_radius,
+        fill=head_color,
+    )
+
+    # --- Antenna ---
+    antenna_x = size // 2
+    antenna_base = head_top
+    antenna_tip = 2
+    draw.line([(antenna_x, antenna_base), (antenna_x, antenna_tip)], fill=(140, 150, 165), width=3)
     draw.ellipse(
-        [margin, margin, size[0] - margin, size[1] - margin],
+        [antenna_x - 4, antenna_tip - 3, antenna_x + 4, antenna_tip + 5],
+        fill=(100, 180, 255),
+    )
+
+    # --- Eyes (rounded rectangles) ---
+    eye_top = head_top + 14
+    eye_bottom = eye_top + 14
+    eye_radius = 4
+    eye_color = (50, 60, 80)
+
+    # Left eye
+    draw.rounded_rectangle(
+        [head_left + 10, eye_top, head_left + 24, eye_bottom],
+        radius=eye_radius,
+        fill=eye_color,
+    )
+    # Right eye
+    draw.rounded_rectangle(
+        [head_right - 24, eye_top, head_right - 10, eye_bottom],
+        radius=eye_radius,
+        fill=eye_color,
+    )
+
+    # --- Mouth (horizontal line with rounded ends) ---
+    mouth_y = head_bottom - 16
+    mouth_left = head_left + 14
+    mouth_right = head_right - 14
+    draw.rounded_rectangle(
+        [mouth_left, mouth_y, mouth_right, mouth_y + 6],
+        radius=3,
+        fill=eye_color,
+    )
+
+    # --- Status badge (colored dot, bottom-right corner) ---
+    badge_radius = 9
+    badge_cx = size - badge_radius - 1
+    badge_cy = size - badge_radius - 1
+    # White outline for contrast
+    draw.ellipse(
+        [
+            badge_cx - badge_radius - 2,
+            badge_cy - badge_radius - 2,
+            badge_cx + badge_radius + 2,
+            badge_cy + badge_radius + 2,
+        ],
+        fill=(255, 255, 255),
+    )
+    draw.ellipse(
+        [
+            badge_cx - badge_radius,
+            badge_cy - badge_radius,
+            badge_cx + badge_radius,
+            badge_cy + badge_radius,
+        ],
         fill=color,
     )
+
     return image
 
 
