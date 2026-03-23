@@ -5,10 +5,10 @@ import logging
 import platform as _plat
 import tkinter as tk
 from dataclasses import asdict
-from tkinter import colorchooser
 from typing import Callable
 
 from claude_dashboard.settings import Settings
+from claude_dashboard.ui.color_picker import ColorPickerDialog
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,7 @@ class SettingsWindow:
         row = self._add_checkbox(
             frame, "Always on top", "always_on_top", settings.always_on_top, row
         )
+        row = self._add_checkbox(frame, "Grow upward", "grow_up", settings.grow_up, row)
 
         self._section_label(frame, "Rows", row)
         row += 1
@@ -83,11 +84,25 @@ class SettingsWindow:
             settings.poll_interval_seconds,
             row,
         )
+        row = self._add_int_field(
+            frame,
+            "Ready duration (seconds)",
+            "ready_seconds",
+            settings.ready_seconds,
+            row,
+        )
 
         self._section_label(frame, "Status Colors", row)
         row += 1
         row = self._add_color_field(
             frame, f"{settings.emoji_working} Working", "color_working", settings.color_working, row
+        )
+        row = self._add_color_field(
+            frame,
+            f"{settings.emoji_ready} Ready",
+            "color_ready",
+            settings.color_ready,
+            row,
         )
         row = self._add_color_field(
             frame, f"{settings.emoji_idle} Idle", "color_idle", settings.color_idle, row
@@ -166,10 +181,23 @@ class SettingsWindow:
         preview.grid(row=row, column=1, padx=4, sticky=tk.W, pady=2)
 
         def _pick() -> None:
-            result = colorchooser.askcolor(color=color_val[0], title=f"Choose {label}")
-            if result[1]:
-                color_val[0] = result[1]
-                preview.configure(bg=result[1])
+            def _on_choose(hex_color: str) -> None:
+                color_val[0] = hex_color
+                preview.configure(bg=hex_color)
+
+            def _on_picker_position(x: int, y: int) -> None:
+                self._picker_pos = (x, y)
+
+            pos = getattr(self, "_picker_pos", None)
+            ColorPickerDialog(
+                self._window,
+                title=f"Choose {label}",
+                initial_color=color_val[0],
+                on_choose=_on_choose,
+                position_x=pos[0] if pos else self._base_settings.color_picker_x,
+                position_y=pos[1] if pos else self._base_settings.color_picker_y,
+                on_position_save=_on_picker_position,
+            )
 
         tk.Button(parent, text="Pick...", command=_pick, width=6).grid(
             row=row, column=2, padx=4, pady=2
@@ -211,8 +239,24 @@ class SettingsWindow:
             merged["settings_y"] = self._window.winfo_y()
         except tk.TclError:
             pass
+        pos = getattr(self, "_picker_pos", None)
+        if pos:
+            merged["color_picker_x"] = pos[0]
+            merged["color_picker_y"] = pos[1]
         self._on_save(Settings(**merged))
         self._window.destroy()
 
     def _on_close(self):
+        """Cancel — discard value changes but persist window positions."""
+        merged = {**asdict(self._base_settings)}
+        try:
+            merged["settings_x"] = self._window.winfo_x()
+            merged["settings_y"] = self._window.winfo_y()
+        except tk.TclError:
+            pass
+        pos = getattr(self, "_picker_pos", None)
+        if pos:
+            merged["color_picker_x"] = pos[0]
+            merged["color_picker_y"] = pos[1]
+        self._on_save(Settings(**merged))
         self._window.destroy()

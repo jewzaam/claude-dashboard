@@ -31,6 +31,7 @@ class StatusState(Enum):
     """Possible states of a Claude Code session."""
 
     WORKING = "working"
+    READY = "ready"
     IDLE = "idle"
     AWAITING_INPUT = "awaiting_input"
     PERMISSION_REQUIRED = "permission_required"
@@ -42,8 +43,12 @@ DEFAULT_ROW_HEIGHT = 32
 DEFAULT_ROW_WIDTH = 400
 DEFAULT_ALWAYS_ON_TOP = True
 
+# Ready state duration (seconds) — transient state between Working and Idle
+DEFAULT_READY_SECONDS = 300  # 5 minutes
+
 # Status emojis
 DEFAULT_EMOJI_WORKING = "\U0001f504"  # 🔄
+DEFAULT_EMOJI_READY = "\u23f8\ufe0f"  # ⏸️ (same icon as idle, color distinguishes)
 DEFAULT_EMOJI_IDLE = "\u23f8\ufe0f"  # ⏸️
 DEFAULT_EMOJI_AWAITING_INPUT = "\u2753"  # ❓
 DEFAULT_EMOJI_PERMISSION_REQUIRED = "\u26a0\ufe0f"  # ⚠️
@@ -51,6 +56,7 @@ DEFAULT_EMOJI_UNKNOWN = "\U0001f937"  # 🤷
 
 # Status colors (row background)
 DEFAULT_COLOR_WORKING = "#1a3a5c"
+DEFAULT_COLOR_READY = "#1a5c3a"
 DEFAULT_COLOR_IDLE = "#2a2a2a"
 DEFAULT_COLOR_AWAITING_INPUT = "#1a4a2a"
 DEFAULT_COLOR_PERMISSION_REQUIRED = "#5c4a1a"

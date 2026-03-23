@@ -21,7 +21,10 @@ class Settings:
     window_y: int | None = None
     settings_x: int | None = None
     settings_y: int | None = None
+    color_picker_x: int | None = None
+    color_picker_y: int | None = None
     always_on_top: bool = config.DEFAULT_ALWAYS_ON_TOP
+    grow_up: bool = False
 
     # Row dimensions
     row_height: int = config.DEFAULT_ROW_HEIGHT
@@ -30,8 +33,12 @@ class Settings:
     # Poll
     poll_interval_seconds: int = config.DEFAULT_POLL_INTERVAL_SECONDS
 
+    # Ready state
+    ready_seconds: int = config.DEFAULT_READY_SECONDS
+
     # Status emojis
     emoji_working: str = config.DEFAULT_EMOJI_WORKING
+    emoji_ready: str = config.DEFAULT_EMOJI_READY
     emoji_idle: str = config.DEFAULT_EMOJI_IDLE
     emoji_awaiting_input: str = config.DEFAULT_EMOJI_AWAITING_INPUT
     emoji_permission_required: str = config.DEFAULT_EMOJI_PERMISSION_REQUIRED
@@ -39,6 +46,7 @@ class Settings:
 
     # Status colors
     color_working: str = config.DEFAULT_COLOR_WORKING
+    color_ready: str = config.DEFAULT_COLOR_READY
     color_idle: str = config.DEFAULT_COLOR_IDLE
     color_awaiting_input: str = config.DEFAULT_COLOR_AWAITING_INPUT
     color_permission_required: str = config.DEFAULT_COLOR_PERMISSION_REQUIRED
