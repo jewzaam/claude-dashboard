@@ -85,6 +85,12 @@ class SettingsWindow:
             row,
         )
 
+        self._section_label(frame, "Startup", row)
+        row += 1
+        row = self._add_checkbox(
+            frame, "Start on login", "run_on_startup", settings.run_on_startup, row
+        )
+
         self._section_label(frame, "Status Colors", row)
         row += 1
         row = self._add_color_field(
@@ -129,7 +135,12 @@ class SettingsWindow:
         tk.Button(btn_frame, text="Cancel", command=self._on_close, width=8).pack(
             side=tk.RIGHT, padx=(4, 0)
         )
-        tk.Button(btn_frame, text="Save", command=self._on_save_click, width=8).pack(side=tk.RIGHT)
+        tk.Button(btn_frame, text="Save", command=self._on_save_click, width=8).pack(
+            side=tk.RIGHT, padx=(4, 0)
+        )
+        tk.Button(btn_frame, text="Apply", command=self._on_apply_click, width=8).pack(
+            side=tk.RIGHT
+        )
 
     # ------------------------------------------------------------------
     # Field builders
@@ -217,8 +228,8 @@ class SettingsWindow:
     # Save / Close
     # ------------------------------------------------------------------
 
-    def _on_save_click(self):
-        """Merge form values into existing settings and invoke save callback."""
+    def _gather_settings(self) -> Settings:
+        """Merge form values and window positions into a Settings object."""
         merged = {**asdict(self._base_settings)}
         for key, var in self._vars.items():
             try:
@@ -236,11 +247,21 @@ class SettingsWindow:
         if pos:
             merged["color_picker_x"] = pos[0]
             merged["color_picker_y"] = pos[1]
-        self._on_save(Settings(**merged))
+        return Settings(**merged)
+
+    def _on_apply_click(self):
+        """Apply settings and persist, keep window open."""
+        settings = self._gather_settings()
+        self._base_settings = settings
+        self._on_save(settings)
+
+    def _on_save_click(self):
+        """Apply settings, persist, and close."""
+        self._on_apply_click()
         self._window.destroy()
 
     def _on_close(self):
-        """Cancel — discard value changes but persist window positions."""
+        """Cancel — persist window/picker positions only, then close."""
         merged = {**asdict(self._base_settings)}
         try:
             merged["settings_x"] = self._window.winfo_x()

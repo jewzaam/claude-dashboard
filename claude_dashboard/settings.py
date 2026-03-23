@@ -33,6 +33,9 @@ class Settings:
     # Poll
     poll_interval_seconds: int = config.DEFAULT_POLL_INTERVAL_SECONDS
 
+    # Startup
+    run_on_startup: bool = False
+
     # Status emojis
     emoji_working: str = config.DEFAULT_EMOJI_WORKING
     emoji_ready: str = config.DEFAULT_EMOJI_READY

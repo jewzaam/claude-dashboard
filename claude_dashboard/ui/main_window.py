@@ -52,6 +52,7 @@ class MainWindow:
         self._drag_start_x = 0
         self._drag_start_y = 0
         self._dragged = False  # True if mouse moved significantly since button-down
+        self._force_resize = False
 
         # Create the window shell — apply_settings handles all configuration
         self._window = tk.Toplevel(root)
@@ -62,7 +63,7 @@ class MainWindow:
 
         self._empty_label = tk.Label(
             self._frame,
-            text="No Claude sessions",
+            text="No visible Claude sessions",
             fg=_COLOR_EMPTY_FG,
             font=_FONT_BODY,
         )
@@ -83,6 +84,7 @@ class MainWindow:
     def apply_settings(self, settings: Settings, *, restore_position: bool = False):
         """Apply settings to the window. Does NOT change position unless restore_position=True."""
         self._settings = settings
+        self._force_resize = True
 
         # Window attributes
         self._window.wm_attributes("-topmost", bool(settings.always_on_top))
@@ -162,6 +164,7 @@ class MainWindow:
     def _on_right_click_event(self, event: Any):
         if self._on_right_click:
             self._on_right_click(event.x_root, event.y_root)
+        return "break"
 
     # ------------------------------------------------------------------
     # Position persistence
@@ -215,8 +218,9 @@ class MainWindow:
             self._empty_label.pack(pady=10)
 
         # Only recalculate geometry when rows were added/removed/reordered
-        if not changed:
+        if not changed and not self._force_resize:
             return
+        self._force_resize = False
 
         # Resize height, preserve position (or anchor bottom edge if grow_up)
         self._window.update_idletasks()
