@@ -43,9 +43,6 @@ DEFAULT_ROW_HEIGHT = 32
 DEFAULT_ROW_WIDTH = 400
 DEFAULT_ALWAYS_ON_TOP = True
 
-# Ready state duration (seconds) — transient state between Working and Idle
-DEFAULT_READY_SECONDS = 300  # 5 minutes
-
 # Status emojis
 DEFAULT_EMOJI_WORKING = "\U0001f504"  # 🔄
 DEFAULT_EMOJI_READY = "\u23f8\ufe0f"  # ⏸️ (same icon as idle, color distinguishes)

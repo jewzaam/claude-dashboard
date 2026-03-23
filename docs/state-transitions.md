@@ -21,7 +21,6 @@ flowchart LR
         Working -->|"Needs approval"| Permission
         Working -->|"Asks a question"| Awaiting
 
-        Ready -->|"Timeout (ready_seconds)"| Idle
         Ready -->|"You click the row"| Idle
         Ready -->|"You type a prompt"| Working
 
@@ -50,7 +49,7 @@ flowchart LR
 |-------|-------|-------|--------------|
 | Unknown | 🤷 | Dark gray (#3a3a3a) | Dashboard hasn't seen any activity from this session yet |
 | Working | 🔄 | Blue (#1a3a5c) | Claude is doing something — processing your prompt, reading files, running commands |
-| Ready | ⏸️ | Green (#1a5c3a) | Claude just finished. Transient attention state — auto-transitions to Idle after `ready_seconds` (default 5 min). Any new activity cancels the timer and goes back to Working. |
+| Ready | ⏸️ | Green (#1a5c3a) | Claude just finished. Persists until you click the row to acknowledge. New activity goes back to Working. |
 | Idle | ⏸️ | Gray (#2a2a2a) | Claude finished a while ago. Ball is in your court |
 | Awaiting Input | ❓ | Green (#1a4a2a) | Claude asked you a question and is waiting for your answer |
 | Permission Required | ⚠️ | Orange (#5c4a1a) | Claude wants to run something and needs your approval |
@@ -74,9 +73,9 @@ The system tray icon color reflects the most urgent state across all sessions:
 
 ### Ready state
 
-When a `Stop` hook event arrives, the controller intercepts the IDLE transition and sets the state to READY instead. A Tkinter `after()` timer is scheduled for `ready_seconds * 1000` ms. When the timer fires, the state transitions to IDLE. If any new hook event arrives before the timer fires, the timer is cancelled and the state goes to WORKING (or whatever the new event maps to).
+When a `Stop` hook event arrives, the controller intercepts the IDLE transition and sets the state to READY instead. Ready persists indefinitely until the user clicks the row, which clears it to IDLE. If new activity arrives (any hook event), the state goes back to WORKING.
 
-The Ready state exists so users can notice when Claude finishes -- the color change from Working (blue) to Ready (green) is visually distinct. After the configurable timeout, it fades to the less prominent Idle (dark gray). Clicking a Ready row also immediately transitions it to Idle, clearing the attention indicator so it does not compete with other Ready sessions the user hasn't checked yet.
+The Ready state exists so users can notice when Claude finishes -- the color change from Working (blue) to Ready (green) is visually distinct and persists until acknowledged. Clicking the row clears the indicator so it does not compete with other Ready sessions the user hasn't checked yet.
 
 ### Interruption gap
 

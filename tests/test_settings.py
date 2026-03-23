@@ -88,9 +88,8 @@ class TestSaveSettings:
         loaded = load_settings(path=tmp_settings_path)
         assert loaded.window_x == 2
 
-    def test_ready_settings_roundtrip(self, tmp_settings_path):
-        original = Settings(ready_seconds=120, color_ready="#00ff00")
+    def test_ready_color_roundtrip(self, tmp_settings_path):
+        original = Settings(color_ready="#00ff00")
         save_settings(original, path=tmp_settings_path)
         loaded = load_settings(path=tmp_settings_path)
-        assert loaded.ready_seconds == 120
         assert loaded.color_ready == "#00ff00"
