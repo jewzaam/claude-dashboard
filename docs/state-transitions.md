@@ -22,6 +22,7 @@ flowchart LR
         Working -->|"Asks a question"| Awaiting
 
         Ready -->|"Timeout (ready_seconds)"| Idle
+        Ready -->|"You click the row"| Idle
         Ready -->|"You type a prompt"| Working
 
         Idle -->|"You type a prompt"| Working
@@ -75,7 +76,7 @@ The system tray icon color reflects the most urgent state across all sessions:
 
 When a `Stop` hook event arrives, the controller intercepts the IDLE transition and sets the state to READY instead. A Tkinter `after()` timer is scheduled for `ready_seconds * 1000` ms. When the timer fires, the state transitions to IDLE. If any new hook event arrives before the timer fires, the timer is cancelled and the state goes to WORKING (or whatever the new event maps to).
 
-The Ready state exists so users can notice when Claude finishes -- the color change from Working (blue) to Ready (green) is visually distinct. After the configurable timeout, it fades to the less prominent Idle (dark gray).
+The Ready state exists so users can notice when Claude finishes -- the color change from Working (blue) to Ready (green) is visually distinct. After the configurable timeout, it fades to the less prominent Idle (dark gray). Clicking a Ready row also immediately transitions it to Idle, clearing the attention indicator so it does not compete with other Ready sessions the user hasn't checked yet.
 
 ### Interruption gap
 
