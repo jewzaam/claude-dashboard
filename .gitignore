@@ -21,4 +21,6 @@ htmlcov/
 .idea/
 
 # App settings (user-specific)
-settings.json
+settings.local.json
+
+.obsidian

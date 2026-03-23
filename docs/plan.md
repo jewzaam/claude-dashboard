@@ -8,7 +8,7 @@
 
 ## Summary
 
-A cross-platform Python/Tkinter dashboard that discovers running Claude Code sessions via `~/.claude/sessions/*.json`, detects their state by tailing transcript JSONL files, displays them as a configurable vertical stack of rows, and enables click-to-foreground navigation by walking the process tree to the containing application window.
+A cross-platform Python/Tkinter dashboard that discovers running Claude Code sessions via `~/.claude/sessions/*.json`, detects their state via HTTP hooks from Claude Code, displays them as a configurable vertical stack of rows, and enables click-to-foreground navigation by walking the process tree to the containing application window.
 
 ## Technical Context
 
@@ -19,7 +19,7 @@ A cross-platform Python/Tkinter dashboard that discovers running Claude Code ses
 - **Target Platform**: Windows 11, Linux (X11; Wayland deferred)
 - **Project Type**: Desktop application (single-user utility)
 - **Performance Goals**: < 1% CPU at idle, poll cycle completes in < 100ms
-- **Constraints**: No elevated privileges, no network calls, read-only access to Claude CLI files
+- **Constraints**: No elevated privileges, localhost HTTP only (port 17384 for hook events), read-only access to Claude CLI files
 - **Scale/Scope**: 1-10 concurrent sessions, single user
 
 ## Constitution Check
@@ -35,12 +35,14 @@ A cross-platform Python/Tkinter dashboard that discovers running Claude Code ses
 
 ## Data Independence
 
-This project is self-contained. All data dependencies are core Claude CLI files that exist on any Claude Code installation:
+This project depends on core Claude CLI files and a user-installed hook configuration:
 
-- `~/.claude/sessions/*.json` — session registry (PID, CWD, session ID)
-- `~/.claude/projects/{project}/{sessionId}.jsonl` — session transcripts
+- `~/.claude/sessions/*.json` — session registry (PID, CWD, session ID) — core CLI, always present
+- `~/.claude/settings.json` — must include hook configuration installed via `make install-hooks`
+- `hooks-settings.json` — ships with the project, defines the hook endpoints
+- `scripts/install_hooks.py` — deep-merges hook config into user's Claude settings
 
-No dependency on user-configured hooks, scripts, or external tooling. If future features need additional data from Claude (e.g., statusline metadata), the dashboard will implement its own hooks. If a hook is not configured, functionality must degrade gracefully — never break.
+The hooks are non-blocking. If the dashboard is not running, Claude sessions are unaffected — the HTTP POST fails silently. If hooks are not installed, the dashboard still discovers sessions but cannot determine their state (all sessions show Unknown).
 
 ## Project Structure
 
@@ -53,8 +55,9 @@ claude_dashboard/
 ├── config.py                # Constants, defaults
 ├── settings.py              # Settings dataclass, JSON load/save
 ├── controller.py            # Main dashboard (poll loop, state management)
-├── session.py               # Session discovery, state detection
-├── transcript.py            # Transcript JSONL parser, state machine
+├── session.py               # Session discovery, PID validation
+├── transcript.py            # StatusState enum, map_event_to_state()
+├── hook_server.py           # HTTP server receiving hook events (port 17384)
 ├── tray.py                  # System tray icon (pystray)
 ├── platform/
 │   ├── __init__.py
@@ -69,20 +72,23 @@ claude_dashboard/
 tests/
 ├── conftest.py
 ├── test_session.py          # Session discovery tests
-├── test_transcript.py       # Transcript parsing, state machine tests
+├── test_transcript.py       # StatusState enum, hook event mapping tests
+├── test_hook_server.py      # Hook HTTP server tests (4 tests)
 ├── test_settings.py         # Settings persistence tests
 └── fixtures/
     ├── sample_session.json
-    ├── sample_transcript.jsonl
     └── sample_settings.json
 
 scripts/
-└── detect_sessions.py       # Standalone diagnostic tool (already written)
+├── detect_sessions.py       # Standalone diagnostic tool (already written)
+└── install_hooks.py         # Deep-merge hooks-settings.json into ~/.claude/settings.json
+
+hooks-settings.json          # Hook configuration for Claude Code
 
 .github/
 └── workflows/               # CI: test, lint, typecheck, format, coverage
 
-Makefile                     # check, install-dev, format, lint, typecheck, test, coverage
+Makefile                     # check, install-dev, install-hooks, format, lint, typecheck, test, coverage
 TEST_PLAN.md                 # Testing strategy per standards
 pyproject.toml
 README.md
@@ -94,8 +100,9 @@ README.md
 |------|---------------|---------------------------|
 | `controller.py` | Central dashboard: owns root Tk, poll loop, coordinates subsystems | `controller.py` — AppController |
 | `settings.py` | Dataclass + atomic JSON I/O with validation | `settings.py` — Settings dataclass |
-| `session.py` | Read `sessions/*.json`, validate PIDs, resolve transcript paths | `api.py` — external data fetch |
-| `transcript.py` | Tail JSONL, apply state machine, return StatusState | New (no equivalent) |
+| `session.py` | Read `sessions/*.json`, validate PIDs | `api.py` — external data fetch |
+| `transcript.py` | StatusState enum, `map_event_to_state()` | New (no equivalent) |
+| `hook_server.py` | HTTP server on port 17384, receives hook events, dispatches to callbacks | New (no equivalent) |
 | `ui/main_window.py` | Dynamic row grid, status indicators, click handlers | `ui/main_window.py` — countdown grid |
 | `ui/settings_window.py` | Modal dialog for editing settings | `ui/settings_window.py` — modal |
 | `tray.py` | System tray icon with context menu, attention indicator | `tray.py` — pystray integration |
@@ -103,7 +110,7 @@ README.md
 
 ## Architecture
 
-### Threading Model (from d4-timer-w11)
+### Threading Model
 
 ```
 Main Thread (Tkinter)
@@ -111,33 +118,40 @@ Main Thread (Tkinter)
 ├── _tick() every 5000ms (configurable)
 │   ├── discover_sessions()      # Read sessions/*.json
 │   ├── validate_pids()          # psutil.pid_exists
-│   ├── detect_states()          # Tail transcripts
 │   ├── detect_containers()      # Walk process trees (cached)
 │   └── update_ui()              # Add/remove/update rows
 └── UI event handlers
     ├── row click → foreground_window()
     └── tray menu → show/hide/settings/quit
+
+Hook Server Thread (HTTP, daemon)
+├── HookServer on port 17384
+├── POST /hook → parse JSON → map_event_to_state()
+│   ├── on_hook_event(session_id, event, state)  # State updates
+│   └── on_session_end(session_id)               # Session removal
+└── Non-blocking: if dashboard down, Claude unaffected
 ```
 
-Single-threaded. The poll operations are all local file reads and process queries — fast enough to run on the main thread within a single tick. No worker threads needed for MVP.
+The poll loop handles session discovery and PID validation. State detection is event-driven via the hook server — no transcript parsing. The hook server runs on a daemon thread and dispatches callbacks to the main thread for UI updates.
 
-### State Machine (from research-session-detection.md)
+### State Machine (hook event driven)
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│ Tail last N lines of transcript JSONL               │
+│ HTTP POST /hook from Claude Code                    │
 │                                                     │
-│ Find last type="assistant" entry:                   │
-│   stop_reason="end_turn" ──────────► AwaitingInput  │
-│   stop_reason="tool_use"                            │
-│     + no subsequent tool result ──► PermissionReq   │
-│     + subsequent tool result ─────► Working         │
+│ Hook Event:                                         │
+│   UserPromptSubmit ────────────────► Working         │
+│   PreToolUse (regular tool) ───────► Working         │
+│   PreToolUse (AskUserQuestion) ────► AwaitingInput   │
+│   PermissionRequest ───────────────► PermissionReq   │
+│   PostToolUse ─────────────────────► Working         │
+│   Stop ────────────────────────────► Idle            │
+│   SessionEnd ──────────────────────► (remove row)   │
 │                                                     │
-│ Last entry is type="user" (prompt) ► Working        │
+│ No hook received yet ──────────────► Unknown         │
 │                                                     │
-│ Cannot determine ─────────────────► Unknown         │
-│                                                     │
-│ PID not alive ────────────────────► (remove row)    │
+│ PID not alive (poll) ──────────────► (remove row)   │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -185,24 +199,13 @@ class Settings:
 
 See `scripts/detect_sessions.py` for working implementation.
 
-### Transcript Path Resolution
+### Hook Configuration
 
-The transcript path is constructed directly from `sessions/{PID}.json` data — no external dependencies:
+The dashboard ships `hooks-settings.json` which configures Claude Code to POST hook events to `http://localhost:17384/hook`. The `scripts/install_hooks.py` script deep-merges this into `~/.claude/settings.json`.
 
-```
-Session file (sessions/{PID}.json)
-  → cwd (e.g., "C:\Users\user\source\claude-dashboard")
-  → sessionId (e.g., "5fda2c96-...")
+Hook events: `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `Stop`, `SessionEnd`.
 
-Encode CWD as project key:
-  → Replace path separators and colons with dashes
-  → e.g., "C--Users-user-source-claude-dashboard"
-
-Construct transcript path:
-  → ~/.claude/projects/{project_key}/{sessionId}.jsonl
-```
-
-No dependency on session-tracker or any external data source.
+Port 17384 is fixed (not configurable). The hooks are non-blocking — if the dashboard is not running, the POST fails silently and Claude sessions are unaffected.
 
 ## Coding Standards (from ~/source/standards/)
 
@@ -245,10 +248,11 @@ claude-dashboard = "claude_dashboard.__main__:main"
 
 ### Phase 1 — Session Discovery & State Detection (P1, no UI)
 
-1. `session.py` — read `sessions/*.json`, validate PIDs, construct transcript paths
-2. `transcript.py` — parse JSONL, implement state machine
-3. Tests for both with fixture data
-4. Verify against live sessions using `detect_sessions.py` patterns
+1. `session.py` — read `sessions/*.json`, validate PIDs
+2. `transcript.py` — StatusState enum, `map_event_to_state()`
+3. `hook_server.py` — HTTP server on port 17384, hook event dispatch
+4. `hooks-settings.json` + `scripts/install_hooks.py` — hook configuration installer
+5. Tests for all with fixture data and live HTTP tests
 
 ### Phase 2 — Dashboard UI (P1)
 
@@ -278,8 +282,9 @@ claude-dashboard = "claude_dashboard.__main__:main"
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Transcript format changes in Claude CLI update | State detection breaks | Pin to known transcript schema; validate on parse; graceful fallback to Unknown |
+| Hook event format changes in Claude CLI update | State detection breaks | Validate hook payloads; unknown events are ignored; graceful fallback to Unknown |
 | `sessions/` directory behavior changes | Session discovery breaks | Fallback to process enumeration via psutil |
 | VS Code window title format changes | Window matching breaks | Fuzzy match; fallback to foregrounding any Code.exe window |
 | Wayland on Linux lacks xdotool | Foregrounding fails on Wayland | Detect compositor; degrade gracefully with error message |
-| Large transcript files slow polling | Tick exceeds poll interval | Read only last N bytes (seek to end), not full file |
+| Port 17384 already in use | Hook server fails to start | Log error clearly; dashboard still works for session discovery but state is Unknown |
+| Hooks not installed | No state updates received | Dashboard shows Unknown for all sessions; `make install-hooks` documented in README |

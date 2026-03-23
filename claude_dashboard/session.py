@@ -81,51 +81,6 @@ def encode_project_key(cwd: str) -> str:
     return normalized
 
 
-def resolve_transcript_path(
-    cwd: str,
-    session_id: str,
-    *,
-    projects_dir: Path | None = None,
-) -> Path | None:
-    """Construct the transcript path from CWD and session ID.
-
-    Returns None if the path does not exist.
-    """
-    directory = projects_dir or config.PROJECTS_DIR
-    project_key = encode_project_key(cwd)
-    transcript_path = directory / project_key / f"{session_id}.jsonl"
-
-    if transcript_path.exists():
-        return transcript_path
-
-    # Fallback 1: scan all project dirs for this session ID
-    if directory.is_dir():
-        for project_dir in directory.iterdir():
-            if not project_dir.is_dir():
-                continue
-            candidate = project_dir / f"{session_id}.jsonl"
-            if candidate.exists():
-                return candidate
-
-    # Fallback 2: session may have been resumed — find the most recently
-    # modified transcript in the project dir matching the encoded CWD.
-    # This handles resumed sessions where the transcript exists under
-    # the original (pre-resume) session ID.
-    project_dir = directory / project_key
-    if project_dir.is_dir():
-        newest = None
-        newest_mtime = 0.0
-        for candidate in project_dir.glob("*.jsonl"):
-            mtime = candidate.stat().st_mtime
-            if mtime > newest_mtime:
-                newest = candidate
-                newest_mtime = mtime
-        if newest:
-            return newest
-
-    return None
-
-
 def cwd_relative_to_home(cwd: str) -> str:
     """Convert a CWD path to be relative to ~.
 

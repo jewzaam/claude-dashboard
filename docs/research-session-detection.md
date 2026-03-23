@@ -214,19 +214,36 @@ On row click:
   5. Foreground that window
 ```
 
-## Enhancement: Hooks for Real-Time Updates
+## Evolution: From Transcript Parsing to HTTP Hooks
 
-For instant permission detection (no polling lag), configure a hook:
+The original MVP (v0.1.0) used transcript-based state detection: the dashboard polled `~/.claude/projects/{project}/{sessionId}.jsonl`, read the last N lines, and applied a state machine based on `stop_reason` values in assistant entries. This worked but had limitations:
 
-```json
-{
-  "hooks": {
-    "PreToolUse": [{
-      "matcher": "",
-      "hooks": [{"type": "command", "command": "...write event to dashboard pipe..."}]
-    }]
-  }
-}
-```
+1. **Polling latency**: State changes were only detected at the next poll cycle (default 5s).
+2. **Transcript parsing complexity**: The state machine had to handle edge cases like interrupted sessions, orphaned tool results, hook progress entries, and denial flows.
+3. **File I/O overhead**: Reading the tail of transcript files every poll cycle.
+4. **Transcript path resolution**: Session IDs don't always match transcript filenames (resumed sessions), requiring fallback scanning.
 
-This is optional — transcript tailing works without it, just with polling latency.
+### The Hook-Based Architecture (v0.2.0)
+
+The dashboard now uses Claude Code HTTP hooks for state detection. A local HTTP server (`hook_server.py`) runs on port 17384 and receives POST requests from Claude Code at each lifecycle event.
+
+**Hook events and their state mappings:**
+
+| Hook Event | StatusState | Notes |
+|------------|------------|-------|
+| `UserPromptSubmit` | Working | User sent a prompt |
+| `PreToolUse` | Working | Tool about to execute (except AskUserQuestion → AwaitingInput) |
+| `PermissionRequest` | PermissionRequired | Tool needs user approval |
+| `PostToolUse` | Working | Tool finished executing |
+| `Stop` | Idle | Claude finished responding |
+| `SessionEnd` | (remove) | Session terminated |
+
+**Advantages over transcript parsing:**
+- Real-time state updates (no polling delay for state changes)
+- Simpler code — no JSONL parsing, no state machine inference, no transcript path resolution for state detection
+- Non-blocking — if the dashboard is not running, Claude sessions are unaffected
+- Session discovery still uses polling (`~/.claude/sessions/*.json`), but state detection is event-driven
+
+**Setup:** Users run `make install-hooks` to deep-merge `hooks-settings.json` into `~/.claude/settings.json`. The hook configuration tells Claude Code to POST events to `http://localhost:17384/hook`.
+
+**Trade-off:** The dashboard now depends on hook configuration being present. Without hooks, sessions are discovered but all show Unknown state. The previous transcript-based approach required no configuration. This trade-off is acceptable because the hook setup is a one-time operation and the real-time state updates are a significant UX improvement.

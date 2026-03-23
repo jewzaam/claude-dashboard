@@ -102,11 +102,11 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 ### Edge Cases
 
 - **Session starts/stops between polls**: The dashboard shows state as of the last poll. If a session started and stopped between two polls, it was never visible. This is acceptable — if the session file was cleaned up, there's nothing to show.
-- **Unknown status**: If status cannot be inferred from the transcript, show the "unknown" indicator (🤷). Do not guess.
+- **Unknown status**: If no hook event has been received for a session, show the "unknown" indicator (🤷). Do not guess.
 - **Process foregrounding fails**: Show a brief error or do nothing. Do not crash.
 - **Two sessions share the same CWD**: Display as independent rows. Order deterministically by PID (lower PID first). Both rows click-navigate to the same containing window if they share a parent process.
 - **No running Claude sessions**: Show an empty dashboard (no rows). Not an error state.
-- **Interrupted/cancelled sessions**: When a user interrupts Claude mid-response (e.g., Ctrl+C), the transcript may end in an intermediate state with no clean `stop_reason`. The dashboard MUST handle this gracefully — it may show Working or Unknown depending on what the last transcript entry contains. It MUST NOT crash or display stale state indefinitely.
+- **Interrupted/cancelled sessions**: When a user interrupts Claude mid-response (e.g., Ctrl+C), no further hook events are sent. The dashboard retains the last known state until the next poll cycle detects the PID is dead and removes the session. It MUST NOT crash or display stale state indefinitely.
 - **Lock screen**: No special behavior. The dashboard is not visible on the lock screen.
 
 ## Clarifications
@@ -135,13 +135,13 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 - **FR-004**: Each row MUST show a status indicator (emoji + row color)
 - **FR-005**: Status states MUST include: Working, Idle, Awaiting Input, Permission Required, Unknown. Dead sessions are removed (no Stopped state displayed).
 
-  | State | Enum Value | Trigger | Emoji | Description |
-  |-------|-----------|---------|-------|-------------|
-  | Working | `Working` | Claude is generating or a tool result was returned | 🔄 | Active processing |
-  | Idle | `Idle` | `stop_reason: "end_turn"`, no pending AskUserQuestion | ⏸️ | Finished responding, waiting for next user prompt |
-  | Awaiting Input | `AwaitingInput` | Claude invoked AskUserQuestion tool, waiting for answer | ❓ | Claude asked a question, actively waiting for user answer |
-  | Permission Required | `PermissionRequired` | `stop_reason: "tool_use"` with no subsequent tool result | ⚠️ | Tool approval needed |
-  | Unknown | `Unknown` | State cannot be determined from transcript | 🤷 | Fallback |
+  | State | Enum Value | Hook Event Trigger | Emoji | Description |
+  |-------|-----------|-------------------|-------|-------------|
+  | Working | `Working` | `UserPromptSubmit`, `PreToolUse` (non-AskUserQuestion), `PostToolUse` | 🔄 | Active processing |
+  | Idle | `Idle` | `Stop` | ⏸️ | Finished responding, waiting for next user prompt |
+  | Awaiting Input | `AwaitingInput` | `PreToolUse` with tool_name=`AskUserQuestion` | ❓ | Claude asked a question, actively waiting for user answer |
+  | Permission Required | `PermissionRequired` | `PermissionRequest` | ⚠️ | Tool approval needed |
+  | Unknown | `Unknown` | No hook event received yet | 🤷 | Fallback |
 - **FR-006**: Row width MUST be fixed (configurable, not dynamic). Text exceeding width is truncated.
 - **FR-007**: System MUST persist settings to a JSON file (row height, width, colors, emojis, window position, poll interval). Settings changes MUST apply live to the dashboard without hiding or repositioning it — the dashboard redraws in place with updated values.
 - **FR-008**: System MUST restore window position on restart
@@ -151,7 +151,7 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 - **FR-012**: Clicking a row MUST bring the containing application window to the foreground. Click vs drag MUST be distinguished: a short click (< 5px of movement) navigates to the session window; a click-hold+drag (>= 5px of movement) moves the dashboard window. This prevents accidental navigation when repositioning the dashboard.
 - **FR-013**: System MUST handle parent process chain traversal (Claude → shell → VS Code / terminal)
 - **FR-014**: System MUST handle virtual desktop switching when foregrounding
-- **FR-015**: System MUST detect session state by tailing `~/.claude/projects/{project}/{sessionId}.jsonl` (transcript) — the last entries determine state per the state machine in `research-session-detection.md`
+- **FR-015**: System MUST detect session state via HTTP hooks. Claude Code posts hook events to the dashboard's local HTTP server (`POST http://localhost:17384/hook`). The server maps hook event names to StatusState values using `map_event_to_state()`. No transcript parsing is performed.
 - **FR-016**: System MUST poll for session changes at a user-configurable interval (default: 5 seconds)
 - **FR-017**: System MUST validate session PIDs are still alive (cross-reference with OS process list) to handle stale session files
 - **FR-018**: [DEFERRED] Enriched metadata (model, cost, context window %, rate limits) is not consumed in MVP. If needed later, the dashboard will configure its own statusline hook rather than depending on external tooling.
@@ -160,8 +160,11 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 - **FR-021**: Each row MUST show the containing process type (VS Code, terminal, etc.) as an icon or label
 - **FR-022**: System MUST minimize to system tray on close, with tray icon reflecting aggregate attention state. The Settings window MUST also be visible across all virtual desktops (topmost attribute), matching the dashboard's cross-desktop visibility behavior.
 - **FR-023**: Rows MUST be ordered deterministically by PID (ascending)
-- **FR-024**: System MUST handle the denial flow — when a tool use is rejected (with or without user text), the state transitions back to Working (if user provided text) or Idle (if no text / end_turn)
+- **FR-024**: System MUST handle the denial flow — when a tool use is rejected, subsequent hook events (PostToolUse or Stop) transition the state accordingly. No special transcript parsing is required.
 - **FR-025**: System MUST resolve transcript paths with a fallback strategy — the session ID in `sessions/{PID}.json` does not always match the transcript filename (sessions can be resumed under a new session ID). When the expected transcript file is not found, the system MUST fall back to the most recently modified `.jsonl` file in the project directory (`~/.claude/projects/{project}/`).
+- **FR-026**: System MUST run a local HTTP server (`hook_server.py`) on port 17384 to receive hook events from Claude Code sessions. The server MUST be non-blocking — if the dashboard is not running, Claude sessions are unaffected. The server accepts POST requests to `/hook` with JSON payloads containing `session_id`, `hook_event_name`, and optional fields (`tool_name`, `tool_input`, `cwd`).
+- **FR-027**: System MUST map hook event names to StatusState values: `UserPromptSubmit`→Working, `PreToolUse`→Working (except `AskUserQuestion`→AwaitingInput), `PermissionRequest`→PermissionRequired, `PostToolUse`→Working, `Stop`→Idle, `SessionEnd`→remove session. Unknown events are ignored.
+- **FR-028**: System MUST ship a `hooks-settings.json` file and provide `make install-hooks` (backed by `scripts/install_hooks.py`) to deep-merge hook configuration into `~/.claude/settings.json`. This configures Claude Code to POST hook events to the dashboard.
 
 ### Key Entities
 
@@ -178,5 +181,5 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 - **SC-002**: Clicking a session row foregrounds the correct window within 1 second on both Windows and Linux
 - **SC-003**: Settings and window position survive application restart with no data loss
 - **SC-004**: The dashboard uses < 1% CPU at idle
-- **SC-005**: The dashboard updates status indicators within one poll cycle of a state change
+- **SC-005**: The dashboard updates status indicators within one hook event of a state change (near real-time, not poll-bound)
 - **SC-006**: The user can identify which session needs attention without reading text (via color + emoji alone)

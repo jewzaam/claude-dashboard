@@ -2,12 +2,12 @@
 """Constants, paths, and defaults for Claude Dashboard."""
 
 import platform
+from enum import Enum
 from pathlib import Path
 
 # Claude CLI paths
 CLAUDE_HOME = Path.home() / ".claude"
 SESSIONS_DIR = CLAUDE_HOME / "sessions"
-PROJECTS_DIR = CLAUDE_HOME / "projects"
 
 # Application settings path
 if platform.system() == "Windows":
@@ -21,6 +21,21 @@ SETTINGS_FILE = SETTINGS_DIR / "settings.json"
 
 # Poll interval
 DEFAULT_POLL_INTERVAL_SECONDS = 5
+
+# Hook server
+HOOK_PORT = 17384
+
+
+# Session status states
+class StatusState(Enum):
+    """Possible states of a Claude Code session."""
+
+    WORKING = "working"
+    IDLE = "idle"
+    AWAITING_INPUT = "awaiting_input"
+    PERMISSION_REQUIRED = "permission_required"
+    UNKNOWN = "unknown"
+
 
 # UI defaults
 DEFAULT_ROW_HEIGHT = 32

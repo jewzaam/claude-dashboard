@@ -8,7 +8,6 @@ from claude_dashboard.session import (
     cwd_relative_to_home,
     discover_sessions,
     encode_project_key,
-    resolve_transcript_path,
     validate_pid,
 )
 
@@ -76,43 +75,6 @@ class TestEncodeProjectKey:
     def test_forward_slash_path(self):
         result = encode_project_key("C:/Users/user/source/my-project")
         assert result == "C--Users-user-source-my-project"
-
-
-class TestResolveTranscriptPath:
-    def test_finds_transcript(self, tmp_path):
-        project_dir = tmp_path / "C--Users-user-source-my-project"
-        project_dir.mkdir()
-        transcript = project_dir / "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl"
-        transcript.write_text("{}", encoding="utf-8")
-
-        result = resolve_transcript_path(
-            "C:\\Users\\user\\source\\my-project",
-            "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-            projects_dir=tmp_path,
-        )
-        assert result == transcript
-
-    def test_returns_none_when_not_found(self, tmp_path):
-        result = resolve_transcript_path(
-            "C:\\Users\\user\\source\\my-project",
-            "nonexistent-session-id",
-            projects_dir=tmp_path,
-        )
-        assert result is None
-
-    def test_fallback_scan(self, tmp_path):
-        # Transcript exists under a differently-encoded project key
-        alt_dir = tmp_path / "alternate-project-key"
-        alt_dir.mkdir()
-        transcript = alt_dir / "session-123.jsonl"
-        transcript.write_text("{}", encoding="utf-8")
-
-        result = resolve_transcript_path(
-            "C:\\something\\else",
-            "session-123",
-            projects_dir=tmp_path,
-        )
-        assert result == transcript
 
 
 class TestCwdRelativeToHome:

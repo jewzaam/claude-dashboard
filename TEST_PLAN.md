@@ -6,7 +6,7 @@ Every functional requirement (FR-xxx) and success criterion (SC-xxx) from the sp
 
 ## Coverage Target
 
-80%+ line coverage of testable modules (`session.py`, `transcript.py`, `settings.py`). Currently at 93%.
+80%+ line coverage of testable modules (`session.py`, `transcript.py`, `hook_server.py`, `settings.py`). Currently at 93%.
 
 ## Requirement Traceability
 
@@ -52,20 +52,20 @@ Each row shows emoji + row color.
 
 ### FR-005: Status States
 
-State detection from transcript entries.
+State detection from HTTP hook events.
 
 | Test | Type | File | Scenario | Expected State |
 |------|------|------|----------|---------------|
-| `test_awaiting_input` | Unit | `test_transcript.py` | Last assistant has `stop_reason=end_turn` | AwaitingInput |
-| `test_permission_required` | Unit | `test_transcript.py` | Last assistant has `stop_reason=tool_use`, no tool result follows | PermissionRequired |
-| `test_permission_required_with_hook_progress` | Unit | `test_transcript.py` | Tool use + hook progress entry, no tool result | PermissionRequired |
-| `test_working_after_tool_approved` | Unit | `test_transcript.py` | Tool use + matching tool result | Working |
-| `test_working_after_tool_denied_with_text` | Unit | `test_transcript.py` | Tool use + error tool result (denial) | Working |
-| `test_working_on_user_prompt` | Unit | `test_transcript.py` | Assistant end_turn followed by user text prompt | Working |
-| `test_unknown_for_none_path` | Unit | `test_transcript.py` | No transcript path | Unknown |
-| `test_unknown_for_empty_file` | Unit | `test_transcript.py` | Empty transcript file | Unknown |
-| `test_unknown_for_no_assistant_entries` | Unit | `test_transcript.py` | Only system entries | Unknown |
-| `test_unknown_for_orphaned_tool_result` | Unit | `test_transcript.py` | User tool_result with no assistant entry | Unknown |
+| `test_user_prompt_submit` | Unit | `test_transcript.py` | `UserPromptSubmit` event | Working |
+| `test_pre_tool_use_regular` | Unit | `test_transcript.py` | `PreToolUse` with tool_name="Bash" | Working |
+| `test_pre_tool_use_read` | Unit | `test_transcript.py` | `PreToolUse` with tool_name="Read" | Working |
+| `test_pre_tool_use_ask_user_question` | Unit | `test_transcript.py` | `PreToolUse` with tool_name="AskUserQuestion" | AwaitingInput |
+| `test_permission_request` | Unit | `test_transcript.py` | `PermissionRequest` event | PermissionRequired |
+| `test_post_tool_use` | Unit | `test_transcript.py` | `PostToolUse` event | Working |
+| `test_stop` | Unit | `test_transcript.py` | `Stop` event | Idle |
+| `test_session_end_returns_none` | Unit | `test_transcript.py` | `SessionEnd` event | None (handled as removal) |
+| `test_unknown_event_returns_none` | Unit | `test_transcript.py` | Unknown event name | None |
+| `test_progress_returns_none` | Unit | `test_transcript.py` | `SubagentStart` event | None |
 
 ### FR-006: Fixed Row Width
 
@@ -110,8 +110,8 @@ Row width is fixed and configurable. Text exceeding width is truncated.
 
 | Test | Type | Scenario |
 |------|------|----------|
-| Run on Windows 11 | Manual | Full end-to-end: discovery, state detection, navigation, tray |
-| Run on Linux (X11) | Manual | Full end-to-end: discovery, state detection, navigation (xdotool) |
+| Run on Windows 11 | Manual | Full end-to-end: discovery, hook-based state detection, navigation, tray |
+| Run on Linux (X11) | Manual | Full end-to-end: discovery, hook-based state detection, navigation (xdotool) |
 
 ### FR-011: Python + Tkinter
 
@@ -138,25 +138,23 @@ Verified by implementation — no separate test needed.
 |------|------|----------|
 | Click row on different virtual desktop | Manual | Session's VS Code is on Desktop 2, dashboard on Desktop 1 → clicking switches to Desktop 2 and foregrounds |
 
-### FR-015: Transcript-Based State Detection
+### FR-015: Hook-Based State Detection
+
+State detection via HTTP hooks posted to the dashboard's local server.
 
 | Test | Type | File | Scenario |
 |------|------|------|----------|
-| `test_finds_transcript` | Unit | `test_session.py` | CWD-encoded path matches transcript file |
-| `test_returns_none_when_not_found` | Unit | `test_session.py` | No matching transcript → None |
-| `test_fallback_scan` | Unit | `test_session.py` | Differently-encoded project key → found via scan |
-| `test_reads_last_n_lines` | Unit | `test_transcript.py` | 20-line file, max_lines=5 → last 5 entries |
-| `test_returns_empty_for_missing_file` | Unit | `test_transcript.py` | File does not exist → empty |
-| `test_returns_empty_for_empty_file` | Unit | `test_transcript.py` | Zero-byte file → empty |
-| `test_handles_malformed_lines` | Unit | `test_transcript.py` | Mix of valid and invalid JSON → only valid parsed |
-| `test_reads_all_when_fewer_than_max` | Unit | `test_transcript.py` | 3-line file, max_lines=10 → all 3 |
+| `test_receives_hook_event` | Unit | `test_hook_server.py` | POST a hook event → callback fires with correct session ID and state |
+| `test_permission_request_event` | Unit | `test_hook_server.py` | PermissionRequest hook → PERMISSION_REQUIRED state |
+| `test_session_end_fires_callback` | Unit | `test_hook_server.py` | SessionEnd hook → on_session_end callback fires |
+| `test_empty_body_returns_400` | Unit | `test_hook_server.py` | POST with invalid body → 400 response |
 
 ### FR-016: Configurable Poll Interval
 
 | Test | Type | Scenario |
 |------|------|----------|
-| Verify default 5-second poll | Manual | Launch with default settings → status updates every ~5 seconds |
-| Verify custom poll interval | Manual | Set `poll_interval_seconds=2` → updates every ~2 seconds |
+| Verify default 5-second poll | Manual | Launch with default settings → session discovery polls every ~5 seconds |
+| Verify custom poll interval | Manual | Set `poll_interval_seconds=2` → discovery polls every ~2 seconds |
 
 ### FR-017: PID Validation
 
@@ -207,9 +205,30 @@ Not applicable.
 
 ### FR-024: Denial Flow
 
+Denial flow is implicit in hook-based detection — when a user denies a tool, Claude continues processing and the next hook event (PostToolUse or Stop) updates the state accordingly. No special transcript parsing is required.
+
+### FR-026: Hook Server
+
 | Test | Type | File | Scenario |
 |------|------|------|----------|
-| `test_working_after_tool_denied_with_text` | Unit | `test_transcript.py` | Tool result with `is_error=true` → Working |
+| `test_receives_hook_event` | Unit | `test_hook_server.py` | POST to /hook with valid JSON → 200 response, callback fires |
+| `test_permission_request_event` | Unit | `test_hook_server.py` | PermissionRequest event → maps to PERMISSION_REQUIRED |
+| `test_session_end_fires_callback` | Unit | `test_hook_server.py` | SessionEnd event → on_session_end callback fires |
+| `test_empty_body_returns_400` | Unit | `test_hook_server.py` | Invalid POST body → 400 error |
+
+### FR-027: Hook Event to State Mapping
+
+| Test | Type | File | Scenario |
+|------|------|------|----------|
+| `test_user_prompt_submit` | Unit | `test_transcript.py` | UserPromptSubmit → Working |
+| `test_pre_tool_use_regular` | Unit | `test_transcript.py` | PreToolUse (Bash) → Working |
+| `test_pre_tool_use_ask_user_question` | Unit | `test_transcript.py` | PreToolUse (AskUserQuestion) → AwaitingInput |
+| `test_permission_request` | Unit | `test_transcript.py` | PermissionRequest → PermissionRequired |
+| `test_post_tool_use` | Unit | `test_transcript.py` | PostToolUse → Working |
+| `test_stop` | Unit | `test_transcript.py` | Stop → Idle |
+| `test_session_end_returns_none` | Unit | `test_transcript.py` | SessionEnd → None (handled separately) |
+| `test_unknown_event_returns_none` | Unit | `test_transcript.py` | Unknown event → None |
+| `test_progress_returns_none` | Unit | `test_transcript.py` | SubagentStart → None |
 
 ## Success Criteria Traceability
 
@@ -219,7 +238,7 @@ Not applicable.
 | SC-002 | Foreground within 1 second | Manual: click row, time response |
 | SC-003 | Settings survive restart | Unit: `test_roundtrip_preserves_values`; Manual: move window, restart |
 | SC-004 | < 1% CPU at idle | Manual: monitor with Task Manager |
-| SC-005 | Status updates within one poll cycle | Manual: trigger state change, observe dashboard |
+| SC-005 | Status updates within one hook event | Manual: trigger state change, observe dashboard updates immediately |
 | SC-006 | Status identifiable without reading text | Manual: verify emoji + color alone is sufficient |
 
 ## Requirement Interactions
@@ -227,12 +246,13 @@ Not applicable.
 | Interaction | How Tested |
 |-------------|-----------|
 | FR-001 + FR-017: Discovery filters dead PIDs | `validate_pid` tests cover the filter; `discover_sessions` tests verify parsing. Integration in `controller._tick()` (manual). |
-| FR-001 + FR-015: Discovery feeds transcript resolution | `resolve_transcript_path` tested with CWD from session data; integration is in `controller._tick()` (manual). |
-| FR-005 + FR-024: State machine handles denial as Working | `test_working_after_tool_denied_with_text` covers the denial-to-Working transition. |
+| FR-001 + FR-015: Discovery feeds hook server session tracking | Session discovery provides session metadata; hook server receives real-time state updates. Integration is in `controller._tick()` (manual). |
+| FR-005 + FR-024: Denial flow handled by subsequent hook events | When a tool is denied, the next hook event (PostToolUse or Stop) updates state. No special-case logic needed. |
 | FR-007 + FR-008: Settings persist window position | `test_roundtrip_preserves_values` covers save/load including `window_x`/`window_y`. |
-| FR-004 + FR-005: Emoji and color reflect state | Unit tests verify state detection; manual tests verify UI rendering. |
+| FR-004 + FR-005: Emoji and color reflect state | Unit tests verify event-to-state mapping; manual tests verify UI rendering. |
 | FR-012 + FR-013 + FR-014: Click → process chain → foreground + desktop switch | Manual: click row with session on different virtual desktop. |
 | FR-022 + FR-005: Tray reflects aggregate attention state | Manual: session enters PermissionRequired → tray icon changes. |
+| FR-015 + FR-026: Hook server drives state detection | Hook events POST to the local HTTP server, which maps them to StatusState and updates session state. |
 
 ## Project Key Encoding (Internal)
 
@@ -247,7 +267,6 @@ Not applicable.
 | File | Purpose | Used By |
 |------|---------|---------|
 | `sample_session.json` | Valid session registry entry | `test_discovers_session_from_fixture` via `tmp_sessions_dir` |
-| `sample_transcript.jsonl` | Transcript with end_turn state | Available; tests use inline JSONL for precise control |
 | `sample_settings.json` | Non-default settings values | `test_loads_valid_settings` via `sample_settings_data` |
 
 ## Running Tests
