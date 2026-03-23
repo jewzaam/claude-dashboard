@@ -12,10 +12,25 @@
     "PostToolUse": [
       {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
     ],
+    "PostToolUseFailure": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+    ],
     "Stop": [
       {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
     ],
+    "StopFailure": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+    ],
     "SessionEnd": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+    ],
+    "Notification": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+    ],
+    "SubagentStart": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+    ],
+    "SubagentStop": [
       {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
     ]
   }
