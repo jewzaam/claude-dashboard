@@ -11,8 +11,8 @@ When running many Claude Code sessions in parallel across VS Code instances and 
 Claude Dashboard solves this with a persistent, low-profile Tkinter window that:
 
 - Discovers all running Claude Code sessions automatically
-- Receives real-time status updates via Claude Code HTTP hooks
-- Shows each session's workspace and current status (working, awaiting input, permission required)
+- Receives real-time status updates via Claude Code command hooks
+- Shows each session's workspace and current status (working, ready, idle, awaiting input, permission required)
 - Lets you click a session to bring its containing window (VS Code, terminal) to the foreground
 - Minimizes to the system tray with attention indicators
 - Persists settings and window position across restarts

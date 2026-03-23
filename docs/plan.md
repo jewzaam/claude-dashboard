@@ -106,6 +106,7 @@ README.md
 | `hook_server.py` | HTTP server on port 17384, receives hook events, dispatches to callbacks | New (no equivalent) |
 | `ui/main_window.py` | Dynamic row grid, status indicators, click handlers | `ui/main_window.py` — countdown grid |
 | `ui/settings_window.py` | Modal dialog for editing settings | `ui/settings_window.py` — modal |
+| `ui/color_picker.py` | Custom color picker with palette grid, hex entry, live preview | New (replaces tkinter.colorchooser) |
 | `tray.py` | System tray icon with context menu, attention indicator | `tray.py` — pystray integration |
 | `platform/windows.py` | `SetForegroundWindow`, process tree via psutil, `EnumWindows` | `startup.py` — Windows-specific |
 
@@ -138,22 +139,26 @@ The poll loop handles session discovery and PID validation. State detection is e
 ### State Machine (hook event driven)
 
 ```
-┌─────────────────────────────────────────────────────┐
-│ HTTP POST /hook from Claude Code                    │
-│                                                     │
-│ Hook Event:                                         │
-│   UserPromptSubmit ────────────────► Working         │
-│   PreToolUse (regular tool) ───────► Working         │
-│   PreToolUse (AskUserQuestion) ────► AwaitingInput   │
-│   PermissionRequest ───────────────► PermissionReq   │
-│   PostToolUse ─────────────────────► Working         │
-│   Stop ────────────────────────────► Idle            │
-│   SessionEnd ──────────────────────► (remove row)   │
-│                                                     │
-│ No hook received yet ──────────────► Unknown         │
-│                                                     │
-│ PID not alive (poll) ──────────────► (remove row)   │
-└─────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ HTTP POST /hook from Claude Code                         │
+│                                                          │
+│ Hook Event (mapper):                                     │
+│   UserPromptSubmit ────────────────► Working              │
+│   PreToolUse (regular tool) ───────► Working              │
+│   PreToolUse (AskUserQuestion) ────► AwaitingInput        │
+│   PermissionRequest ───────────────► PermissionReq        │
+│   PostToolUse ─────────────────────► Working              │
+│   Stop ────────────────────────────► Idle (mapper)        │
+│   SessionEnd ──────────────────────► (remove row)        │
+│                                                          │
+│ Controller intercepts Idle → Ready:                      │
+│   Stop ──► Ready (transient) ──timer──► Idle             │
+│                    │                                     │
+│                    └──new activity──► Working (cancel)    │
+│                                                          │
+│ No hook received yet ──────────────► Unknown              │
+│ PID not alive (poll) ──────────────► (remove row)        │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### Settings Dataclass
@@ -164,7 +169,12 @@ class Settings:
     # Window
     window_x: int | None = None
     window_y: int | None = None
+    settings_x: int | None = None
+    settings_y: int | None = None
+    color_picker_x: int | None = None
+    color_picker_y: int | None = None
     always_on_top: bool = True
+    grow_up: bool = False
 
     # Rows
     row_height: int = 32
@@ -173,14 +183,21 @@ class Settings:
     # Poll
     poll_interval_seconds: int = 5
 
+    # Ready state
+    ready_seconds: int = 300
+
     # Status indicators (emoji)
     emoji_working: str = "🔄"
+    emoji_ready: str = "⏸️"
+    emoji_idle: str = "⏸️"
     emoji_awaiting_input: str = "❓"
     emoji_permission_required: str = "⚠️"
     emoji_unknown: str = "🤷"
 
     # Status colors (row background)
     color_working: str = "#1a3a5c"
+    color_ready: str = "#1a5c3a"
+    color_idle: str = "#2a2a2a"
     color_awaiting_input: str = "#1a4a2a"
     color_permission_required: str = "#5c4a1a"
     color_unknown: str = "#3a3a3a"

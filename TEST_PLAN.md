@@ -6,7 +6,7 @@ Every functional requirement (FR-xxx) and success criterion (SC-xxx) from the sp
 
 ## Coverage Target
 
-80%+ line coverage of testable modules (`session.py`, `transcript.py`, `hook_server.py`, `settings.py`, `platform/linux.py`). Currently at ~94%.
+80%+ line coverage of testable modules (`session.py`, `hook_server.py`, `settings.py`, `platform/linux.py`). Currently at ~90%.
 
 ## Requirement Traceability
 
@@ -52,7 +52,7 @@ Each row shows emoji + row color.
 
 ### FR-005: Status States
 
-State detection from HTTP hook events.
+State detection from hook events. The mapper (`map_event_to_state`) returns raw states; the controller intercepts Idle and routes through Ready first.
 
 | Test | Type | File | Scenario | Expected State |
 |------|------|------|----------|---------------|
@@ -62,7 +62,11 @@ State detection from HTTP hook events.
 | `test_pre_tool_use_ask_user_question` | Unit | `test_transcript.py` | `PreToolUse` with tool_name="AskUserQuestion" | AwaitingInput |
 | `test_permission_request` | Unit | `test_transcript.py` | `PermissionRequest` event | PermissionRequired |
 | `test_post_tool_use` | Unit | `test_transcript.py` | `PostToolUse` event | Working |
-| `test_stop` | Unit | `test_transcript.py` | `Stop` event | Idle |
+| `test_stop` | Unit | `test_transcript.py` | `Stop` event | Idle (mapper level) |
+| `test_stop_maps_to_idle_not_ready` | Unit | `test_transcript.py` | `Stop` event returns Idle, not Ready | Idle (Ready interception is controller-level) |
+| `test_ready_state_exists` | Unit | `test_transcript.py` | READY enum exists with value "ready" | — |
+| `test_ready_is_distinct_from_idle` | Unit | `test_transcript.py` | READY != IDLE | — |
+| `test_ready_settings_roundtrip` | Unit | `test_settings.py` | `ready_seconds` and `color_ready` persist | — |
 | `test_session_end_returns_none` | Unit | `test_transcript.py` | `SessionEnd` event | None (handled as removal) |
 | `test_unknown_event_returns_none` | Unit | `test_transcript.py` | Unknown event name | None |
 | `test_progress_returns_none` | Unit | `test_transcript.py` | `SubagentStart` event | None |

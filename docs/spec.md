@@ -133,12 +133,13 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 - **FR-002**: System MUST display each session as a row in a vertical stack
 - **FR-003**: Each row MUST show the session's workspace directory as a path relative to `~` (e.g., `~/source/claude-dashboard`)
 - **FR-004**: Each row MUST show a status indicator (emoji + row color)
-- **FR-005**: Status states MUST include: Working, Idle, Awaiting Input, Permission Required, Unknown. Dead sessions are removed (no Stopped state displayed).
+- **FR-005**: Status states MUST include: Working, Ready, Idle, Awaiting Input, Permission Required, Unknown. Dead sessions are removed (no Stopped state displayed).
 
   | State | Enum Value | Hook Event Trigger | Emoji | Description |
   |-------|-----------|-------------------|-------|-------------|
   | Working | `Working` | `UserPromptSubmit`, `PreToolUse` (non-AskUserQuestion), `PostToolUse` | 🔄 | Active processing |
-  | Idle | `Idle` | `Stop` | ⏸️ | Finished responding, waiting for next user prompt |
+  | Ready | `Ready` | `Stop` (intercepted by controller) | ⏸️ | Transient state after Working; auto-transitions to Idle after `ready_seconds` (default 300s). Cancelled by any new activity. Visually distinct color so user notices Claude finished. |
+  | Idle | `Idle` | Ready timeout expires | ⏸️ | Finished responding, waiting for next user prompt |
   | Awaiting Input | `AwaitingInput` | `PreToolUse` with tool_name=`AskUserQuestion` | ❓ | Claude asked a question, actively waiting for user answer |
   | Permission Required | `PermissionRequired` | `PermissionRequest` | ⚠️ | Tool approval needed |
   | Unknown | `Unknown` | No hook event received yet | 🤷 | Fallback |
@@ -169,8 +170,8 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 ### Key Entities
 
 - **Session**: A running Claude Code process. Attributes: PID, CWD, status, parent window handle, container process type, session ID, slug (human-readable name), start time.
-- **Settings**: User preferences. Attributes: row height, row width, status colors (per-state), status emojis (per-state), window position (x, y), always-on-top flag, poll interval.
-- **StatusState**: Enum of session states: Working, Idle, AwaitingInput, PermissionRequired, Unknown. (Dead sessions are removed, not displayed.) Idle and AwaitingInput are distinct — Idle means Claude finished responding and is waiting for the next prompt; AwaitingInput means Claude asked a question via AskUserQuestion and is actively waiting for an answer.
+- **Settings**: User preferences. Attributes: row height, row width, status colors (per-state), status emojis (per-state), window position (x, y), always-on-top flag, grow-up flag, poll interval, ready duration (seconds), color picker position.
+- **StatusState**: Enum of session states: Working, Ready, Idle, AwaitingInput, PermissionRequired, Unknown. (Dead sessions are removed, not displayed.) Ready is a transient state between Working and Idle — it auto-transitions to Idle after `ready_seconds` (default 5 min) unless new activity arrives. Idle and AwaitingInput are distinct — Idle means Claude finished and the ready timer expired; AwaitingInput means Claude asked a question via AskUserQuestion and is actively waiting for an answer.
 - **ContainerType**: Enum of containing process types: VSCode, Terminal, GitBash, Screen, Unknown.
 
 ## Success Criteria
