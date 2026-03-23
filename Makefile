@@ -42,25 +42,25 @@ clean:
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	rm -rf .pytest_cache .mypy_cache .coverage htmlcov
 
-format:
+format: install-dev
 	$(PYTHON) -m black claude_dashboard/ tests/
 
-format-check:
+format-check: install-dev
 	$(PYTHON) -m black --check claude_dashboard/ tests/
 
-lint:
+lint: install-dev
 	$(PYTHON) -m flake8 claude_dashboard/ tests/
 
-typecheck:
+typecheck: install-dev
 	$(PYTHON) -m mypy claude_dashboard/
 
-test:
+test: install-dev
 	$(PYTHON) -m pytest
 
-test-verbose:
+test-verbose: install-dev
 	$(PYTHON) -m pytest -v
 
-coverage:
+coverage: install-dev
 	$(PYTHON) -m pytest --cov=claude_dashboard --cov-report=term-missing
 
 run:
