@@ -43,7 +43,8 @@ class TestClassifyEntry:
         entry = {"type": "assistant", "message": {"stop_reason": "end_turn", "content": []}}
         assert _classify_entry(entry) == StatusState.IDLE
 
-    def test_tool_use_returns_permission_required(self):
+    def test_tool_use_returns_working(self):
+        """tool_use = WORKING initially; escalates via timeout."""
         entry = {
             "type": "assistant",
             "message": {
@@ -51,7 +52,7 @@ class TestClassifyEntry:
                 "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}],
             },
         }
-        assert _classify_entry(entry) == StatusState.PERMISSION_REQUIRED
+        assert _classify_entry(entry) == StatusState.WORKING
 
     def test_ask_user_question_returns_awaiting_input(self):
         entry = {
@@ -124,7 +125,8 @@ class TestDetectState:
         )
         assert detect_state(path) == StatusState.AWAITING_INPUT
 
-    def test_permission_required(self, tmp_path):
+    def test_tool_use_without_result_is_working(self, tmp_path):
+        """Stateless detect_state: tool_use with no result = WORKING (no timeout)."""
         path = tmp_path / "t.jsonl"
         _write_jsonl(
             path,
@@ -140,9 +142,10 @@ class TestDetectState:
                 },
             ],
         )
-        assert detect_state(path) == StatusState.PERMISSION_REQUIRED
+        assert detect_state(path) == StatusState.WORKING
 
-    def test_permission_required_with_hook_progress(self, tmp_path):
+    def test_tool_use_with_hook_progress_is_working(self, tmp_path):
+        """Stateless detect_state: tool_use + progress = WORKING (no timeout)."""
         path = tmp_path / "t.jsonl"
         _write_jsonl(
             path,
@@ -159,7 +162,7 @@ class TestDetectState:
                 {"type": "progress", "data": {"type": "hook_progress"}},
             ],
         )
-        assert detect_state(path) == StatusState.PERMISSION_REQUIRED
+        assert detect_state(path) == StatusState.WORKING
 
     def test_working_after_tool_approved(self, tmp_path):
         path = tmp_path / "t.jsonl"

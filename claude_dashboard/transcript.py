@@ -74,7 +74,11 @@ def _classify_entry(entry: dict) -> StatusState | None:
 
             if "AskUserQuestion" in tool_names:
                 return StatusState.AWAITING_INPUT
-            return StatusState.PERMISSION_REQUIRED
+
+            # tool_use → WORKING initially. The TranscriptWatcher will
+            # escalate to PERMISSION_REQUIRED if no tool_result arrives
+            # within the timeout (see TranscriptWatcher._update_state).
+            return StatusState.WORKING
 
     return None
 
@@ -84,6 +88,12 @@ class TranscriptWatcher:
 
     Runs on its own thread. Calls on_state_change when the state transitions.
     """
+
+    # Seconds to wait after a tool_use before escalating to PERMISSION_REQUIRED.
+    # Auto-approved tools produce a tool_result almost immediately (< 1s).
+    # If no result arrives within this window, the tool is likely waiting for
+    # user permission.
+    _PERMISSION_ESCALATION_SECONDS = 3.0
 
     def __init__(
         self,
@@ -98,6 +108,8 @@ class TranscriptWatcher:
         self._state = StatusState.UNKNOWN
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._last_tool_use_time: float | None = None  # monotonic time of last tool_use
+        self._pending_tool_use = False  # True if waiting for tool_result
 
     @property
     def state(self) -> StatusState:
@@ -114,12 +126,27 @@ class TranscriptWatcher:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=self._poll_interval * 3)
 
+    def _check_permission_escalation(self):
+        """If a tool_use has been pending without a result for too long, escalate."""
+        import time
+
+        if (
+            self._pending_tool_use
+            and self._last_tool_use_time is not None
+            and self._state == StatusState.WORKING
+        ):
+            elapsed = time.monotonic() - self._last_tool_use_time
+            if elapsed >= self._PERMISSION_ESCALATION_SECONDS:
+                self._update_state(StatusState.PERMISSION_REQUIRED)
+
     def _update_state(self, new_state: StatusState):
         if new_state != self._state:
             self._state = new_state
             self._on_state_change(new_state)
 
     def _process_line(self, line: str):
+        import time
+
         line = line.strip()
         if not line:
             return
@@ -127,6 +154,25 @@ class TranscriptWatcher:
             entry = json.loads(line)
         except json.JSONDecodeError:
             return
+
+        entry_type = entry.get("type")
+
+        # Track tool_use / tool_result for permission escalation
+        if entry_type == "assistant":
+            message = entry.get("message", {})
+            if message.get("stop_reason") == "tool_use":
+                self._pending_tool_use = True
+                self._last_tool_use_time = time.monotonic()
+        elif entry_type == "user":
+            content = entry.get("message", {}).get("content", [])
+            if isinstance(content, list):
+                has_result = any(
+                    isinstance(item, dict) and item.get("type") == "tool_result" for item in content
+                )
+                if has_result:
+                    self._pending_tool_use = False
+                    self._last_tool_use_time = None
+
         new_state = _classify_entry(entry)
         if new_state is not None:
             self._update_state(new_state)
@@ -163,6 +209,8 @@ class TranscriptWatcher:
                 if line.endswith("\n"):
                     self._process_line(line)
                 elif not line:
+                    # Check for permission escalation while idle
+                    self._check_permission_escalation()
                     self._stop_event.wait(self._poll_interval)
                 # else: partial line — wait for the rest on next iteration
         finally:
