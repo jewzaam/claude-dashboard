@@ -8,7 +8,7 @@ from typing import Any, Callable
 from claude_dashboard.platform.base import ContainerInfo, ContainerType
 from claude_dashboard.session import SessionInfo, cwd_relative_to_home
 from claude_dashboard.settings import Settings
-from claude_dashboard.transcript import StatusState
+from claude_dashboard.config import StatusState
 
 logger = logging.getLogger(__name__)
 

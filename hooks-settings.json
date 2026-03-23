@@ -1,0 +1,22 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+    ],
+    "PreToolUse": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+    ],
+    "PermissionRequest": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+    ],
+    "PostToolUse": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+    ],
+    "SessionEnd": [
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+    ]
+  }
+}
