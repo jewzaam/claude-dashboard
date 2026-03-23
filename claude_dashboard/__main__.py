@@ -3,7 +3,22 @@
 
 import argparse
 import logging
+import socket
 import sys
+
+from claude_dashboard import config
+
+
+def _is_already_running() -> bool:
+    """Check if another instance is running by probing the hook server port."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", config.HOOK_PORT))
+        return False
+    except OSError:
+        return True
+    finally:
+        sock.close()
 
 
 def main():
@@ -23,6 +38,12 @@ def main():
     )
     # Suppress noisy third-party debug logging
     logging.getLogger("PIL").setLevel(logging.WARNING)
+
+    if _is_already_running():
+        logging.getLogger(__name__).error(
+            "Claude Dashboard is already running (port %d in use)", config.HOOK_PORT
+        )
+        sys.exit(1)
 
     # Controller import deferred until args are parsed
     from claude_dashboard.controller import AppController
