@@ -94,6 +94,10 @@ class MainWindow:
             x = settings.window_x
             y = settings.window_y
             if x is not None and y is not None:
+                if settings.grow_up:
+                    # y is the saved bottom edge — will be adjusted in
+                    # update_sessions once we know the actual height
+                    self._grow_up_bottom_y = y
                 self._window.geometry(f"{settings.row_width}x1+{x}+{y}")
             else:
                 self._window.geometry(f"{settings.row_width}x1")
@@ -114,8 +118,18 @@ class MainWindow:
         return self._window
 
     def get_position(self) -> tuple[int | None, int | None]:
+        """Return the window position to save.
+
+        When grow_up is enabled, saves the bottom edge y-coordinate
+        so the bottom stays anchored across restarts with different
+        session counts.
+        """
         try:
-            return self._window.winfo_x(), self._window.winfo_y()
+            x = self._window.winfo_x()
+            y = self._window.winfo_y()
+            if self._settings.grow_up:
+                y = y + self._window.winfo_height()
+            return x, y
         except tk.TclError:
             return None, None
 
@@ -185,16 +199,29 @@ class MainWindow:
         else:
             self._empty_label.pack(pady=10)
 
-        # Resize height, preserve position
+        # Resize height, preserve position (or anchor bottom edge if grow_up)
         self._window.update_idletasks()
-        height = max(1, len(sessions) * (self._settings.row_height + _ROW_PAD_Y * 2))
+        old_height = self._window.winfo_height()
+        new_height = max(1, len(sessions) * (self._settings.row_height + _ROW_PAD_Y * 2))
         x = self._window.winfo_x()
         y = self._window.winfo_y()
-        self._window.geometry(f"{self._settings.row_width}x{height}+{x}+{y}")
+
+        if self._settings.grow_up:
+            # First render after startup: use saved bottom edge
+            bottom_y = getattr(self, "_grow_up_bottom_y", None)
+            if bottom_y is not None:
+                y = bottom_y - new_height
+                del self._grow_up_bottom_y
+            elif old_height > 0:
+                # Subsequent renders: keep bottom edge fixed
+                y = y + old_height - new_height
+
+        self._window.geometry(f"{self._settings.row_width}x{new_height}+{x}+{y}")
 
     def _color_for_state(self, state: StatusState) -> str:
         return {
             StatusState.WORKING: self._settings.color_working,
+            StatusState.READY: self._settings.color_ready,
             StatusState.IDLE: self._settings.color_idle,
             StatusState.AWAITING_INPUT: self._settings.color_awaiting_input,
             StatusState.PERMISSION_REQUIRED: self._settings.color_permission_required,
@@ -204,6 +231,7 @@ class MainWindow:
     def _emoji_for_state(self, state: StatusState) -> str:
         return {
             StatusState.WORKING: self._settings.emoji_working,
+            StatusState.READY: self._settings.emoji_ready,
             StatusState.IDLE: self._settings.emoji_idle,
             StatusState.AWAITING_INPUT: self._settings.emoji_awaiting_input,
             StatusState.PERMISSION_REQUIRED: self._settings.emoji_permission_required,

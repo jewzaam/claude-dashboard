@@ -31,12 +31,13 @@ logger = logging.getLogger(__name__)
 class _SessionEntry:
     """Tracks a live session: its info, container, and current state."""
 
-    __slots__ = ("session", "container", "state")
+    __slots__ = ("session", "container", "state", "ready_timer_id")
 
     def __init__(self, session: SessionInfo):
         self.session = session
         self.container: ContainerInfo | None = None
         self.state: StatusState = StatusState.UNKNOWN
+        self.ready_timer_id: str | None = None
 
 
 class AppController:
@@ -208,6 +209,24 @@ class AppController:
             return
 
         prior = entry.state
+
+        # Cancel any pending ready→idle timer when new activity arrives
+        if new_state != StatusState.IDLE and entry.ready_timer_id is not None:
+            self._root.after_cancel(entry.ready_timer_id)
+            entry.ready_timer_id = None
+
+        # Intercept idle: transition to ready first, then idle after timeout
+        if new_state == StatusState.IDLE and self._settings.ready_seconds > 0:
+            new_state = StatusState.READY
+            # Schedule transition from ready → idle
+            if entry.ready_timer_id is not None:
+                self._root.after_cancel(entry.ready_timer_id)
+            entry.ready_timer_id = self._root.after(
+                self._settings.ready_seconds * 1000,
+                self._expire_ready,
+                pid,
+            )
+
         if prior == new_state:
             return
 
@@ -221,6 +240,17 @@ class AppController:
             prior.value,
             event,
         )
+        self._refresh_ui()
+
+    def _expire_ready(self, pid: int):
+        """Timer callback: transition a session from READY to IDLE."""
+        entry = self._sessions.get(pid)
+        if not entry or entry.state != StatusState.READY:
+            return
+        entry.state = StatusState.IDLE
+        entry.ready_timer_id = None
+        cwd_short = cwd_basename(entry.session.cwd)
+        logger.debug("pid=%d project=%s ready expired, now idle", pid, cwd_short)
         self._refresh_ui()
 
     def _handle_session_end(self, session_id: str):
@@ -346,9 +376,10 @@ class AppController:
     _STATE_PRIORITY = {
         StatusState.PERMISSION_REQUIRED: 0,
         StatusState.AWAITING_INPUT: 1,
-        StatusState.WORKING: 2,
-        StatusState.IDLE: 3,
-        StatusState.UNKNOWN: 4,
+        StatusState.READY: 2,
+        StatusState.WORKING: 3,
+        StatusState.IDLE: 4,
+        StatusState.UNKNOWN: 5,
     }
 
     def _highest_priority_state(
@@ -371,6 +402,8 @@ class AppController:
             return (255, 165, 0)
         if state == StatusState.AWAITING_INPUT:
             return (50, 205, 50)
+        if state == StatusState.READY:
+            return (26, 92, 58)
         if state == StatusState.WORKING:
             return (100, 149, 237)
         return (128, 128, 128)

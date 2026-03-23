@@ -45,5 +45,19 @@ class TestMapEventToState:
         result = map_event_to_state("PermissionRequest", tool_name="AskUserQuestion")
         assert result == StatusState.AWAITING_INPUT
 
+    def test_stop_maps_to_idle_not_ready(self):
+        """map_event_to_state returns IDLE for Stop — READY interception is controller-level."""
+        result = map_event_to_state("Stop")
+        assert result == StatusState.IDLE
+        assert result != StatusState.READY
+
     def test_progress_returns_none(self):
         assert map_event_to_state("SubagentStart") is None
+
+
+class TestStatusStateEnum:
+    def test_ready_state_exists(self):
+        assert StatusState.READY.value == "ready"
+
+    def test_ready_is_distinct_from_idle(self):
+        assert StatusState.READY != StatusState.IDLE
