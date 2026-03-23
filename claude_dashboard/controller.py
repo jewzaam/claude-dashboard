@@ -16,6 +16,7 @@ from claude_dashboard.platform.base import (
 from claude_dashboard.session import (
     SessionInfo,
     cwd_basename,
+    cwd_relative_to_home,
     discover_sessions,
     validate_pid,
 )
@@ -65,6 +66,7 @@ class AppController:
         self._session_id_to_pid: dict[str, int] = {}
         # Buffer for hook events arriving before session discovery
         self._pending_hook_states: dict[str, StatusState] = {}
+        self._first_tick_done = False
 
         # Hook server
         self._hook_server = HookServer(
@@ -135,6 +137,7 @@ class AppController:
 
             # Refresh UI (state may not have changed, but rows may have been added/removed)
             self._refresh_ui()
+            self._first_tick_done = True
 
         except Exception as exc:
             logger.error("discovery tick failed error=%s", exc)
@@ -148,6 +151,10 @@ class AppController:
 
     def _add_session(self, session: SessionInfo):
         entry = _SessionEntry(session)
+        # Sessions found after first tick default to IDLE (new session, not yet working).
+        # Sessions found on first tick stay UNKNOWN (dashboard started late, state unknown).
+        if self._first_tick_done:
+            entry.state = StatusState.IDLE
         entry.container = detect_container(session.pid)
         entry.container = find_window_for_session(session.cwd, entry.container)
         self._sessions[session.pid] = entry
@@ -240,9 +247,10 @@ class AppController:
     # ------------------------------------------------------------------
 
     def _refresh_ui(self):
-        session_states = [
-            (entry.session, entry.state, entry.container) for entry in self._sessions.values()
-        ]
+        session_states = sorted(
+            [(entry.session, entry.state, entry.container) for entry in self._sessions.values()],
+            key=lambda t: cwd_relative_to_home(t[0].cwd).lower(),
+        )
         self._main_window.update_sessions(session_states)
 
         highest = self._highest_priority_state(session_states)
