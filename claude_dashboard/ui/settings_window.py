@@ -3,60 +3,74 @@
 
 import logging
 import tkinter as tk
+from tkinter import colorchooser
 from typing import Callable
 
 from claude_dashboard.settings import Settings
 
 logger = logging.getLogger(__name__)
 
+# Settings window chrome color — intentionally static, not user-configurable
+_CHROME_BG = "#2a2a2a"
+_CHROME_FG = "#e0e0e0"
+_CHROME_HEADING_FG = "#aaaaaa"
+_CHROME_FONT = ("Segoe UI", 9)
+_CHROME_HEADING_FONT = ("Segoe UI", 9, "bold")
+
 
 class SettingsWindow:
-    """Modal dialog for editing dashboard settings."""
+    """Modal dialog for editing dashboard settings.
+
+    Created fresh each time it's opened, destroyed on save or cancel.
+    Uses settings for position restore; all other chrome is static.
+    """
 
     def __init__(
         self,
-        parent: tk.Toplevel,
+        parent: tk.Misc,
         settings: Settings,
         *,
         on_save: Callable[[Settings], None],
     ):
-        self._parent = parent
         self._on_save = on_save
         self._base_settings = settings
+        self._vars: dict[str, tk.Variable] = {}
+        self._color_vars: dict[str, list[str]] = {}
 
         self._window = tk.Toplevel(parent)
         self._window.title("Settings")
-        self._window.configure(bg="#2a2a2a")
+        self._window.configure(bg=_CHROME_BG)
         self._window.resizable(False, False)
-        self._window.transient(parent)
-        self._window.grab_set()
+        self._window.wm_attributes("-topmost", True)
 
-        self._vars: dict[str, tk.Variable] = {}
+        # Restore position from settings
+        if settings.settings_x is not None and settings.settings_y is not None:
+            self._window.geometry(f"+{settings.settings_x}+{settings.settings_y}")
+
         self._build_ui(settings)
-
         self._window.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
+
     def _build_ui(self, settings: Settings):
-        """Build the settings form."""
-        frame = tk.Frame(self._window, bg="#2a2a2a", padx=16, pady=12)
+        frame = tk.Frame(self._window, bg=_CHROME_BG, padx=16, pady=12)
         frame.pack(fill=tk.BOTH, expand=True)
 
         row = 0
 
-        # Section: Window
         self._section_label(frame, "Window", row)
         row += 1
         row = self._add_checkbox(
             frame, "Always on top", "always_on_top", settings.always_on_top, row
         )
 
-        # Section: Rows
         self._section_label(frame, "Rows", row)
         row += 1
         row = self._add_int_field(frame, "Row height (px)", "row_height", settings.row_height, row)
         row = self._add_int_field(frame, "Row width (px)", "row_width", settings.row_width, row)
 
-        # Section: Poll
         self._section_label(frame, "Polling", row)
         row += 1
         row = self._add_int_field(
@@ -67,58 +81,97 @@ class SettingsWindow:
             row,
         )
 
-        # Section: Colors
         self._section_label(frame, "Status Colors", row)
         row += 1
-        row = self._add_text_field(frame, "Working", "color_working", settings.color_working, row)
-        row = self._add_text_field(
-            frame, "Awaiting input", "color_awaiting_input", settings.color_awaiting_input, row
+        row = self._add_color_field(
+            frame, f"{settings.emoji_working} Working", "color_working", settings.color_working, row
         )
-        row = self._add_text_field(
+        row = self._add_color_field(
+            frame, f"{settings.emoji_idle} Idle", "color_idle", settings.color_idle, row
+        )
+        row = self._add_color_field(
             frame,
-            "Permission required",
+            f"{settings.emoji_awaiting_input} Awaiting input",
+            "color_awaiting_input",
+            settings.color_awaiting_input,
+            row,
+        )
+        row = self._add_color_field(
+            frame,
+            f"{settings.emoji_permission_required} Permission required",
             "color_permission_required",
             settings.color_permission_required,
             row,
         )
-        row = self._add_text_field(frame, "Unknown", "color_unknown", settings.color_unknown, row)
-        row = self._add_text_field(frame, "Background", "window_bg", settings.window_bg, row)
+        row = self._add_color_field(
+            frame,
+            f"{settings.emoji_unknown} Unknown",
+            "color_unknown",
+            settings.color_unknown,
+            row,
+        )
+        row = self._add_color_field(frame, "Background", "window_bg", settings.window_bg, row)
+        row = self._add_color_field(frame, "Text color", "text_color", settings.text_color, row)
 
-        # Buttons
-        btn_frame = tk.Frame(frame, bg="#2a2a2a")
-        btn_frame.grid(row=row, column=0, columnspan=2, pady=(12, 0), sticky=tk.E)
-
+        btn_frame = tk.Frame(frame, bg=_CHROME_BG)
+        btn_frame.grid(row=row, column=0, columnspan=3, pady=(12, 0), sticky=tk.E)
         tk.Button(btn_frame, text="Cancel", command=self._on_close, width=8).pack(
             side=tk.RIGHT, padx=(4, 0)
         )
         tk.Button(btn_frame, text="Save", command=self._on_save_click, width=8).pack(side=tk.RIGHT)
 
+    # ------------------------------------------------------------------
+    # Field builders
+    # ------------------------------------------------------------------
+
     def _section_label(self, parent: tk.Frame, text: str, row: int):
         tk.Label(
             parent,
             text=text,
-            bg="#2a2a2a",
-            fg="#aaaaaa",
-            font=("Segoe UI", 9, "bold"),
+            bg=_CHROME_BG,
+            fg=_CHROME_HEADING_FG,
+            font=_CHROME_HEADING_FONT,
             anchor=tk.W,
         ).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(8, 2))
 
     def _add_int_field(self, parent: tk.Frame, label: str, key: str, value: int, row: int) -> int:
         tk.Label(
-            parent, text=label, bg="#2a2a2a", fg="#e0e0e0", font=("Segoe UI", 9), anchor=tk.W
+            parent,
+            text=label,
+            bg=_CHROME_BG,
+            fg=_CHROME_FG,
+            font=_CHROME_FONT,
+            anchor=tk.W,
         ).grid(row=row, column=0, sticky=tk.W, padx=(0, 8), pady=2)
         var = tk.IntVar(value=value)
         self._vars[key] = var
         tk.Entry(parent, textvariable=var, width=10).grid(row=row, column=1, sticky=tk.W, pady=2)
         return row + 1
 
-    def _add_text_field(self, parent: tk.Frame, label: str, key: str, value: str, row: int) -> int:
+    def _add_color_field(self, parent: tk.Frame, label: str, key: str, value: str, row: int) -> int:
         tk.Label(
-            parent, text=label, bg="#2a2a2a", fg="#e0e0e0", font=("Segoe UI", 9), anchor=tk.W
+            parent,
+            text=label,
+            bg=_CHROME_BG,
+            fg=_CHROME_FG,
+            font=_CHROME_FONT,
+            anchor=tk.W,
         ).grid(row=row, column=0, sticky=tk.W, padx=(0, 8), pady=2)
-        var = tk.StringVar(value=value)
-        self._vars[key] = var
-        tk.Entry(parent, textvariable=var, width=10).grid(row=row, column=1, sticky=tk.W, pady=2)
+
+        color_val = [value]
+        preview = tk.Label(parent, width=4, bg=value, relief=tk.SUNKEN)
+        preview.grid(row=row, column=1, padx=4, sticky=tk.W, pady=2)
+
+        def _pick() -> None:
+            result = colorchooser.askcolor(color=color_val[0], title=f"Choose {label}")
+            if result[1]:
+                color_val[0] = result[1]
+                preview.configure(bg=result[1])
+
+        tk.Button(parent, text="Pick...", command=_pick, width=6).grid(
+            row=row, column=2, padx=4, pady=2
+        )
+        self._color_vars[key] = color_val
         return row + 1
 
     def _add_checkbox(self, parent: tk.Frame, label: str, key: str, value: bool, row: int) -> int:
@@ -128,27 +181,36 @@ class SettingsWindow:
             parent,
             text=label,
             variable=var,
-            bg="#2a2a2a",
-            fg="#e0e0e0",
-            selectcolor="#3a3a3a",
-            font=("Segoe UI", 9),
+            bg=_CHROME_BG,
+            fg=_CHROME_FG,
+            selectcolor=_CHROME_BG,
+            font=_CHROME_FONT,
             anchor=tk.W,
         ).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=2)
         return row + 1
 
+    # ------------------------------------------------------------------
+    # Save / Close
+    # ------------------------------------------------------------------
+
     def _on_save_click(self):
-        """Collect values from form and merge into existing settings."""
+        """Merge form values into existing settings and invoke save callback."""
         from dataclasses import asdict
 
-        # Start from current settings to preserve fields not shown in the form
         merged = {**asdict(self._base_settings)}
         for key, var in self._vars.items():
             try:
                 merged[key] = var.get()
             except (tk.TclError, ValueError) as exc:
                 logger.debug("invalid value for field=%s error=%s", key, exc)
-        settings = Settings(**merged)
-        self._on_save(settings)
+        for key, color_list in self._color_vars.items():
+            merged[key] = color_list[0]
+        try:
+            merged["settings_x"] = self._window.winfo_x()
+            merged["settings_y"] = self._window.winfo_y()
+        except tk.TclError:
+            pass
+        self._on_save(Settings(**merged))
         self._window.destroy()
 
     def _on_close(self):

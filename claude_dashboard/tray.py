@@ -10,16 +10,14 @@ logger = logging.getLogger(__name__)
 
 TRAY_ICON_SIZE = (64, 64)
 TRAY_ICON_NAME = "Claude Dashboard"
-TRAY_COLOR_IDLE = (100, 149, 237)  # Cornflower blue
-TRAY_COLOR_ATTENTION = (255, 165, 0)  # Orange — something needs attention
+_DEFAULT_COLOR = (128, 128, 128)  # Gray
 
 
-def generate_icon_image(*, attention: bool = False) -> Image.Image:
-    """Generate a PIL Image for the tray icon — filled circle."""
+def generate_icon_image(*, color: tuple[int, int, int] = _DEFAULT_COLOR) -> Image.Image:
+    """Generate a PIL Image for the tray icon — filled circle with the given color."""
     size = TRAY_ICON_SIZE
     image = Image.new("RGBA", size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    color = TRAY_COLOR_ATTENTION if attention else TRAY_COLOR_IDLE
     margin = 4
     draw.ellipse(
         [margin, margin, size[0] - margin, size[1] - margin],
@@ -31,6 +29,7 @@ def generate_icon_image(*, attention: bool = False) -> Image.Image:
 def create_tray_icon(
     *,
     on_show: Callable,
+    on_hide: Callable,
     on_settings: Callable,
     on_quit: Callable,
 ) -> Any:
@@ -41,6 +40,7 @@ def create_tray_icon(
 
     menu = pystray.Menu(
         pystray.MenuItem("Show", on_show, default=True),
+        pystray.MenuItem("Hide", on_hide),
         pystray.MenuItem("Settings", on_settings),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit", on_quit),
@@ -55,9 +55,13 @@ def create_tray_icon(
     return icon
 
 
-def update_tray_icon(icon: Any, *, attention: bool = False) -> None:
-    """Update the tray icon to reflect attention state."""
+def update_tray_icon(
+    icon: Any,
+    *,
+    color: tuple[int, int, int] = _DEFAULT_COLOR,
+) -> None:
+    """Update the tray icon color."""
     try:
-        icon.icon = generate_icon_image(attention=attention)
+        icon.icon = generate_icon_image(color=color)
     except Exception as exc:
         logger.debug("failed to update tray icon error=%s", exc)

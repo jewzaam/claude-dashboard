@@ -2,7 +2,7 @@
 
 **Created**: 2026-03-22
 **Status**: Draft
-**Version**: 0.1.0
+**Version**: 0.2.0
 **Input**: Voice transcript (see `raw-prompt.md`)
 
 ## User Scenarios & Testing
@@ -19,7 +19,8 @@ As a user running multiple Claude Code sessions across terminals and VS Code ins
 
 1. **Given** the dashboard is running and 3 Claude sessions are active, **When** I look at the dashboard, **Then** I see 3 rows, each showing the session's workspace directory and a status indicator.
 2. **Given** a Claude session is actively processing, **When** I view its row, **Then** it shows the "working" indicator (🔄) with the corresponding row color.
-3. **Given** a Claude session is waiting for user input, **When** I view its row, **Then** it shows the "awaiting input" indicator (❓).
+3. **Given** a Claude session has finished responding (end_turn) and is waiting for the next user prompt, **When** I view its row, **Then** it shows the "idle" indicator (⏸️).
+3a. **Given** a Claude session has asked the user a question (via AskUserQuestion tool) and is actively waiting for an answer, **When** I view its row, **Then** it shows the "awaiting input" indicator (❓).
 4. **Given** a Claude session has a pending permission prompt, **When** I view its row, **Then** it shows the "permission required" indicator (⚠️).
 5. **Given** a Claude session terminates, **When** the next poll cycle runs, **Then** the row disappears (removed, not shown as stopped).
 6. **Given** the dashboard cannot determine a session's status, **When** I view its row, **Then** it shows an "unknown" indicator (🤷).
@@ -43,6 +44,8 @@ As a user with sessions spread across VS Code instances and virtual desktops, I 
 3. **Given** the target window is on a different virtual desktop, **When** I click the row, **Then** the OS switches to that desktop and foregrounds the window.
 4. **Given** a Claude session is running inside `screen` on Linux, **When** I click its row, **Then** the terminal hosting that screen session is foregrounded. **Note**: We foreground the terminal window only — we do not attempt to switch to a specific `screen` window within the screen session.
 5. **Given** two Claude sessions share the same containing process (e.g., two terminals in one VS Code instance), **When** I click either row, **Then** the same VS Code window is foregrounded. Each session remains an independent row.
+6. **Given** I press and hold mouse on a row and drag less than 5px, **When** I release, **Then** it is treated as a click and the containing window is foregrounded.
+7. **Given** I press and hold mouse on a row and drag 5px or more, **When** I release, **Then** it is treated as a window drag (repositioning the dashboard) and no navigation occurs.
 
 ---
 
@@ -59,7 +62,7 @@ As a user, I want my dashboard configuration (row dimensions, colors, emoji choi
 1. **Given** I move the dashboard window to a specific position, **When** I close and reopen it, **Then** it appears at the same position.
 2. **Given** I change row height/width/colors/poll interval in settings, **When** I restart, **Then** settings are preserved.
 3. **Given** a settings file does not exist, **When** the dashboard starts, **Then** it uses sensible defaults and creates the settings file.
-4. **Given** I right-click the system tray icon and select "Settings", **When** the settings window opens, **Then** I can edit all configurable values (row height, width, colors, emojis, poll interval, always-on-top) in a modal dialog.
+4. **Given** I right-click the system tray icon and select "Settings", **When** the settings window opens, **Then** I can edit all configurable values (row height, width, colors, emojis, poll interval, always-on-top) in a modal dialog. Each status color label MUST display its corresponding emoji next to it for visual correlation (e.g., "🔄 Working", "⏸️ Idle").
 
 ---
 
@@ -90,7 +93,7 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 **Acceptance Scenarios**:
 
 1. **Given** the dashboard is open, **When** I close the window, **Then** it minimizes to the system tray and continues running.
-2. **Given** any session enters a state requiring attention (permission pending, question asked), **When** I look at the tray icon, **Then** it shows a notification indicator (dot, badge, or color change).
+2. **Given** any session enters a state requiring attention (PermissionRequired or AwaitingInput), **When** I look at the tray icon, **Then** it shows a notification indicator (dot, badge, or color change). Note: Idle does NOT trigger the attention indicator — only states where Claude is blocked waiting for a user response.
 3. **Given** no sessions need attention, **When** I look at the tray icon, **Then** it shows the default/idle icon.
 4. **Given** the dashboard is in the tray, **When** I double-click the tray icon, **Then** the dashboard window reopens at its saved position.
 
@@ -103,6 +106,7 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 - **Process foregrounding fails**: Show a brief error or do nothing. Do not crash.
 - **Two sessions share the same CWD**: Display as independent rows. Order deterministically by PID (lower PID first). Both rows click-navigate to the same containing window if they share a parent process.
 - **No running Claude sessions**: Show an empty dashboard (no rows). Not an error state.
+- **Interrupted/cancelled sessions**: When a user interrupts Claude mid-response (e.g., Ctrl+C), the transcript may end in an intermediate state with no clean `stop_reason`. The dashboard MUST handle this gracefully — it may show Working or Unknown depending on what the last transcript entry contains. It MUST NOT crash or display stale state indefinitely.
 - **Lock screen**: No special behavior. The dashboard is not visible on the lock screen.
 
 ## Clarifications
@@ -115,6 +119,12 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 - Q: What should the row label show for CWD? → A: Path relative to `~` (e.g., `~/source/claude-dashboard`).
 - Q: How is session-tracker metadata (cost, context %, rate limits) displayed? → A: Not displayed in MVP. Read internally for future use.
 
+### Session 2026-03-22 (Live Testing)
+
+- Q: Should Idle and AwaitingInput be distinct states? → A: Yes. Previously merged as a single AwaitingInput state. Live testing revealed they are semantically different: Idle means Claude finished responding (`end_turn`) and is waiting for the next user prompt (⏸️). AwaitingInput means Claude invoked the AskUserQuestion tool and is actively blocked waiting for a user answer (❓). The tray attention indicator fires on AwaitingInput (Claude is blocked) but NOT on Idle (Claude is just done).
+- Q: Can the session ID in `sessions/{PID}.json` always be used to find the transcript? → A: No. When a session is resumed, the session ID may not match the transcript filename. A fallback to the most recently modified `.jsonl` in the project directory is required. See FR-025.
+- Q: Which states trigger the tray attention indicator? → A: PermissionRequired and AwaitingInput. Not Idle.
+
 ## Requirements
 
 ### Functional Requirements
@@ -123,14 +133,22 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 - **FR-002**: System MUST display each session as a row in a vertical stack
 - **FR-003**: Each row MUST show the session's workspace directory as a path relative to `~` (e.g., `~/source/claude-dashboard`)
 - **FR-004**: Each row MUST show a status indicator (emoji + row color)
-- **FR-005**: Status states MUST include: Working, Awaiting Input, Permission Required, Unknown. Dead sessions are removed (no Stopped state displayed).
+- **FR-005**: Status states MUST include: Working, Idle, Awaiting Input, Permission Required, Unknown. Dead sessions are removed (no Stopped state displayed).
+
+  | State | Enum Value | Trigger | Emoji | Description |
+  |-------|-----------|---------|-------|-------------|
+  | Working | `Working` | Claude is generating or a tool result was returned | 🔄 | Active processing |
+  | Idle | `Idle` | `stop_reason: "end_turn"`, no pending AskUserQuestion | ⏸️ | Finished responding, waiting for next user prompt |
+  | Awaiting Input | `AwaitingInput` | Claude invoked AskUserQuestion tool, waiting for answer | ❓ | Claude asked a question, actively waiting for user answer |
+  | Permission Required | `PermissionRequired` | `stop_reason: "tool_use"` with no subsequent tool result | ⚠️ | Tool approval needed |
+  | Unknown | `Unknown` | State cannot be determined from transcript | 🤷 | Fallback |
 - **FR-006**: Row width MUST be fixed (configurable, not dynamic). Text exceeding width is truncated.
-- **FR-007**: System MUST persist settings to a JSON file (row height, width, colors, emojis, window position, poll interval)
+- **FR-007**: System MUST persist settings to a JSON file (row height, width, colors, emojis, window position, poll interval). Settings changes MUST apply live to the dashboard without hiding or repositioning it — the dashboard redraws in place with updated values.
 - **FR-008**: System MUST restore window position on restart
 - **FR-009**: System MUST support always-on-top mode (user-togglable)
 - **FR-010**: System MUST work on Windows 11 and Linux
 - **FR-011**: System MUST use Python and Tkinter
-- **FR-012**: Clicking a row MUST bring the containing application window to the foreground
+- **FR-012**: Clicking a row MUST bring the containing application window to the foreground. Click vs drag MUST be distinguished: a short click (< 5px of movement) navigates to the session window; a click-hold+drag (>= 5px of movement) moves the dashboard window. This prevents accidental navigation when repositioning the dashboard.
 - **FR-013**: System MUST handle parent process chain traversal (Claude → shell → VS Code / terminal)
 - **FR-014**: System MUST handle virtual desktop switching when foregrounding
 - **FR-015**: System MUST detect session state by tailing `~/.claude/projects/{project}/{sessionId}.jsonl` (transcript) — the last entries determine state per the state machine in `research-session-detection.md`
@@ -140,15 +158,16 @@ As a user, I want the dashboard to minimize to the system tray when closed, and 
 - **FR-019**: [REMOVED — was session-tracker date rollover, no longer applicable]
 - **FR-020**: System MUST NOT read files it does not need access to — in particular, `~/.claude/ide/*.lock` files contain auth tokens and must never be read
 - **FR-021**: Each row MUST show the containing process type (VS Code, terminal, etc.) as an icon or label
-- **FR-022**: System MUST minimize to system tray on close, with tray icon reflecting aggregate attention state
+- **FR-022**: System MUST minimize to system tray on close, with tray icon reflecting aggregate attention state. The Settings window MUST also be visible across all virtual desktops (topmost attribute), matching the dashboard's cross-desktop visibility behavior.
 - **FR-023**: Rows MUST be ordered deterministically by PID (ascending)
 - **FR-024**: System MUST handle the denial flow — when a tool use is rejected (with or without user text), the state transitions back to Working (if user provided text) or Idle (if no text / end_turn)
+- **FR-025**: System MUST resolve transcript paths with a fallback strategy — the session ID in `sessions/{PID}.json` does not always match the transcript filename (sessions can be resumed under a new session ID). When the expected transcript file is not found, the system MUST fall back to the most recently modified `.jsonl` file in the project directory (`~/.claude/projects/{project}/`).
 
 ### Key Entities
 
 - **Session**: A running Claude Code process. Attributes: PID, CWD, status, parent window handle, container process type, session ID, slug (human-readable name), start time.
 - **Settings**: User preferences. Attributes: row height, row width, status colors (per-state), status emojis (per-state), window position (x, y), always-on-top flag, poll interval.
-- **StatusState**: Enum of session states: Working, AwaitingInput, PermissionRequired, Unknown. (Dead sessions are removed, not displayed.)
+- **StatusState**: Enum of session states: Working, Idle, AwaitingInput, PermissionRequired, Unknown. (Dead sessions are removed, not displayed.) Idle and AwaitingInput are distinct — Idle means Claude finished responding and is waiting for the next prompt; AwaitingInput means Claude asked a question via AskUserQuestion and is actively waiting for an answer.
 - **ContainerType**: Enum of containing process types: VSCode, Terminal, GitBash, Screen, Unknown.
 
 ## Success Criteria

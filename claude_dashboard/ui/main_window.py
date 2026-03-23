@@ -12,6 +12,15 @@ from claude_dashboard.transcript import StatusState
 
 logger = logging.getLogger(__name__)
 
+# Dashboard UI constants
+_FONT_BODY = ("Segoe UI", 9)
+_FONT_EMOJI = ("Segoe UI Emoji", 12)
+_FONT_CONTAINER = ("Segoe UI", 7)
+_COLOR_EMPTY_FG = "#666666"
+_COLOR_CONTAINER_FG = "#888888"
+_ROW_PAD_X = 1
+_ROW_PAD_Y = 1
+
 
 class MainWindow:
     """Dashboard window with a vertical stack of session rows."""
@@ -23,87 +32,136 @@ class MainWindow:
         *,
         on_row_click: Callable[[SessionInfo], None] | None = None,
         on_position_save: Callable[[int, int], None] | None = None,
+        on_right_click: Callable[[int, int], None] | None = None,
     ):
         self._root = root
         self._settings = settings
         self._on_row_click = on_row_click
         self._on_position_save = on_position_save
-
-        # Map of PID -> row widgets (typed as Any to avoid union-attr issues)
+        self._on_right_click = on_right_click
         self._rows: dict[int, dict[str, Any]] = {}
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        self._dragged = False  # True if mouse moved significantly since button-down
 
+        # Create the window shell — apply_settings handles all configuration
         self._window = tk.Toplevel(root)
-        self._window.title("Claude Dashboard")
-        self._window.configure(bg=settings.window_bg)
-        self._window.resizable(True, False)
+        self._window.overrideredirect(True)
 
-        if settings.always_on_top:
-            self._window.attributes("-topmost", True)
-
-        # Restore window position
-        if settings.window_x is not None and settings.window_y is not None:
-            self._window.geometry(f"+{settings.window_x}+{settings.window_y}")
-
-        # Set fixed width
-        self._window.geometry(f"{settings.row_width}x1")
-
-        # Container frame
-        self._frame = tk.Frame(self._window, bg=settings.window_bg)
+        self._frame = tk.Frame(self._window)
         self._frame.pack(fill=tk.BOTH, expand=True)
 
-        # Empty state label
         self._empty_label = tk.Label(
             self._frame,
             text="No Claude sessions",
-            bg=settings.window_bg,
-            fg="#666666",
-            font=("Segoe UI", 9),
+            fg=_COLOR_EMPTY_FG,
+            font=_FONT_BODY,
         )
         self._empty_label.pack(pady=10)
 
-        self._window.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Bindings
+        self._window.bind("<Button-1>", self._on_drag_start)
+        self._window.bind("<B1-Motion>", self._on_drag_motion)
+        self._window.bind("<Button-3>", self._on_right_click_event)
 
-    def _on_close(self):
-        """Handle window close — save position, then hide."""
-        if self._on_position_save:
-            x, y = self.get_position()
+        # Apply all settings (position, size, colors, topmost)
+        self.apply_settings(settings, restore_position=True)
+
+    # ------------------------------------------------------------------
+    # Settings — single path for all configuration
+    # ------------------------------------------------------------------
+
+    def apply_settings(self, settings: Settings, *, restore_position: bool = False):
+        """Apply settings to the window. Does NOT change position unless restore_position=True."""
+        self._settings = settings
+
+        # Window attributes
+        self._window.wm_attributes("-topmost", bool(settings.always_on_top))
+        self._window.configure(bg=settings.window_bg)
+        self._frame.configure(bg=settings.window_bg)
+        self._empty_label.configure(bg=settings.window_bg)
+
+        # Position — only on initial startup, not on settings changes
+        if restore_position:
+            x = settings.window_x
+            y = settings.window_y
             if x is not None and y is not None:
-                self._on_position_save(x, y)
-        self._window.withdraw()
+                self._window.geometry(f"{settings.row_width}x1+{x}+{y}")
+            else:
+                self._window.geometry(f"{settings.row_width}x1")
+
+    # ------------------------------------------------------------------
+    # Window visibility
+    # ------------------------------------------------------------------
 
     def show(self):
-        """Show the dashboard window."""
         self._window.deiconify()
 
     def hide(self):
-        """Hide the dashboard window."""
+        self._save_position()
         self._window.withdraw()
 
     @property
     def toplevel(self) -> tk.Toplevel:
-        """The Tk toplevel window for this dashboard."""
         return self._window
 
     def get_position(self) -> tuple[int | None, int | None]:
-        """Get current window position."""
         try:
             return self._window.winfo_x(), self._window.winfo_y()
         except tk.TclError:
             return None, None
 
+    # ------------------------------------------------------------------
+    # Drag (borderless window)
+    # ------------------------------------------------------------------
+
+    _DRAG_THRESHOLD = 5  # pixels of movement before it counts as a drag
+
+    def _on_drag_start(self, event: Any):
+        self._drag_start_x = event.x
+        self._drag_start_y = event.y
+        self._dragged = False
+
+    def _on_drag_motion(self, event: Any):
+        dx = abs(event.x - self._drag_start_x)
+        dy = abs(event.y - self._drag_start_y)
+        if dx > self._DRAG_THRESHOLD or dy > self._DRAG_THRESHOLD:
+            self._dragged = True
+        if self._dragged:
+            x = self._window.winfo_x() + event.x - self._drag_start_x
+            y = self._window.winfo_y() + event.y - self._drag_start_y
+            self._window.geometry(f"+{x}+{y}")
+
+    # ------------------------------------------------------------------
+    # Right-click context menu
+    # ------------------------------------------------------------------
+
+    def _on_right_click_event(self, event: Any):
+        if self._on_right_click:
+            self._on_right_click(event.x_root, event.y_root)
+
+    # ------------------------------------------------------------------
+    # Position persistence
+    # ------------------------------------------------------------------
+
+    def _save_position(self):
+        if self._on_position_save:
+            x, y = self.get_position()
+            if x is not None and y is not None:
+                self._on_position_save(x, y)
+
+    # ------------------------------------------------------------------
+    # Session rows
+    # ------------------------------------------------------------------
+
     def update_sessions(
         self,
         sessions: list[tuple[SessionInfo, StatusState, ContainerInfo | None]],
     ):
-        """Update the dashboard with current session states.
+        current_pids = {s.pid for s, _, _ in sessions}
 
-        Adds new rows, updates existing ones, removes stale ones.
-        """
-        current_pids = {session.pid for session, _, _ in sessions}
-
-        # Remove rows for sessions that no longer exist
-        stale_pids = set(self._rows.keys()) - current_pids
-        for pid in stale_pids:
+        # Remove stale rows
+        for pid in set(self._rows.keys()) - current_pids:
             self._remove_row(pid)
 
         # Add or update rows
@@ -113,45 +171,46 @@ class MainWindow:
             else:
                 self._add_row(session, state, container)
 
-        # Show/hide empty label
+        # Empty state label
         if sessions:
             self._empty_label.pack_forget()
         else:
             self._empty_label.pack(pady=10)
 
-        # Resize window to fit content
+        # Resize height, preserve position
         self._window.update_idletasks()
         height = max(1, len(sessions) * self._settings.row_height)
-        self._window.geometry(f"{self._settings.row_width}x{height}")
+        x = self._window.winfo_x()
+        y = self._window.winfo_y()
+        self._window.geometry(f"{self._settings.row_width}x{height}+{x}+{y}")
 
-    def _get_status_color(self, state: StatusState) -> str:
-        color_map = {
+    def _color_for_state(self, state: StatusState) -> str:
+        return {
             StatusState.WORKING: self._settings.color_working,
+            StatusState.IDLE: self._settings.color_idle,
             StatusState.AWAITING_INPUT: self._settings.color_awaiting_input,
             StatusState.PERMISSION_REQUIRED: self._settings.color_permission_required,
             StatusState.UNKNOWN: self._settings.color_unknown,
-        }
-        return color_map.get(state, self._settings.color_unknown)
+        }.get(state, self._settings.color_unknown)
 
-    def _get_status_emoji(self, state: StatusState) -> str:
-        emoji_map = {
+    def _emoji_for_state(self, state: StatusState) -> str:
+        return {
             StatusState.WORKING: self._settings.emoji_working,
+            StatusState.IDLE: self._settings.emoji_idle,
             StatusState.AWAITING_INPUT: self._settings.emoji_awaiting_input,
             StatusState.PERMISSION_REQUIRED: self._settings.emoji_permission_required,
             StatusState.UNKNOWN: self._settings.emoji_unknown,
-        }
-        return emoji_map.get(state, self._settings.emoji_unknown)
+        }.get(state, self._settings.emoji_unknown)
 
-    def _container_label_text(self, container: ContainerInfo | None) -> str:
+    def _container_label(self, container: ContainerInfo | None) -> str:
         if not container or container.container_type == ContainerType.UNKNOWN:
             return ""
-        label_map = {
+        return {
             ContainerType.VSCODE: "VS Code",
             ContainerType.TERMINAL: "Term",
             ContainerType.GITBASH: "Git Bash",
             ContainerType.SCREEN: "screen",
-        }
-        return label_map.get(container.container_type, container.container_type.value)
+        }.get(container.container_type, container.container_type.value)
 
     def _add_row(
         self,
@@ -159,68 +218,63 @@ class MainWindow:
         state: StatusState,
         container: ContainerInfo | None = None,
     ):
-        """Add a new row for a session."""
-        bg_color = self._get_status_color(state)
-        emoji = self._get_status_emoji(state)
-        cwd_display = cwd_relative_to_home(session.cwd)
-        container_text = self._container_label_text(container)
+        bg = self._color_for_state(state)
+        fg = self._settings.text_color
 
-        row_frame = tk.Frame(
-            self._frame,
-            bg=bg_color,
-            height=self._settings.row_height,
-            cursor="hand2",
-        )
+        row_frame = tk.Frame(self._frame, bg=bg, height=self._settings.row_height, cursor="hand2")
         row_frame.pack(fill=tk.X, padx=1, pady=1)
         row_frame.pack_propagate(False)
 
-        status_var = tk.StringVar(value=emoji)
+        status_var = tk.StringVar(value=self._emoji_for_state(state))
         status_label = tk.Label(
             row_frame,
             textvariable=status_var,
-            bg=bg_color,
-            fg=self._settings.text_color,
-            font=("Segoe UI", 10),
-            width=3,
+            bg=bg,
+            fg=fg,
+            font=_FONT_EMOJI,
+            width=2,
+            anchor=tk.CENTER,
         )
-        status_label.pack(side=tk.LEFT, padx=(4, 0))
+        status_label.pack(side=tk.LEFT, padx=(6, 2))
 
-        cwd_var = tk.StringVar(value=cwd_display)
+        cwd_var = tk.StringVar(value=cwd_relative_to_home(session.cwd))
         cwd_label = tk.Label(
             row_frame,
             textvariable=cwd_var,
-            bg=bg_color,
-            fg=self._settings.text_color,
-            font=("Segoe UI", 9),
+            bg=bg,
+            fg=fg,
+            font=_FONT_BODY,
             anchor=tk.W,
         )
-        cwd_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
+        cwd_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
 
-        # Container type label (right-aligned)
-        container_var = tk.StringVar(value=container_text)
+        container_var = tk.StringVar(value=self._container_label(container))
         container_label = tk.Label(
             row_frame,
             textvariable=container_var,
-            bg=bg_color,
-            fg="#888888",
-            font=("Segoe UI", 7),
+            bg=bg,
+            fg=_COLOR_CONTAINER_FG,
+            font=_FONT_CONTAINER,
             anchor=tk.E,
         )
         container_label.pack(side=tk.RIGHT, padx=(0, 6))
 
-        # Bind click to all widgets in the row
-        all_widgets = [row_frame, status_label, cwd_label, container_label]
+        # Click and right-click bindings on all widgets
+        widgets = [row_frame, status_label, cwd_label, container_label]
 
-        def make_click_handler(s=session):
-            def handler(event):
-                if self._on_row_click:
+        def make_click(s: SessionInfo = session):
+            def handler(event: Any):
+                if not self._dragged and self._on_row_click:
                     self._on_row_click(s)
 
             return handler
 
-        click_handler = make_click_handler()
-        for widget in all_widgets:
-            widget.bind("<Button-1>", click_handler)
+        click = make_click()
+        for w in widgets:
+            w.bind("<Button-1>", self._on_drag_start)
+            w.bind("<B1-Motion>", self._on_drag_motion)
+            w.bind("<ButtonRelease-1>", click)
+            w.bind("<Button-3>", self._on_right_click_event)
 
         self._rows[session.pid] = {
             "frame": row_frame,
@@ -238,26 +292,26 @@ class MainWindow:
         state: StatusState,
         container: ContainerInfo | None = None,
     ):
-        """Update an existing row with new state."""
         row = self._rows[session.pid]
-        bg_color = self._get_status_color(state)
-        emoji = self._get_status_emoji(state)
-        cwd_display = cwd_relative_to_home(session.cwd)
-        container_text = self._container_label_text(container)
+        bg = self._color_for_state(state)
 
-        row["status_var"].set(emoji)
-        row["cwd_var"].set(cwd_display)
-        row["container_var"].set(container_text)
+        row["status_var"].set(self._emoji_for_state(state))
+        row["cwd_var"].set(cwd_relative_to_home(session.cwd))
+        row["container_var"].set(self._container_label(container))
 
-        # Update background colors
-        for widget_key in ("frame", "status_label", "cwd_label", "container_label"):
+        # Update row height if settings changed
+        try:
+            row["frame"].configure(height=self._settings.row_height)
+        except tk.TclError:
+            pass
+
+        for key in ("frame", "status_label", "cwd_label", "container_label"):
             try:
-                row[widget_key].configure(bg=bg_color)
+                row[key].configure(bg=bg)
             except tk.TclError:
                 pass
 
     def _remove_row(self, pid: int):
-        """Remove a row for a terminated session."""
         row = self._rows.pop(pid, None)
         if row and row["frame"]:
             row["frame"].destroy()

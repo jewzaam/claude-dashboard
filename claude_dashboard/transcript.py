@@ -13,6 +13,7 @@ class StatusState(Enum):
     """Possible states of a Claude Code session."""
 
     WORKING = "working"
+    IDLE = "idle"
     AWAITING_INPUT = "awaiting_input"
     PERMISSION_REQUIRED = "permission_required"
     UNKNOWN = "unknown"
@@ -75,7 +76,23 @@ def detect_state(transcript_path: Path | None) -> StatusState:
 
     entries = tail_jsonl(transcript_path)
     if not entries:
+        logger.debug("no entries from transcript")
         return StatusState.UNKNOWN
+
+    entry_types = [e.get("type", "?") for e in entries]
+    logger.debug("tail returned %d entries types=%s", len(entries), entry_types)
+
+    # Check if the last entry is an interruption marker → IDLE
+    last = entries[-1]
+    if last.get("type") == "user":
+        last_content = last.get("message", {}).get("content", [])
+        if isinstance(last_content, list):
+            for item in last_content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = item.get("text", "")
+                    if "[Request interrupted by user" in text:
+                        logger.debug("detected interruption marker")
+                        return StatusState.IDLE
 
     # Find the last assistant entry
     last_assistant_idx = None
@@ -83,6 +100,14 @@ def detect_state(transcript_path: Path | None) -> StatusState:
         if entries[i].get("type") == "assistant":
             last_assistant_idx = i
             break
+
+    if last_assistant_idx is not None:
+        msg = entries[last_assistant_idx].get("message", {})
+        logger.debug(
+            "last assistant at idx=%d stop_reason=%s",
+            last_assistant_idx,
+            msg.get("stop_reason", "?"),
+        )
 
     # Check if there's a user prompt AFTER the last assistant entry
     # (meaning Claude is currently processing a new prompt)
@@ -121,11 +146,12 @@ def detect_state(transcript_path: Path | None) -> StatusState:
     stop_reason = message.get("stop_reason", "")
 
     if stop_reason == "end_turn":
-        return StatusState.AWAITING_INPUT
+        return StatusState.IDLE
 
     if stop_reason == "tool_use":
-        # Collect all tool_use_ids from the assistant message
+        # Collect tool names and IDs from the assistant message
         tool_use_ids: set[str] = set()
+        tool_names: set[str] = set()
         content = message.get("content", [])
         if isinstance(content, list):
             for item in content:
@@ -133,6 +159,9 @@ def detect_state(transcript_path: Path | None) -> StatusState:
                     tid = item.get("id")
                     if tid:
                         tool_use_ids.add(tid)
+                    name = item.get("name", "")
+                    if name:
+                        tool_names.add(name)
 
         # Check if any subsequent entry has a tool result matching any tool_use_id
         for i in range(last_assistant_idx + 1, len(entries)):
@@ -147,7 +176,10 @@ def detect_state(transcript_path: Path | None) -> StatusState:
                             if not tool_use_ids or result_id in tool_use_ids:
                                 return StatusState.WORKING
 
-        # No tool result found — permission is pending
+        # No tool result found — distinguish AskUserQuestion from permission
+        if "AskUserQuestion" in tool_names:
+            return StatusState.AWAITING_INPUT
+
         return StatusState.PERMISSION_REQUIRED
 
     # Unknown stop reason

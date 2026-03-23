@@ -19,6 +19,8 @@ class Settings:
     # Window position
     window_x: int | None = None
     window_y: int | None = None
+    settings_x: int | None = None
+    settings_y: int | None = None
     always_on_top: bool = config.DEFAULT_ALWAYS_ON_TOP
 
     # Row dimensions
@@ -30,12 +32,14 @@ class Settings:
 
     # Status emojis
     emoji_working: str = config.DEFAULT_EMOJI_WORKING
+    emoji_idle: str = config.DEFAULT_EMOJI_IDLE
     emoji_awaiting_input: str = config.DEFAULT_EMOJI_AWAITING_INPUT
     emoji_permission_required: str = config.DEFAULT_EMOJI_PERMISSION_REQUIRED
     emoji_unknown: str = config.DEFAULT_EMOJI_UNKNOWN
 
     # Status colors
     color_working: str = config.DEFAULT_COLOR_WORKING
+    color_idle: str = config.DEFAULT_COLOR_IDLE
     color_awaiting_input: str = config.DEFAULT_COLOR_AWAITING_INPUT
     color_permission_required: str = config.DEFAULT_COLOR_PERMISSION_REQUIRED
     color_unknown: str = config.DEFAULT_COLOR_UNKNOWN

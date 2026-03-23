@@ -10,6 +10,9 @@ def main():
     parser = argparse.ArgumentParser(description="Dashboard for monitoring Claude Code sessions")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--quiet", "-q", action="store_true", help="Suppress non-essential output")
+    parser.add_argument(
+        "--ttl", type=int, default=0, help="Auto-quit after N seconds (0 = run forever)"
+    )
     args = parser.parse_args()
 
     level = logging.DEBUG if args.debug else (logging.WARNING if args.quiet else logging.INFO)
@@ -22,7 +25,7 @@ def main():
     # Controller import deferred until args are parsed
     from claude_dashboard.controller import AppController
 
-    app = AppController(debug=args.debug, quiet=args.quiet)
+    app = AppController(debug=args.debug, quiet=args.quiet, ttl_seconds=args.ttl)
     app.run()
 
 

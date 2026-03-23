@@ -29,9 +29,10 @@ logger = logging.getLogger(__name__)
 class AppController:
     """Central controller that owns the Tk root and coordinates all subsystems."""
 
-    def __init__(self, *, debug: bool = False, quiet: bool = False):
+    def __init__(self, *, debug: bool = False, quiet: bool = False, ttl_seconds: int = 0):
         self._debug = debug
         self._quiet = quiet
+        self._ttl_seconds = ttl_seconds
         self._settings = load_settings()
 
         self._root = tk.Tk()
@@ -42,6 +43,7 @@ class AppController:
             self._settings,
             on_row_click=self._on_row_click,
             on_position_save=self._on_position_save,
+            on_right_click=self._on_right_click,
         )
 
         # Cache: PID -> ContainerInfo (only re-detect for new sessions)
@@ -50,10 +52,19 @@ class AppController:
         # System tray
         self._tray_icon = create_tray_icon(
             on_show=lambda icon, item: self._root.after(0, self._show_window),
+            on_hide=lambda icon, item: self._root.after(0, self._hide_window),
             on_settings=lambda icon, item: self._root.after(0, self._open_settings),
             on_quit=lambda icon, item: self._root.after(0, self._quit),
         )
-        self._needs_attention = False
+        self._tray_state: StatusState | None = None
+
+        # Context menu (shared by tray right-click and dashboard right-click)
+        self._context_menu = tk.Menu(self._root, tearoff=0)
+        self._context_menu.add_command(label="Show", command=self._menu_show)
+        self._context_menu.add_command(label="Hide", command=self._menu_hide)
+        self._context_menu.add_command(label="Settings", command=self._menu_settings)
+        self._context_menu.add_separator()
+        self._context_menu.add_command(label="Quit", command=self._menu_quit)
 
     def run(self):
         """Start the application main loop."""
@@ -62,6 +73,10 @@ class AppController:
         # Start tray icon on a daemon thread
         tray_thread = threading.Thread(target=self._tray_icon.run, daemon=True)
         tray_thread.start()
+
+        # Schedule TTL quit if set
+        if self._ttl_seconds > 0:
+            self._root.after(self._ttl_seconds * 1000, self._quit)
 
         # Run initial tick immediately (it self-schedules the next tick)
         self._tick()
@@ -76,19 +91,23 @@ class AppController:
             alive_pids = set()
 
             session_states = []
-            any_needs_attention = False
 
             for session in sessions:
                 if not validate_pid(session.pid):
+                    logger.debug("pid dead or not claude pid=%d", session.pid)
                     continue
                 session.pid_alive = True
                 alive_pids.add(session.pid)
 
                 transcript_path = resolve_transcript_path(session.cwd, session.session_id)
                 state = detect_state(transcript_path)
-
-                if state == StatusState.PERMISSION_REQUIRED:
-                    any_needs_attention = True
+                logger.debug(
+                    "session pid=%d cwd=%s transcript=%s state=%s",
+                    session.pid,
+                    session.cwd,
+                    transcript_path,
+                    state.value,
+                )
 
                 # Detect container for new sessions (cached)
                 if session.pid not in self._container_cache:
@@ -106,10 +125,13 @@ class AppController:
 
             self._main_window.update_sessions(session_states)
 
-            # Update tray icon attention state
-            if any_needs_attention != self._needs_attention:
-                self._needs_attention = any_needs_attention
-                update_tray_icon(self._tray_icon, attention=any_needs_attention)
+            # Update tray icon to match highest-priority active status
+            # Priority: PermissionRequired > AwaitingInput > Working > Idle
+            highest = self._highest_priority_state(session_states)
+            if highest != self._tray_state:
+                self._tray_state = highest
+                color = self._tray_color_for_state(highest)
+                update_tray_icon(self._tray_icon, color=color)
 
         except Exception as exc:
             logger.error("tick failed error=%s", exc)
@@ -139,23 +161,54 @@ class AppController:
         else:
             logger.debug("no window handle for session pid=%d", session.pid)
 
+    def _on_right_click(self, x: int, y: int):
+        """Show context menu at the given screen coordinates."""
+        try:
+            self._context_menu.tk_popup(x, y)
+        finally:
+            self._context_menu.grab_release()
+
+    def _dismiss_menu(self):
+        """Dismiss the context menu."""
+        self._context_menu.unpost()
+
+    def _menu_show(self):
+        self._dismiss_menu()
+        self._show_window()
+
+    def _menu_hide(self):
+        self._dismiss_menu()
+        self._hide_window()
+
+    def _menu_settings(self):
+        self._dismiss_menu()
+        self._open_settings()
+
+    def _menu_quit(self):
+        self._dismiss_menu()
+        self._quit()
+
     def _show_window(self):
-        """Show the dashboard window (from tray menu)."""
         self._main_window.show()
 
+    def _hide_window(self):
+        self._main_window.hide()
+
     def _open_settings(self):
-        """Open the settings editor dialog."""
         SettingsWindow(
-            self._main_window.toplevel,
+            self._root,
             self._settings,
             on_save=self._on_settings_save,
         )
 
     def _on_settings_save(self, new_settings: Settings):
-        """Apply new settings from the settings editor."""
+        """Apply new settings and force immediate refresh."""
         self._settings = new_settings
         save_settings(self._settings)
-        logger.info("settings saved")
+        self._main_window.apply_settings(new_settings)
+        # Force immediate poll instead of waiting for next tick
+        self._tick()
+        logger.info("settings saved and applied")
 
     def _quit(self):
         """Quit the application."""
@@ -166,9 +219,10 @@ class AppController:
         self._root.quit()
 
     def _on_position_save(self, x: int, y: int):
-        """Callback when window position changes (close/hide)."""
+        """Callback when window position changes (close/hide). Persists to disk."""
         self._settings.window_x = x
         self._settings.window_y = y
+        save_settings(self._settings)
 
     def _save_window_position(self):
         """Save the dashboard window position to settings."""
@@ -176,3 +230,37 @@ class AppController:
         if x is not None and y is not None:
             self._settings.window_x = x
             self._settings.window_y = y
+
+    # Priority order: PermissionRequired > AwaitingInput > Working > Idle > Unknown
+    _STATE_PRIORITY = {
+        StatusState.PERMISSION_REQUIRED: 0,
+        StatusState.AWAITING_INPUT: 1,
+        StatusState.WORKING: 2,
+        StatusState.IDLE: 3,
+        StatusState.UNKNOWN: 4,
+    }
+
+    def _highest_priority_state(
+        self,
+        session_states: list[tuple[SessionInfo, StatusState, ContainerInfo | None]],
+    ) -> StatusState | None:
+        if not session_states:
+            return None
+        best = None
+        best_priority = 999
+        for _, state, _ in session_states:
+            p = self._STATE_PRIORITY.get(state, 999)
+            if p < best_priority:
+                best = state
+                best_priority = p
+        return best
+
+    def _tray_color_for_state(self, state: StatusState | None) -> tuple[int, int, int]:
+        """Map a status state to a tray icon RGB color."""
+        if state == StatusState.PERMISSION_REQUIRED:
+            return (255, 165, 0)  # Orange
+        if state == StatusState.AWAITING_INPUT:
+            return (50, 205, 50)  # Green
+        if state == StatusState.WORKING:
+            return (100, 149, 237)  # Cornflower blue
+        return (128, 128, 128)  # Gray for idle/unknown/none

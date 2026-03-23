@@ -51,7 +51,7 @@ class TestTailJsonl:
 
 
 class TestDetectState:
-    def test_awaiting_input(self, tmp_path):
+    def test_idle_after_end_turn(self, tmp_path):
         path = tmp_path / "t.jsonl"
         _write_jsonl(
             path,
@@ -65,6 +65,29 @@ class TestDetectState:
                     "message": {
                         "stop_reason": "end_turn",
                         "content": [{"type": "text", "text": "hello"}],
+                    },
+                },
+            ],
+        )
+        assert detect_state(path) == StatusState.IDLE
+
+    def test_awaiting_input_ask_user_question(self, tmp_path):
+        path = tmp_path / "t.jsonl"
+        _write_jsonl(
+            path,
+            [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "stop_reason": "tool_use",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "q_123",
+                                "name": "AskUserQuestion",
+                                "input": {"question": "Which option?"},
+                            }
+                        ],
                     },
                 },
             ],
@@ -186,6 +209,41 @@ class TestDetectState:
             ],
         )
         assert detect_state(path) == StatusState.WORKING
+
+    def test_idle_after_interruption(self, tmp_path):
+        """User interrupted Claude mid-response → IDLE."""
+        path = tmp_path / "t.jsonl"
+        _write_jsonl(
+            path,
+            [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "stop_reason": "tool_use",
+                        "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}],
+                    },
+                },
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "t1",
+                                "content": "ok",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [{"type": "text", "text": "[Request interrupted by user]"}]
+                    },
+                },
+            ],
+        )
+        assert detect_state(path) == StatusState.IDLE
 
     def test_unknown_for_none_path(self):
         assert detect_state(None) == StatusState.UNKNOWN
