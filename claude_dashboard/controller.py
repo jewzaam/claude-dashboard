@@ -303,9 +303,9 @@ class AppController:
                 logger.warning("failed to foreground pid=%d", session.pid)
 
     def _on_row_double_click(self, session: SessionInfo):
-        """Double-click an Idle session to mark it Ready (deferred attention)."""
+        """Double-click an Idle/Unknown session to mark it Ready (deferred attention)."""
         entry = self._sessions.get(session.pid)
-        if entry and entry.state == StatusState.IDLE:
+        if entry and entry.state in (StatusState.IDLE, StatusState.UNKNOWN):
             entry.state = StatusState.READY
             logger.debug("pid=%d double-clicked while idle, now ready", session.pid)
             self._refresh_ui()
