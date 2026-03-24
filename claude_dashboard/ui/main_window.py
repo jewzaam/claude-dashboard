@@ -55,6 +55,7 @@ class MainWindow:
         self._drag_start_y = 0
         self._dragged = False  # True if mouse moved significantly since button-down
         self._double_clicked = False  # Suppress single-click after double-click
+        self._pending_click_id: str | None = None  # Pending after() id for delayed single-click
         self._force_resize = False
 
         # Create the window shell — apply_settings handles all configuration
@@ -333,13 +334,25 @@ class MainWindow:
                     self._double_clicked = False
                     return
                 if not self._dragged and self._on_row_click:
-                    self._on_row_click(s)
+                    # Delay single-click so double-click can suppress it.
+                    # On Linux, <ButtonRelease-1> fires before <Double-1>,
+                    # so without a delay the single-click runs first.
+                    def deferred_click(session: SessionInfo = s):
+                        self._pending_click_id = None
+                        if not self._double_clicked and self._on_row_click:
+                            self._on_row_click(session)
+                        self._double_clicked = False
+
+                    self._pending_click_id = self._window.after(200, deferred_click)
 
             return handler
 
         def make_double_click(s: SessionInfo = session):
             def handler(event: Any):
                 self._double_clicked = True
+                if self._pending_click_id is not None:
+                    self._window.after_cancel(self._pending_click_id)
+                    self._pending_click_id = None
                 if self._on_row_double_click:
                     self._on_row_double_click(s)
                 return "break"
