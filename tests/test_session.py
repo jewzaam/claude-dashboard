@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from claude_dashboard.session import (
     cwd_relative_to_home,
+    detect_branch,
     discover_sessions,
     encode_project_key,
     validate_pid,
@@ -98,6 +99,44 @@ class TestCwdRelativeToHome:
         cwd = home + "\\source\\project"
         result = cwd_relative_to_home(cwd)
         assert result == "~/source/project"
+
+
+class TestDetectBranch:
+    def test_returns_feature_branch(self, tmp_path):
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/feature-xyz\n", encoding="utf-8")
+        assert detect_branch(str(tmp_path)) == "feature-xyz"
+
+    def test_returns_empty_for_main(self, tmp_path):
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        assert detect_branch(str(tmp_path)) == ""
+
+    def test_returns_empty_for_master(self, tmp_path):
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/master\n", encoding="utf-8")
+        assert detect_branch(str(tmp_path)) == ""
+
+    def test_returns_empty_for_detached_head(self, tmp_path):
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("abc123def456\n", encoding="utf-8")
+        assert detect_branch(str(tmp_path)) == ""
+
+    def test_returns_empty_for_non_git_dir(self, tmp_path):
+        assert detect_branch(str(tmp_path)) == ""
+
+    def test_returns_empty_for_nonexistent_dir(self, tmp_path):
+        assert detect_branch(str(tmp_path / "nonexistent")) == ""
+
+    def test_handles_nested_branch_name(self, tmp_path):
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/feature/my-work\n", encoding="utf-8")
+        assert detect_branch(str(tmp_path)) == "feature/my-work"
 
 
 class TestValidatePid:

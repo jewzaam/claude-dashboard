@@ -186,9 +186,9 @@ class MainWindow:
 
     def update_sessions(
         self,
-        sessions: list[tuple[SessionInfo, StatusState, ContainerInfo | None]],
+        sessions: list[tuple[SessionInfo, StatusState, ContainerInfo | None, str]],
     ):
-        current_pids = {s.pid for s, _, _ in sessions}
+        current_pids = {s.pid for s, _, _, _ in sessions}
         changed = False
 
         # Remove stale rows
@@ -197,17 +197,17 @@ class MainWindow:
             changed = True
 
         # Add or update rows
-        for session, state, container in sessions:
+        for session, state, container, branch in sessions:
             if session.pid in self._rows:
-                self._update_row(session, state, container)
+                self._update_row(session, state, container, branch)
             else:
-                self._add_row(session, state, container)
+                self._add_row(session, state, container, branch)
                 changed = True
 
         # Re-order rows only if the order changed
-        desired_order = [s.pid for s, _, _ in sessions]
+        desired_order = [s.pid for s, _, _, _ in sessions]
         if desired_order != self._row_order:
-            for session, _, _ in sessions:
+            for session, _, _, _ in sessions:
                 row = self._rows.get(session.pid)
                 if row:
                     row["frame"].pack_forget()
@@ -278,11 +278,18 @@ class MainWindow:
             ContainerType.SCREEN: "screen",
         }.get(container.container_type, container.container_type.value)
 
+    def _cwd_display(self, cwd: str, branch: str) -> str:
+        display = cwd_relative_to_home(cwd)
+        if branch:
+            display += f"  [{branch}]"
+        return display
+
     def _add_row(
         self,
         session: SessionInfo,
         state: StatusState,
         container: ContainerInfo | None = None,
+        branch: str = "",
     ):
         bg = self._color_for_state(state)
         fg = self._settings.text_color
@@ -303,7 +310,7 @@ class MainWindow:
         )
         status_label.pack(side=tk.LEFT, padx=(6, 2))
 
-        cwd_var = tk.StringVar(value=cwd_relative_to_home(session.cwd))
+        cwd_var = tk.StringVar(value=self._cwd_display(session.cwd, branch))
         cwd_label = tk.Label(
             row_frame,
             textvariable=cwd_var,
@@ -383,12 +390,13 @@ class MainWindow:
         session: SessionInfo,
         state: StatusState,
         container: ContainerInfo | None = None,
+        branch: str = "",
     ):
         row = self._rows[session.pid]
         bg = self._color_for_state(state)
 
         row["status_var"].set(self._emoji_for_state(state))
-        row["cwd_var"].set(cwd_relative_to_home(session.cwd))
+        row["cwd_var"].set(self._cwd_display(session.cwd, branch))
         row["container_var"].set(self._container_label(container))
 
         # Update row height if settings changed

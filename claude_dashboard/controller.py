@@ -17,6 +17,7 @@ from claude_dashboard.session import (
     SessionInfo,
     cwd_basename,
     cwd_relative_to_home,
+    detect_branch,
     discover_sessions,
     validate_pid,
 )
@@ -33,13 +34,14 @@ logger = logging.getLogger(__name__)
 class _SessionEntry:
     """Tracks a live session: its info, container, and current state."""
 
-    __slots__ = ("session", "container", "state", "hidden")
+    __slots__ = ("session", "container", "state", "hidden", "branch")
 
     def __init__(self, session: SessionInfo):
         self.session = session
         self.container: ContainerInfo | None = None
         self.state: StatusState = StatusState.UNKNOWN
         self.hidden: bool = False
+        self.branch: str = ""
 
 
 class AppController:
@@ -132,6 +134,8 @@ class AppController:
 
                 if session.pid not in self._sessions:
                     self._add_session(session)
+                else:
+                    self._sessions[session.pid].branch = detect_branch(session.cwd)
 
             # Remove dead sessions
             dead_pids = set(self._sessions.keys()) - alive_pids
@@ -160,6 +164,7 @@ class AppController:
             entry.state = StatusState.IDLE
         entry.container = detect_container(session.pid)
         entry.container = find_window_for_session(session.cwd, entry.container)
+        entry.branch = detect_branch(session.cwd)
         self._sessions[session.pid] = entry
         self._session_id_to_pid[session.session_id] = session.pid
 
@@ -227,6 +232,7 @@ class AppController:
             return
 
         entry.state = new_state
+        entry.branch = detect_branch(entry.session.cwd)
         cwd_short = cwd_basename(entry.session.cwd)
         logger.debug(
             "pid=%d project=%s new_state=%s prior_state=%s event=%s",
@@ -259,7 +265,7 @@ class AppController:
     def _refresh_ui(self):
         all_entries = self._sorted_entries()
         visible_states = [
-            (entry.session, entry.state, entry.container)
+            (entry.session, entry.state, entry.container, entry.branch)
             for entry in all_entries
             if not entry.hidden
         ]
@@ -420,13 +426,13 @@ class AppController:
 
     def _highest_priority_state(
         self,
-        session_states: list[tuple[SessionInfo, StatusState, ContainerInfo | None]],
+        session_states: list[tuple[SessionInfo, StatusState, ContainerInfo | None, str]],
     ) -> StatusState | None:
         if not session_states:
             return None
         best = None
         best_priority = 999
-        for _, state, _ in session_states:
+        for _, state, _, _ in session_states:
             p = self._STATE_PRIORITY.get(state, 999)
             if p < best_priority:
                 best = state
