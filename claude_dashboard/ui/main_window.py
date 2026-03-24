@@ -39,12 +39,14 @@ class MainWindow:
         settings: Settings,
         *,
         on_row_click: Callable[[SessionInfo], None] | None = None,
+        on_row_double_click: Callable[[SessionInfo], None] | None = None,
         on_position_save: Callable[[int, int], None] | None = None,
         on_right_click: Callable[[int, int], None] | None = None,
     ):
         self._root = root
         self._settings = settings
         self._on_row_click = on_row_click
+        self._on_row_double_click = on_row_double_click
         self._on_position_save = on_position_save
         self._on_right_click = on_right_click
         self._rows: dict[int, dict[str, Any]] = {}
@@ -52,6 +54,7 @@ class MainWindow:
         self._drag_start_x = 0
         self._drag_start_y = 0
         self._dragged = False  # True if mouse moved significantly since button-down
+        self._double_clicked = False  # Suppress single-click after double-click
         self._force_resize = False
 
         # Create the window shell — apply_settings handles all configuration
@@ -326,16 +329,30 @@ class MainWindow:
 
         def make_click(s: SessionInfo = session):
             def handler(event: Any):
+                if self._double_clicked:
+                    self._double_clicked = False
+                    return
                 if not self._dragged and self._on_row_click:
                     self._on_row_click(s)
 
             return handler
 
+        def make_double_click(s: SessionInfo = session):
+            def handler(event: Any):
+                self._double_clicked = True
+                if self._on_row_double_click:
+                    self._on_row_double_click(s)
+                return "break"
+
+            return handler
+
         click = make_click()
+        dbl_click = make_double_click()
         for w in widgets:
             w.bind("<Button-1>", self._on_drag_start)
             w.bind("<B1-Motion>", self._on_drag_motion)
             w.bind("<ButtonRelease-1>", click)
+            w.bind("<Double-1>", dbl_click)
             w.bind("<Button-3>", self._on_right_click_event)
 
         self._rows[session.pid] = {
