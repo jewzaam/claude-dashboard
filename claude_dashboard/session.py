@@ -81,6 +81,29 @@ def encode_project_key(cwd: str) -> str:
     return normalized
 
 
+_DEFAULT_BRANCHES = frozenset({"main", "master"})
+
+
+def detect_branch(cwd: str) -> str:
+    """Return the active git branch for a directory, or empty string on failure.
+
+    Reads .git/HEAD directly — no subprocess or external dependency needed.
+    Returns empty string if the branch is 'main' or 'master', if HEAD is
+    detached, or if the directory is not a git repo.
+    """
+    try:
+        head_path = Path(cwd) / ".git" / "HEAD"
+        head_content = head_path.read_text(encoding="utf-8").strip()
+        if not head_content.startswith("ref: refs/heads/"):
+            return ""
+        branch = head_content[len("ref: refs/heads/") :]
+        if branch in _DEFAULT_BRANCHES:
+            return ""
+        return branch
+    except OSError:
+        return ""
+
+
 def cwd_basename(cwd: str) -> str:
     """Extract the last path component from a CWD, handling both / and \\ separators."""
     return cwd.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
