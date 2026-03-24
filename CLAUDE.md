@@ -59,7 +59,7 @@ HTTP hooks are documented by Claude Code but don't work in practice (tested 2026
 - **Permission denial**: Denying a tool without feedback text may not fire a hook event. State stays at `permission_required` until next interaction.
 - **Resumed sessions**: Session ID in `sessions/{PID}.json` may not match what hooks send. CWD-based fallback matching handles this.
 - **Dashboard starts late**: Sessions show Unknown until their next hook event fires.
-- **Subagents**: Main session may show Idle while subagents work. Future enhancement.
+- **Subagents**: Agent awareness is spec'd (US9, FR-035–FR-042). Research complete — see `docs/research/agent-hook-research.md`. Implementation pending.
 
 See `docs/state-transitions.md` for the full state machine diagram and gap analysis.
 
@@ -67,11 +67,12 @@ See `docs/state-transitions.md` for the full state machine diagram and gap analy
 
 | File | Content |
 |------|---------|
-| `docs/spec.md` | Functional requirements (v0.2.0) |
+| `docs/spec.md` | Functional requirements (v0.4.0) |
 | `docs/plan.md` | Implementation plan and architecture |
 | `docs/state-transitions.md` | Mermaid state machine + known gaps |
 | `docs/constitution.md` | Project principles |
 | `docs/research-session-detection.md` | Session detection research (transcript → hooks evolution) |
+| `docs/research/agent-hook-research.md` | Agent/subagent hook payload research (2026-03-24) |
 | `docs/future.md` | Deferred features (permission handling, input injection, voice) |
 | `docs/document-dependencies.md` | Cascade rules for doc updates |
 | `docs/tasks.md` | Original task breakdown (partially stale — reflects initial build, not hook refactor) |

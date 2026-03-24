@@ -5,18 +5,68 @@
 Used as a Claude Code command hook. Reads JSON from stdin,
 POSTs it to the dashboard's HTTP server on localhost:17384.
 Non-blocking — if the server is down, exits silently.
+
+Also logs raw payloads to a JSONL file for debugging/research.
+Use --marker TEXT to inject a labeled boundary line into the log.
 """
 
 import json
+import logging
 import sys
 import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+_LOG_DIR = Path.home() / ".claude" / "claude-dashboard" / "logs"
+_LOG_FILE = _LOG_DIR / "hook-payloads.jsonl"
+
+logger = logging.getLogger(__name__)
+
+
+def _configure_logging(*, debug: bool) -> None:
+    """Set up logging. In debug mode, also log raw payloads to a JSONL file."""
+    logging.basicConfig(level=logging.WARNING, format="%(message)s", stream=sys.stderr)
+    if debug:
+        logger.setLevel(logging.DEBUG)
+        try:
+            _LOG_DIR.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(_LOG_FILE, encoding="utf-8")
+            handler.setLevel(logging.DEBUG)
+            handler.setFormatter(logging.Formatter("%(message)s"))
+            logger.addHandler(handler)
+        except OSError:
+            pass
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def main():
+    debug = "--debug" in sys.argv
+
+    # --marker flag: inject a labeled boundary line and exit
+    if len(sys.argv) >= 2 and sys.argv[1] == "--marker":
+        _configure_logging(debug=True)  # markers always log
+        marker_text = " ".join(sys.argv[2:]) if len(sys.argv) >= 3 else ""
+        logger.debug(json.dumps({"_marker": marker_text, "_ts": _now_iso()}))
+        return
+
+    _configure_logging(debug=debug)
+
     try:
         data = sys.stdin.read()
         if not data:
             return
+
+        # Log raw payload with timestamp (debug only)
+        if debug:
+            try:
+                payload = json.loads(data)
+                payload["_ts"] = _now_iso()
+                logger.debug(json.dumps(payload))
+            except (json.JSONDecodeError, TypeError):
+                logger.debug(json.dumps({"_raw": data, "_ts": _now_iso()}))
 
         req = urllib.request.Request(
             "http://127.0.0.1:17384/hook",
