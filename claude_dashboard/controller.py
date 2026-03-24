@@ -58,6 +58,7 @@ class AppController:
             self._root,
             self._settings,
             on_row_click=self._on_row_click,
+            on_row_double_click=self._on_row_double_click,
             on_position_save=self._on_position_save,
             on_right_click=self._on_right_click,
         )
@@ -294,6 +295,14 @@ class AppController:
             success = foreground_window(container, cwd=session.cwd)
             if not success:
                 logger.warning("failed to foreground pid=%d", session.pid)
+
+    def _on_row_double_click(self, session: SessionInfo):
+        """Double-click an Idle session to mark it Ready (deferred attention)."""
+        entry = self._sessions.get(session.pid)
+        if entry and entry.state == StatusState.IDLE:
+            entry.state = StatusState.READY
+            logger.debug("pid=%d double-clicked while idle, now ready", session.pid)
+            self._refresh_ui()
 
     # ------------------------------------------------------------------
     # Context menu
