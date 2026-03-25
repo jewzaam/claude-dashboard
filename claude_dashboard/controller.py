@@ -2,6 +2,8 @@
 """Main application controller — session discovery + hook-based state detection."""
 
 import logging
+import os
+import sys
 import threading
 import tkinter as tk
 
@@ -88,6 +90,7 @@ class AppController:
             on_show=lambda icon, item: self._root.after(0, self._show_window),
             on_hide=lambda icon, item: self._root.after(0, self._hide_window),
             on_settings=lambda icon, item: self._root.after(0, self._open_settings),
+            on_restart=lambda icon, item: self._root.after(0, self._restart),
             on_quit=lambda icon, item: self._root.after(0, self._quit),
         )
         self._tray_state: StatusState | None = None
@@ -346,6 +349,7 @@ class AppController:
         self._context_menu.add_command(label="Hide", command=self._menu_hide)
         self._context_menu.add_command(label="Settings", command=self._menu_settings)
         self._context_menu.add_separator()
+        self._context_menu.add_command(label="Restart", command=self._menu_restart)
         self._context_menu.add_command(label="Quit", command=self._menu_quit)
 
         try:
@@ -361,6 +365,9 @@ class AppController:
 
     def _menu_settings(self):
         self._open_settings()
+
+    def _menu_restart(self):
+        self._root.after(0, self._restart)
 
     def _menu_quit(self):
         self._root.after(0, self._quit)
@@ -385,6 +392,17 @@ class AppController:
         self._main_window.apply_settings(new_settings)
         self._refresh_ui()
         logger.info("settings saved and applied")
+
+    def _restart(self):
+        """Save state, tear down, and re-exec the same process."""
+        self._save_window_position()
+        self._save_settings_safe()
+        self._hook_server.stop()
+        if self._tray_icon:
+            self._tray_icon.stop()
+        self._root.quit()
+        logger.info("restarting dashboard")
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
     def _quit(self):
         self._save_window_position()
