@@ -19,7 +19,7 @@ if _plat.system() == "Windows":
     _FONT_EMOJI_FAMILY = "Segoe UI Emoji"
 else:
     _FONT_FAMILY = "Noto Sans"
-    _FONT_EMOJI_FAMILY = "Noto Color Emoji"
+    _FONT_EMOJI_FAMILY = "Noto Emoji"
 
 _FONT_BODY = (_FONT_FAMILY, 9)
 _FONT_EMOJI = (_FONT_EMOJI_FAMILY, 12)

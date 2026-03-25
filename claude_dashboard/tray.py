@@ -109,6 +109,7 @@ def create_tray_icon(
     on_show: Callable,
     on_hide: Callable,
     on_settings: Callable,
+    on_restart: Callable,
     on_quit: Callable,
 ) -> Any:
     """Create and return a pystray Icon (not yet running)."""
@@ -121,6 +122,7 @@ def create_tray_icon(
         pystray.MenuItem("Hide", on_hide),
         pystray.MenuItem("Settings", on_settings),
         pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Restart", on_restart),
         pystray.MenuItem("Quit", on_quit),
     )
 
