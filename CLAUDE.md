@@ -78,7 +78,7 @@ See `docs/state-transitions.md` for the full state machine diagram and gap analy
 | File | Content |
 |------|---------|
 | `docs/state-transitions.md` | Mermaid state machine + known gaps |
-| `docs/constitution.md` | Project principles |
+| `.specify/memory/constitution.md` | Project principles |
 | `docs/future.md` | Deferred features (permission handling, input injection, voice) |
 | `docs/spec-future.md` | Deferred user stories (P2/P3) |
 | `docs/document-dependencies.md` | Cascade rules for doc updates |

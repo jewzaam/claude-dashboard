@@ -5,7 +5,7 @@ Changes to higher-order documents require reviewing and updating all lower-order
 ## Dependency Order (highest to lowest)
 
 ```
-docs/constitution.md                  ← Project principles and constraints
+.specify/memory/constitution.md                  ← Project principles and constraints
     ↓
 specs/NNN-feature/spec.md             ← What we're building (user stories, requirements, success criteria)
     ↓
@@ -32,7 +32,7 @@ source code                           ← Implementation
 
 | If this changes... | Review and update... |
 |---------------------|----------------------|
-| `docs/constitution.md` | All documents below it |
+| `.specify/memory/constitution.md` | All documents below it |
 | `specs/NNN/spec.md` | Corresponding `plan.md`, `tasks.md`, source code |
 | `docs/spec-future.md` | Nothing (deferred scope, no downstream impact yet) |
 | `specs/NNN/research.md` | Corresponding `spec.md` (if findings change requirements), `plan.md`, `tasks.md` |
