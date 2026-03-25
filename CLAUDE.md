@@ -90,3 +90,10 @@ See `docs/state-transitions.md` for the full state machine diagram and gap analy
 - Read `~/.claude/ide/*.lock` files (contain auth tokens)
 - Use timeout-based state inference — hooks or nothing
 - Duplicate settings logic between init and apply paths
+
+## Active Technologies
+- Python 3.11+ + Tkinter, psutil, pystray, Pillow (003-agent-awareness)
+- JSON settings file (no new storage for this feature) (003-agent-awareness)
+
+## Recent Changes
+- 003-agent-awareness: Added Python 3.11+ + Tkinter, psutil, pystray, Pillow

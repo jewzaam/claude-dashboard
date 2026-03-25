@@ -1,12 +1,39 @@
 # Agent Awareness Implementation Plan
 
+**Branch**: `003-agent-awareness` | **Date**: 2026-03-24 | **Spec**: `spec.md`
+**Constitution**: `.specify/memory/constitution.md`
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the dashboard reflect the combined state of the main Claude process and all active subagents, so idle-while-agents-work is no longer invisible.
+## Summary
 
-**Architecture:** Hook server extracts `agent_id` from payloads and passes it through a new callback. Controller tracks agents per session via `_AgentEntry` on `_SessionEntry`. An `effective_state` property computes the highest-priority state across main + agents. The UI receives the effective state and an agent count — the count is appended to the CWD display as `(+N)`.
+Make the dashboard reflect the combined state of the main Claude process and all active agents, so idle-while-agents-work is no longer invisible.
 
-**Tech Stack:** Python 3.11+, Tkinter
+## Technical Context
+
+**Language/Version**: Python 3.11+
+**Primary Dependencies**: Tkinter, psutil, pystray, Pillow
+**Storage**: JSON settings file (no new storage for this feature)
+**Testing**: pytest with 80%+ coverage
+**Target Platform**: Windows 11, Linux (cross-platform per constitution)
+**Project Type**: Desktop app (Tkinter)
+**Performance Goals**: State updates within one hook event; debounce 200-500ms for auto-wake noise
+**Constraints**: Local-only, no elevated privileges, read-only observation of Claude sessions
+
+## Constitution Check
+
+| Principle | Status | Notes |
+|-----------|--------|-------|
+| I. Cross-Platform First | PASS | No platform-specific code needed — hooks and Tkinter are cross-platform |
+| II. Low Profile | PASS | Debounce (FR-043) prevents visual noise from auto-wake transitions |
+| III. Proven Stack | PASS | Python + Tkinter, existing patterns |
+| IV. Configuration Over Opinion | PASS | No new settings fields; `(+N)` format is informational, not opinionated |
+| V. Incremental Delivery | PASS | Single user story (US9), independently testable |
+| VI. Simplicity | PASS | Flat agent dict, no hierarchy (FR-044). Module-level priority constant shared between classes |
+
+## Architecture
+
+Hook server extracts `agent_id` from payloads and passes it through a new callback. Controller tracks agents per session via `_AgentEntry` on `_SessionEntry`. An `effective_state` property computes the highest-priority state across main + agents. The UI receives the effective state and an agent count — the count is appended to the CWD display as `(+N)`. State display updates are debounced (200-500ms) to absorb auto-wake noise after agent completion, with high-priority states (PermissionRequired, AwaitingInput) bypassing the debounce.
 
 **Spec:** `spec.md`. State machine: `docs/state-transitions.md`.
 
@@ -16,7 +43,7 @@
 
 | File | Action | Responsibility |
 |------|--------|----------------|
-| `claude_dashboard/hook_server.py` | Modify | Extract `agent_id`/`agent_type`, new `on_subagent_stop` callback, pass `agent_id` through `on_hook_event` |
+| `claude_dashboard/hook_server.py` | Modify | Extract `agent_id`/`agent_type`, new `on_agent_stop` callback, pass `agent_id` through `on_hook_event` |
 | `claude_dashboard/controller.py` | Modify | `_AgentEntry` class, agent tracking on `_SessionEntry`, `effective_state`, clear agents on `UserPromptSubmit`, agent count in UI data |
 | `claude_dashboard/ui/main_window.py` | Modify | Display agent count `(+N)` in CWD label, accept agent count in `update_sessions` |
 | `tests/test_hook_server.py` | Modify | Tests for `agent_id` extraction and `SubagentStop` callback |
@@ -34,7 +61,7 @@
 The hook server needs three changes:
 1. Extract `agent_id` and `agent_type` from payloads
 2. Pass `agent_id` and `agent_type` through the `on_hook_event` callback (new signature)
-3. Add `on_subagent_stop` callback for `SubagentStop` events (parallel to `on_session_end`)
+3. Add `on_agent_stop` callback for `SubagentStop` events (parallel to `on_session_end`)
 
 - [ ] **Step 1: Write tests for agent_id extraction**
 
@@ -53,7 +80,7 @@ def test_agent_event_passes_agent_id(self):
     server = HookServer(
         on_hook_event=on_hook,
         on_session_end=lambda sid: None,
-        on_subagent_stop=lambda sid, aid: None,
+        on_agent_stop=lambda sid, aid: None,
         port=0,
     )
     server.start()
@@ -85,8 +112,8 @@ def test_agent_event_passes_agent_id(self):
     finally:
         server.stop()
 
-def test_subagent_stop_fires_callback(self):
-    """SubagentStop fires the on_subagent_stop callback."""
+def test_agent_stop_fires_callback(self):
+    """SubagentStop fires the on_agent_stop callback."""
     stopped: list[tuple] = []
     event = threading.Event()
 
@@ -97,7 +124,7 @@ def test_subagent_stop_fires_callback(self):
     server = HookServer(
         on_hook_event=lambda *a, **kw: None,
         on_session_end=lambda sid: None,
-        on_subagent_stop=on_stop,
+        on_agent_stop=on_stop,
         port=0,
     )
     server.start()
@@ -138,7 +165,7 @@ def test_main_event_has_empty_agent_id(self):
     server = HookServer(
         on_hook_event=on_hook,
         on_session_end=lambda sid: None,
-        on_subagent_stop=lambda sid, aid: None,
+        on_agent_stop=lambda sid, aid: None,
         port=0,
     )
     server.start()
@@ -169,11 +196,11 @@ def test_main_event_has_empty_agent_id(self):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_hook_server.py -x -q`
-Expected: FAIL — `on_subagent_stop` not accepted, callback signature mismatch.
+Expected: FAIL — `on_agent_stop` not accepted, callback signature mismatch.
 
 - [ ] **Step 3: Update existing test callbacks**
 
-All existing tests use `on_hook_event` callbacks with signature `(session_id, hook_event, state, cwd="")`. Update them to also accept `agent_id=""` and `agent_type=""` kwargs. Add `on_subagent_stop=lambda sid, aid: None` to all `HookServer(...)` calls.
+All existing tests use `on_hook_event` callbacks with signature `(session_id, hook_event, state, cwd="")`. Update them to also accept `agent_id=""` and `agent_type=""` kwargs. Add `on_agent_stop=lambda sid, aid: None` to all `HookServer(...)` calls.
 
 - [ ] **Step 4: Implement hook server changes**
 
@@ -200,10 +227,10 @@ if state is not None and session_id:
 
 ```python
 if event == "SubagentStop" and session_id and agent_id:
-    self.server.on_subagent_stop(session_id, agent_id)  # type: ignore[attr-defined]
+    self.server.on_agent_stop(session_id, agent_id)  # type: ignore[attr-defined]
 ```
 
-4. Update `HookServer.__init__` to accept and store `on_subagent_stop` (optional with default no-op for backward compatibility — allows incremental implementation without breaking the app mid-task):
+4. Update `HookServer.__init__` to accept and store `on_agent_stop` (optional with default no-op for backward compatibility — allows incremental implementation without breaking the app mid-task):
 
 ```python
 def __init__(
@@ -211,14 +238,14 @@ def __init__(
     *,
     on_hook_event: Callable[..., None],
     on_session_end: Callable[[str], None],
-    on_subagent_stop: Callable[[str, str], None] = lambda sid, aid: None,
+    on_agent_stop: Callable[[str, str], None] = lambda sid, aid: None,
     port: int = 17384,
 ):
     ...
-    self._server.on_subagent_stop = on_subagent_stop  # type: ignore[attr-defined]
+    self._server.on_agent_stop = on_agent_stop  # type: ignore[attr-defined]
 ```
 
-5. Do NOT add `SubagentStop` to `_EVENT_STATE_MAP` — it has no state transition. It only fires `on_subagent_stop`. The `map_event_to_state` function correctly returns `None` for it, so `on_hook_event` is never called for `SubagentStop` events. This is intentional — FR-036's "do not register on first-and-only SubagentStop" is enforced architecturally by this design.
+5. Do NOT add `SubagentStop` to `_EVENT_STATE_MAP` — it has no state transition. It only fires `on_agent_stop`. The `map_event_to_state` function correctly returns `None` for it, so `on_hook_event` is never called for `SubagentStop` events. This is intentional — FR-036's "do not register on first-and-only SubagentStop" is enforced architecturally by this design.
 
 - [ ] **Step 5: Run tests**
 
@@ -228,7 +255,7 @@ Expected: All pass (existing + 3 new).
 - [ ] **Step 6: Run full suite**
 
 Run: `python -m pytest tests/ -x -q`
-Expected: Some failures in `test_integration.py` — the `HookServer` constructor now requires `on_subagent_stop`. Fix those in Task 2.
+Expected: Some failures in `test_integration.py` — the `HookServer` constructor now requires `on_agent_stop`. Fix those in Task 2.
 
 ---
 
@@ -246,7 +273,7 @@ Expected: Some failures in `test_integration.py` — the `HookServer` constructo
 
 ```python
 class _AgentEntry:
-    """Tracks a subagent within a session."""
+    """Tracks an agent within a session."""
 
     __slots__ = ("agent_id", "state", "agent_type")
 
@@ -288,7 +315,7 @@ class _SessionEntry:
 
 The `effective_state` property then references the module-level dict directly.
 
-- [ ] **Step 2: Wire `on_subagent_stop` in controller**
+- [ ] **Step 2: Wire `on_agent_stop` in controller**
 
 In `AppController.__init__`, update the `HookServer` construction:
 
@@ -296,7 +323,7 @@ In `AppController.__init__`, update the `HookServer` construction:
 self._hook_server = HookServer(
     on_hook_event=self._on_hook_event,
     on_session_end=self._on_hook_session_end,
-    on_subagent_stop=self._on_hook_subagent_stop,
+    on_agent_stop=self._on_hook_agent_stop,
     port=config.HOOK_PORT,
 )
 ```
@@ -304,15 +331,15 @@ self._hook_server = HookServer(
 Add the marshalling method:
 
 ```python
-def _on_hook_subagent_stop(self, session_id: str, agent_id: str):
+def _on_hook_agent_stop(self, session_id: str, agent_id: str):
     """Called from hook server thread on SubagentStop."""
-    self._root.after(0, self._handle_subagent_stop, session_id, agent_id)
+    self._root.after(0, self._handle_agent_stop, session_id, agent_id)
 ```
 
 Add the handler:
 
 ```python
-def _handle_subagent_stop(self, session_id: str, agent_id: str):
+def _handle_agent_stop(self, session_id: str, agent_id: str):
     """Remove an agent from a session."""
     pid = self._session_id_to_pid.get(session_id)
     if pid is None:
@@ -456,7 +483,7 @@ Already handled — when `_sessions.pop(pid)` removes the entry, agents go with 
 
 - [ ] **Step 6: Fix integration tests**
 
-Update `tests/test_integration.py` — add `on_subagent_stop` to `_make_server`:
+Update `tests/test_integration.py` — add `on_agent_stop` to `_make_server`:
 
 ```python
 def _make_server(self):
@@ -476,7 +503,7 @@ def _make_server(self):
     server = HookServer(
         on_hook_event=on_hook,
         on_session_end=on_end,
-        on_subagent_stop=on_agent_stop,
+        on_agent_stop=on_agent_stop,
         port=0,
     )
     return server, states, ended, agent_stopped
@@ -493,7 +520,75 @@ Expected: All pass.
 
 ---
 
-## Task 3: UI — Agent Count Indicator
+## Task 3: Debounce State Display Updates (FR-043)
+
+**Files:**
+- Modify: `claude_dashboard/controller.py` (`_refresh_ui`)
+
+Auto-wake cycles after agent completion (`UserPromptSubmit` → `Stop` per agent) cause rapid state transitions that flicker the dashboard. Debounce UI updates with a 300ms window. High-priority states (PermissionRequired, AwaitingInput) bypass the debounce.
+
+- [ ] **Step 1: Add debounce to `_refresh_ui`**
+
+Replace direct UI calls with a debounced version. Use `tkinter.after()` with a cancel-and-reschedule pattern:
+
+```python
+_DEBOUNCE_MS = 300  # module-level constant
+
+# On AppController.__init__:
+self._debounce_id: str | None = None
+
+def _refresh_ui(self):
+    """Debounced UI refresh. High-priority states bypass debounce."""
+    # Check if any visible session has a high-priority effective state
+    all_entries = self._sorted_entries()
+    bypass = any(
+        entry.effective_state in (StatusState.PERMISSION_REQUIRED, StatusState.AWAITING_INPUT)
+        for entry in all_entries
+        if not entry.hidden
+    )
+
+    if bypass:
+        # Cancel pending debounce and refresh immediately
+        if self._debounce_id is not None:
+            self._root.after_cancel(self._debounce_id)
+            self._debounce_id = None
+        self._do_refresh_ui(all_entries)
+    else:
+        # Cancel previous pending refresh, schedule new one
+        if self._debounce_id is not None:
+            self._root.after_cancel(self._debounce_id)
+        self._debounce_id = self._root.after(
+            _DEBOUNCE_MS, self._do_refresh_ui_deferred,
+        )
+
+def _do_refresh_ui_deferred(self):
+    """Called by debounce timer."""
+    self._debounce_id = None
+    self._do_refresh_ui(self._sorted_entries())
+
+def _do_refresh_ui(self, all_entries):
+    """Actual UI refresh logic (extracted from original _refresh_ui)."""
+    visible_states = [
+        (entry.session, entry.effective_state, entry.container, len(entry.agents))
+        for entry in all_entries
+        if not entry.hidden
+    ]
+    self._main_window.update_sessions(visible_states)
+
+    highest = self._highest_priority_state(visible_states)
+    if highest != self._tray_state:
+        self._tray_state = highest
+        update_tray_icon(self._tray_icon, color=self._tray_color_for_state(highest))
+```
+
+- [ ] **Step 2: Run full test suite**
+
+Run: `python -m pytest tests/ -x -q`
+Expected: All pass. Tests that check immediate state changes may need adjustment if they rely on synchronous refresh — use `root.update()` or `root.after(0, ...)` in test harnesses to flush pending callbacks.
+
+---
+
+## Task 4: UI — Agent Count Indicator
 
 **Files:**
 - Modify: `claude_dashboard/ui/main_window.py:186-204` (`update_sessions`)
@@ -575,7 +670,7 @@ Expected: All pass. Some grow-up tests may need tuple signature updates.
 
 ---
 
-## Task 4: Integration Tests — Agent Lifecycle
+## Task 5: Integration Tests — Agent Lifecycle
 
 **Files:**
 - Modify: `tests/test_integration.py`
@@ -583,7 +678,7 @@ Expected: All pass. Some grow-up tests may need tuple signature updates.
 - [ ] **Step 1: Add agent lifecycle integration test**
 
 ```python
-def test_subagent_lifecycle(self):
+def test_agent_lifecycle(self):
     """SubagentStart -> agent tool use -> SubagentStop."""
     server, states, _, agent_stopped = self._make_server()
     server.start()
@@ -645,7 +740,7 @@ Expected: All pass.
 
 ---
 
-## Task 5: Final Validation
+## Task 6: Final Validation
 
 - [ ] **Step 1: Run full test suite with coverage**
 
