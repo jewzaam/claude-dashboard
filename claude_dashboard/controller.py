@@ -46,7 +46,7 @@ def build_restart_args() -> list[str]:
 class _SessionEntry:
     """Tracks a live session: its info, container, and current state."""
 
-    __slots__ = ("session", "container", "state", "hidden", "branch")
+    __slots__ = ("session", "container", "state", "hidden", "branch", "flagged")
 
     def __init__(self, session: SessionInfo):
         self.session = session
@@ -54,6 +54,7 @@ class _SessionEntry:
         self.state: StatusState = StatusState.UNKNOWN
         self.hidden: bool = False
         self.branch: str = ""
+        self.flagged: bool = False
 
 
 class AppController:
@@ -73,6 +74,7 @@ class AppController:
             self._settings,
             on_row_click=self._on_row_click,
             on_row_double_click=self._on_row_double_click,
+            on_row_middle_click=self._on_row_middle_click,
             on_position_save=self._on_position_save,
             on_right_click=self._on_right_click,
         )
@@ -278,7 +280,7 @@ class AppController:
     def _refresh_ui(self):
         all_entries = self._sorted_entries()
         visible_states = [
-            (entry.session, entry.state, entry.container, entry.branch)
+            (entry.session, entry.state, entry.container, entry.branch, entry.flagged)
             for entry in all_entries
             if not entry.hidden
         ]
@@ -298,10 +300,13 @@ class AppController:
         entry = self._sessions.get(session.pid)
         container = entry.container if entry else None
 
-        # Clicking a Ready session clears it to Idle (user has seen it)
-        if entry and entry.state == StatusState.READY:
-            entry.state = StatusState.IDLE
-            logger.debug("pid=%d clicked while ready, now idle", session.pid)
+        # Clicking a flagged or Ready session clears to Idle
+        if entry and (entry.flagged or entry.state == StatusState.READY):
+            if entry.flagged:
+                entry.flagged = False
+            if entry.state == StatusState.READY:
+                entry.state = StatusState.IDLE
+            logger.debug("pid=%d clicked, cleared flag/ready to idle", session.pid)
             self._refresh_ui()
 
         if not container:
@@ -321,6 +326,14 @@ class AppController:
         if entry and entry.state in (StatusState.IDLE, StatusState.UNKNOWN):
             entry.state = StatusState.READY
             logger.debug("pid=%d double-clicked while idle, now ready", session.pid)
+            self._refresh_ui()
+
+    def _on_row_middle_click(self, session: SessionInfo):
+        """Middle-click toggles flagged state (user needs to come back to this)."""
+        entry = self._sessions.get(session.pid)
+        if entry:
+            entry.flagged = not entry.flagged
+            logger.debug("pid=%d flagged=%s", session.pid, entry.flagged)
             self._refresh_ui()
 
     # ------------------------------------------------------------------
@@ -455,14 +468,17 @@ class AppController:
 
     def _highest_priority_state(
         self,
-        session_states: list[tuple[SessionInfo, StatusState, ContainerInfo | None, str]],
+        session_states: list[tuple[SessionInfo, StatusState, ContainerInfo | None, str, bool]],
     ) -> StatusState | None:
         if not session_states:
             return None
         best = None
         best_priority = 999
-        for _, state, _, _ in session_states:
+        for _, state, _, _, flagged in session_states:
+            # Flagged sessions are treated as READY priority
             p = self._STATE_PRIORITY.get(state, 999)
+            if flagged:
+                p = min(p, self._STATE_PRIORITY[StatusState.READY])
             if p < best_priority:
                 best = state
                 best_priority = p
