@@ -113,7 +113,7 @@ Event sequence:
 UserPromptSubmit          (main)
 PreToolUse  tool=Agent    (main — about to spawn agent)
 SubagentStart             agent_id=a41d1801a7ca
-PreToolUse  tool=Bash     agent_id=a41d1801a7ca  ← standard hook carries agent_id
+PreToolUse  tool=Bash     agent_id=a41d1801a7ca  <- standard hook carries agent_id
 PostToolUse tool=Bash     agent_id=a41d1801a7ca
 SubagentStop              agent_id=a41d1801a7ca
 PostToolUse tool=Agent    (main — agent returned)
@@ -130,7 +130,7 @@ UserPromptSubmit          (main)
 PreToolUse  tool=Agent    (main)
 PostToolUse tool=Agent    (main — returns immediately for background)
 Stop                      (main — goes idle while agent works)
-PreToolUse  tool=Bash     agent_id=ae02be8a2a4d  ← agent fires AFTER main Stop
+PreToolUse  tool=Bash     agent_id=ae02be8a2a4d  <- agent fires AFTER main Stop
 PostToolUse tool=Bash     agent_id=ae02be8a2a4d
 SubagentStop              agent_id=ae02be8a2a4d
 ```
@@ -175,7 +175,7 @@ Event sequence:
 PreToolUse  tool=Agent    (main)
 SubagentStart             agent_id=ab3cf9dd7199
 PreToolUse  tool=Read     agent_id=ab3cf9dd7199
-PermissionRequest         agent_id=ab3cf9dd7199, tool=Read  ← carries agent_id!
+PermissionRequest         agent_id=ab3cf9dd7199, tool=Read  <- carries agent_id!
 PostToolUse tool=Read     agent_id=ab3cf9dd7199
 SubagentStop              agent_id=ab3cf9dd7199
 PostToolUse tool=Agent    (main)
@@ -206,7 +206,7 @@ PreToolUse  tool=Agent    (main)
 SubagentStart             agent_id=a94f12e70ada
 PostToolUse tool=Agent    (main)
 Stop                      (main — idle)
-PreToolUse  tool=Bash     agent_id=a94f12e70ada  ← agent works after main Stop
+PreToolUse  tool=Bash     agent_id=a94f12e70ada  <- agent works after main Stop
 PostToolUse tool=Bash     agent_id=a94f12e70ada
 SubagentStop              agent_id=a94f12e70ada
 ```
@@ -232,7 +232,7 @@ PreToolUse  tool=Agent    (main)
 SubagentStart             agent_id=a4a83fdd575f
 PreToolUse  tool=Read     agent_id=a4a83fdd575f
 PermissionRequest         agent_id=a4a83fdd575f, tool=Read
-SubagentStop              agent_id=a4a83fdd575f  ← agent stops after denial
+SubagentStop              agent_id=a4a83fdd575f  <- agent stops after denial
 PostToolUse tool=Agent    (main)
 Stop                      (main)
 ```
@@ -300,10 +300,10 @@ PreToolUse  tool=Bash     agent=a61cac9ae2b6
 PreToolUse  tool=Bash     agent=ab18d3d549b5
 PostToolUse tool=Bash     agent=a61cac9ae2b6
 PostToolUse tool=Bash     agent=ab18d3d549b5
-SubagentStop              agent=ab18d3d549b5   ← sleep 6 finished first (out of order)
+SubagentStop              agent=ab18d3d549b5   <- sleep 6 finished first (out of order)
 UserPromptSubmit          (main — auto)
 Stop                      (main)
-SubagentStop              agent=a61cac9ae2b6   ← sleep 3 finished second
+SubagentStop              agent=a61cac9ae2b6   <- sleep 3 finished second
 UserPromptSubmit          (main — auto)
 Stop                      (main)
 ```
