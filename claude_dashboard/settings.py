@@ -51,6 +51,7 @@ class Settings:
     color_awaiting_input: str = config.DEFAULT_COLOR_AWAITING_INPUT
     color_permission_required: str = config.DEFAULT_COLOR_PERMISSION_REQUIRED
     color_unknown: str = config.DEFAULT_COLOR_UNKNOWN
+    color_flagged: str = config.DEFAULT_COLOR_FLAGGED
 
     # General UI
     window_bg: str = config.DEFAULT_WINDOW_BG

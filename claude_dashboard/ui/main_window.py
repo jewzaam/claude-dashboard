@@ -40,6 +40,7 @@ class MainWindow:
         *,
         on_row_click: Callable[[SessionInfo], None] | None = None,
         on_row_double_click: Callable[[SessionInfo], None] | None = None,
+        on_row_middle_click: Callable[[SessionInfo], None] | None = None,
         on_position_save: Callable[[int, int], None] | None = None,
         on_right_click: Callable[[int, int], None] | None = None,
     ):
@@ -47,6 +48,7 @@ class MainWindow:
         self._settings = settings
         self._on_row_click = on_row_click
         self._on_row_double_click = on_row_double_click
+        self._on_row_middle_click = on_row_middle_click
         self._on_position_save = on_position_save
         self._on_right_click = on_right_click
         self._rows: dict[int, dict[str, Any]] = {}
@@ -186,9 +188,9 @@ class MainWindow:
 
     def update_sessions(
         self,
-        sessions: list[tuple[SessionInfo, StatusState, ContainerInfo | None, str]],
+        sessions: list[tuple[SessionInfo, StatusState, ContainerInfo | None, str, bool]],
     ):
-        current_pids = {s.pid for s, _, _, _ in sessions}
+        current_pids = {s.pid for s, _, _, _, _ in sessions}
         changed = False
 
         # Remove stale rows
@@ -197,17 +199,17 @@ class MainWindow:
             changed = True
 
         # Add or update rows
-        for session, state, container, branch in sessions:
+        for session, state, container, branch, flagged in sessions:
             if session.pid in self._rows:
-                self._update_row(session, state, container, branch)
+                self._update_row(session, state, container, branch, flagged=flagged)
             else:
-                self._add_row(session, state, container, branch)
+                self._add_row(session, state, container, branch, flagged=flagged)
                 changed = True
 
         # Re-order rows only if the order changed
-        desired_order = [s.pid for s, _, _, _ in sessions]
+        desired_order = [s.pid for s, _, _, _, _ in sessions]
         if desired_order != self._row_order:
-            for session, _, _, _ in sessions:
+            for session, _, _, _, _ in sessions:
                 row = self._rows.get(session.pid)
                 if row:
                     row["frame"].pack_forget()
@@ -290,8 +292,10 @@ class MainWindow:
         state: StatusState,
         container: ContainerInfo | None = None,
         branch: str = "",
+        *,
+        flagged: bool = False,
     ):
-        bg = self._color_for_state(state)
+        bg = self._settings.color_flagged if flagged else self._color_for_state(state)
         fg = self._settings.text_color
 
         row_frame = tk.Frame(self._frame, bg=bg, height=self._settings.row_height, cursor="hand2")
@@ -366,13 +370,22 @@ class MainWindow:
 
             return handler
 
+        def make_middle_click(s: SessionInfo = session):
+            def handler(event: Any):
+                if self._on_row_middle_click:
+                    self._on_row_middle_click(s)
+
+            return handler
+
         click = make_click()
         dbl_click = make_double_click()
+        mid_click = make_middle_click()
         for w in widgets:
             w.bind("<Button-1>", self._on_drag_start)
             w.bind("<B1-Motion>", self._on_drag_motion)
             w.bind("<ButtonRelease-1>", click)
             w.bind("<Double-1>", dbl_click)
+            w.bind("<Button-2>", mid_click)
             w.bind("<Button-3>", self._on_right_click_event)
 
         self._rows[session.pid] = {
@@ -391,9 +404,11 @@ class MainWindow:
         state: StatusState,
         container: ContainerInfo | None = None,
         branch: str = "",
+        *,
+        flagged: bool = False,
     ):
         row = self._rows[session.pid]
-        bg = self._color_for_state(state)
+        bg = self._settings.color_flagged if flagged else self._color_for_state(state)
 
         row["status_var"].set(self._emoji_for_state(state))
         row["cwd_var"].set(self._cwd_display(session.cwd, branch))

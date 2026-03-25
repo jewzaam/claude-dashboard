@@ -127,6 +127,9 @@ class SettingsWindow:
             settings.color_unknown,
             row,
         )
+        row = self._add_color_field(
+            frame, "\u2691 Flagged", "color_flagged", settings.color_flagged, row
+        )
         row = self._add_color_field(frame, "Background", "window_bg", settings.window_bg, row)
         row = self._add_color_field(frame, "Text color", "text_color", settings.text_color, row)
 
