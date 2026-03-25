@@ -1,4 +1,4 @@
-# Feature Specification: Subagent Awareness
+# Feature Specification: Agent Awareness
 
 **Created**: 2026-03-24
 **Status**: Spec'd (implementation pending)
@@ -8,9 +8,9 @@
 
 ## User Stories
 
-### User Story 9 — Subagent Awareness (Priority: P1)
+### User Story 9 — Agent Awareness (Priority: P1)
 
-As a user running Claude Code sessions that spawn subagents (foreground or background), I want the dashboard to reflect the combined state of the main process and all active agents, so I can see when agents need my attention even if the main process appears idle.
+As a user running Claude Code sessions that spawn agents (foreground or background), I want the dashboard to reflect the combined state of the main process and all active agents, so I can see when agents need my attention even if the main process appears idle.
 
 **Why this priority**: Without agent awareness, the dashboard shows Idle while agents are actively working, requesting permissions, or waiting for input. This is the primary state inaccuracy — the dashboard lies about what's happening. This was observed live (2026-03-24) and is the motivation for the research documented in `research.md`.
 
@@ -39,9 +39,20 @@ As a user running Claude Code sessions that spawn subagents (foreground or backg
 
 ## Clarifications
 
+### Session 2026-03-24 (Spec Clarify — Pass 2)
+
+- Q: Should high-priority state changes (PermissionRequired, AwaitingInput) bypass the debounce? → A: Yes. These display immediately; debounce only suppresses auto-wake noise.
+- Q: How should nested agents (agents spawned by other agents) be treated? → A: Flat peers. No hierarchy tracked. Count reflects total active agents regardless of spawn origin.
+
+### Session 2026-03-24 (Spec Clarify — Pass 1)
+
+- Q: How should the dashboard handle auto-wake transitions (rapid UserPromptSubmit → Stop cycles) after agent completion? → A: Debounce state display updates (200-500ms window) to absorb rapid transitions and prevent flickering.
+- Q: What format should the active agent count indicator use? → A: Parenthesized format `(+N)` to the right of the CWD display name.
+- Q: What is the canonical term — "subagent" or "agent"? → A: "agent" everywhere. Feature title updated from "Subagent Awareness" to "Agent Awareness".
+
 ### Session 2026-03-24 (Agent Hook Research)
 
-- Q: Do standard hooks fired by subagents carry `agent_id`? → A: Yes. All hooks (PreToolUse, PostToolUse, PermissionRequest) from agents include `agent_id` and `agent_type`. See `research.md`.
+- Q: Do standard hooks fired by agents carry `agent_id`? → A: Yes. All hooks (PreToolUse, PostToolUse, PermissionRequest) from agents include `agent_id` and `agent_type`. See `research.md`.
 - Q: Is `SubagentStart` reliable? → A: No. It sometimes does not fire for background agents. Register agents on first `agent_id`-carrying event (not `SubagentStop`).
 - Q: Does the main session `Stop` fire before background agents complete? → A: Yes. Main goes idle while agents continue working.
 - Q: What happens on interrupt with active agents? → A: Foreground agents are orphaned (no `SubagentStop`). Background agents can be individually stopped by the user but also no `SubagentStop` observed. Clean up via PID death.
@@ -57,15 +68,17 @@ As a user running Claude Code sessions that spawn subagents (foreground or backg
 - **FR-036**: The controller MUST track active agents per session. An agent is registered on the first hook event carrying an `agent_id` that is NOT `SubagentStop`. An agent is removed on `SubagentStop`. If `SubagentStop` is the first and only event for an `agent_id`, the agent is not registered.
 - **FR-037**: The displayed state for a session row MUST be the highest-priority state across the main process and all active agents, using the priority order: PermissionRequired > AwaitingInput > Ready > Working > Idle > Unknown. See `docs/state-transitions.md` for the effective state rollup.
 - **FR-038**: When the main session fires `Stop` but active agents remain, the effective state MUST reflect the agents' states (e.g., Working), not the main session's Idle/Ready.
-- **FR-039**: The session row MUST display an active agent count indicator when one or more agents are tracked (e.g., "+2" or similar). The indicator disappears when no agents are active.
+- **FR-039**: The session row MUST display an active agent count indicator in the format `(+N)` to the right of the CWD display name when one or more agents are tracked. The indicator disappears when no agents are active.
 - **FR-040**: The tray icon priority calculation MUST include agent states in the rollup. A session with an idle main process but a permission-blocked agent contributes PermissionRequired to the tray priority.
 - **FR-041**: When a `UserPromptSubmit` event arrives without `agent_id`, all tracked agents for that session MUST be cleared. If a cleared agent fires a subsequent hook, it is re-registered as new. Additionally, all agents MUST be cleared when the parent session's PID dies.
 - **FR-042**: The hook server MUST extract `agent_type` from hook payloads and pass it to the controller. Observed value: `"general-purpose"`. Stored on the agent entry for future use.
+- **FR-043**: The controller MUST debounce state display updates (200-500ms window) to absorb rapid auto-wake transitions (`UserPromptSubmit` → `Stop` cycles) that fire after each `SubagentStop`. This prevents visual flickering during agent completion sequences. High-priority states (PermissionRequired, AwaitingInput) MUST bypass the debounce and display immediately.
+- **FR-044**: Agents spawned by other agents (nested agents) MUST be tracked as flat peers in the session's agent dict. No parent-child hierarchy is tracked. The `(+N)` count reflects total active agents regardless of spawn origin.
 
 ### New/Modified Entities
 
 - **Session** (modified): Gains `agents: dict[str, Agent]` — map of active agents keyed by `agent_id`.
-- **Agent** (new): A subagent within a session. Attributes: agent_id (hex string), state (StatusState), agent_type (string, e.g. "general-purpose"). Lifecycle: registered on first `agent_id`-carrying hook event (not `SubagentStop`), removed on `SubagentStop` or parent PID death.
+- **Agent** (new): An agent within a session. Attributes: agent_id (hex string), state (StatusState), agent_type (string, e.g. "general-purpose"). Lifecycle: registered on first `agent_id`-carrying hook event (not `SubagentStop`), removed on `SubagentStop` or parent PID death.
 - **EffectiveState** (new): The displayed state for a session — the highest-priority state across the main process and all active agents. See `docs/state-transitions.md`.
 - **Settings** (modified): No new settings fields for this feature.
 
