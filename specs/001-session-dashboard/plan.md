@@ -2,7 +2,7 @@
 
 - **Date**: 2026-03-22
 - **Spec**: `spec.md`
-- **Constitution**: `docs/constitution.md`
+- **Constitution**: `.specify/memory/constitution.md`
 - **Standards**: `~/source/standards/`
 - **Version**: 0.1.0
 
