@@ -33,6 +33,16 @@ from claude_dashboard.ui.settings_window import SettingsWindow
 logger = logging.getLogger(__name__)
 
 
+def build_restart_args() -> list[str]:
+    """Build execv args for restarting the dashboard.
+
+    Always uses ``-m claude_dashboard`` to avoid adding the package directory
+    to sys.path (which would shadow stdlib ``platform`` with
+    ``claude_dashboard/platform``).
+    """
+    return [sys.executable, "-m", "claude_dashboard"] + sys.argv[1:]
+
+
 class _SessionEntry:
     """Tracks a live session: its info, container, and current state."""
 
@@ -402,7 +412,8 @@ class AppController:
             self._tray_icon.stop()
         self._root.quit()
         logger.info("restarting dashboard")
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        args = build_restart_args()
+        os.execv(sys.executable, args)
 
     def _quit(self):
         self._save_window_position()
