@@ -59,23 +59,30 @@ HTTP hooks are documented by Claude Code but don't work in practice (tested 2026
 - **Permission denial**: Denying a tool without feedback text may not fire a hook event. State stays at `permission_required` until next interaction.
 - **Resumed sessions**: Session ID in `sessions/{PID}.json` may not match what hooks send. CWD-based fallback matching handles this.
 - **Dashboard starts late**: Sessions show Unknown until their next hook event fires.
-- **Subagents**: Agent awareness is spec'd (US9, FR-035–FR-042). Research complete — see `docs/research/agent-hook-research.md`. Implementation pending.
+- **Subagents**: Agent awareness is spec'd (US9, FR-035–FR-042). Research complete — see `specs/003-agent-awareness/research.md`. Implementation pending.
 
 See `docs/state-transitions.md` for the full state machine diagram and gap analysis.
 
 ## Docs
 
+### Feature Specs (per-feature directories)
+
+| Directory | Content |
+|-----------|---------|
+| `specs/001-session-dashboard/` | US1-US5 spec, plan, tasks, session detection research |
+| `specs/002-hide-apply-autostart/` | US6-US8 spec (hide sessions, Apply button, auto-start) |
+| `specs/003-agent-awareness/` | US9 spec, plan, agent hook research |
+
+### Project-Wide Docs
+
 | File | Content |
 |------|---------|
-| `docs/spec.md` | Functional requirements (v0.4.0) |
-| `docs/plan.md` | Implementation plan and architecture |
 | `docs/state-transitions.md` | Mermaid state machine + known gaps |
 | `docs/constitution.md` | Project principles |
-| `docs/research-session-detection.md` | Session detection research (transcript → hooks evolution) |
-| `docs/research/agent-hook-research.md` | Agent/subagent hook payload research (2026-03-24) |
 | `docs/future.md` | Deferred features (permission handling, input injection, voice) |
+| `docs/spec-future.md` | Deferred user stories (P2/P3) |
 | `docs/document-dependencies.md` | Cascade rules for doc updates |
-| `docs/tasks.md` | Original task breakdown (partially stale — reflects initial build, not hook refactor) |
+| `docs/raw-prompt.md` | Original voice transcript |
 
 ## Do Not
 

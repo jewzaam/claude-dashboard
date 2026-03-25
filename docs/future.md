@@ -52,7 +52,7 @@
 ## Technical Investigation Needed
 
 ### Session Status Detection — RESOLVED
-- **Resolved (2026-03-22)**: State detection uses Claude Code command hooks via `scripts/hook_relay.py` → HTTP POST to `hook_server.py`. HTTP hooks (documented by Claude Code) don't work in practice. Transcript parsing was the original approach but was replaced by hooks during live testing. See `docs/research-session-detection.md` for the full evolution.
+- **Resolved (2026-03-22)**: State detection uses Claude Code command hooks via `scripts/hook_relay.py` → HTTP POST to `hook_server.py`. HTTP hooks (documented by Claude Code) don't work in practice. Transcript parsing was the original approach but was replaced by hooks during live testing. See `specs/001-session-dashboard/research.md` for the full evolution.
 
 ### Process Foregrounding Edge Cases
 - `screen` sessions on Linux — terminal window is foregrounded but we cannot switch to a specific screen window within the session

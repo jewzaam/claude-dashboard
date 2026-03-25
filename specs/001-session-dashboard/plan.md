@@ -1,7 +1,7 @@
 # Implementation Plan: Claude Dashboard
 
 - **Date**: 2026-03-22
-- **Spec**: `docs/spec.md`
+- **Spec**: `spec.md`
 - **Constitution**: `docs/constitution.md`
 - **Standards**: `~/source/standards/`
 - **Version**: 0.1.0

@@ -2,10 +2,10 @@
 
 > **Note (2026-03-23)**: This file reflects the original build plan. The hook migration
 > (equivalent to Phases 6-8 in scope) happened organically during live testing and is not
-> captured as discrete tasks here. See `docs/research-session-detection.md` for the
-> transcript-to-hooks evolution and `docs/plan.md` for the current architecture.
+> captured as discrete tasks here. See `research.md` for the
+> transcript-to-hooks evolution and `plan.md` for the current architecture.
 
-- **Input**: `docs/plan.md`, `docs/spec.md`, `docs/research-session-detection.md`
+- **Input**: `plan.md`, `spec.md`, `research.md`
 - **Prerequisites**: Plan complete, spec clarified, session detection research verified
 
 ## Format: `[ID] [P?] [Story] Description`
@@ -45,7 +45,7 @@
 
 ---
 
-## Phase 3: User Story 1 — Session Awareness Dashboard (Priority: P1) 🎯 MVP
+## Phase 3: User Story 1 — Session Awareness Dashboard (Priority: P1) MVP
 
 **Goal**: Discover running sessions, detect their state, display as rows in a dashboard
 
@@ -82,7 +82,7 @@
 
 ---
 
-## Phase 4: User Story 2 — Session Navigation (Priority: P1) 🎯 MVP
+## Phase 4: User Story 2 — Session Navigation (Priority: P1) MVP
 
 **Goal**: Click a session row to foreground the containing application window
 
@@ -104,7 +104,7 @@
 
 ---
 
-## Phase 5: User Story 3 — Persistent Settings & Window Position (Priority: P1) 🎯 MVP
+## Phase 5: User Story 3 — Persistent Settings & Window Position (Priority: P1) MVP
 
 **Goal**: Settings and window position persist across restarts
 
@@ -160,7 +160,7 @@
 
 - [ ] T036 [P] Create `TEST_PLAN.md` per standards
 - [ ] T037 [P] Create `README.md` per standards (badges, install, usage)
-- [ ] T038 Run `make check` — ensure all targets pass (format, lint, typecheck, test, coverage ≥ 80%)
+- [ ] T038 Run `make check` — ensure all targets pass (format, lint, typecheck, test, coverage >= 80%)
 - [ ] T039 Verify GitHub workflows pass
 - [ ] T040 End-to-end validation: launch dashboard, start/stop sessions, click to navigate, close to tray, edit settings, restart
 
