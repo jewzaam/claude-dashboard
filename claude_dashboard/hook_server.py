@@ -59,8 +59,8 @@ class _HookHandler(BaseHTTPRequestHandler):
 
         try:
             length = int(self.headers.get("Content-Length", 0))
-            if length > _MAX_PAYLOAD_BYTES:
-                logger.debug("payload too large length=%d", length)
+            if length < 0 or length > _MAX_PAYLOAD_BYTES:
+                logger.debug("invalid content-length=%d", length)
                 self.send_response(413)
                 self.end_headers()
                 return

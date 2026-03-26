@@ -58,8 +58,9 @@ class MainWindow:
         self._drag_start_x = 0
         self._drag_start_y = 0
         self._dragged = False  # True if mouse moved significantly since button-down
-        self._double_clicked = False  # Suppress single-click after double-click
+        self._double_clicked_pid: int | None = None  # PID of row being double-clicked
         self._pending_click_id: str | None = None  # Pending after() id for delayed single-click
+        self._pending_click_pid: int | None = None  # PID associated with pending click
         self._force_resize = False
 
         # Create the window shell — apply_settings handles all configuration
@@ -346,8 +347,8 @@ class MainWindow:
 
         def make_click(s: SessionInfo = session):
             def handler(event: Any):
-                if self._double_clicked:
-                    self._double_clicked = False
+                if self._double_clicked_pid == s.pid:
+                    self._double_clicked_pid = None
                     return
                 if not self._dragged and self._on_row_click:
                     # Delay single-click so double-click can suppress it.
@@ -355,20 +356,23 @@ class MainWindow:
                     # so without a delay the single-click runs first.
                     def deferred_click(session: SessionInfo = s):
                         self._pending_click_id = None
-                        if not self._double_clicked and self._on_row_click:
+                        self._pending_click_pid = None
+                        if self._double_clicked_pid != session.pid and self._on_row_click:
                             self._on_row_click(session)
-                        self._double_clicked = False
+                        self._double_clicked_pid = None
 
                     self._pending_click_id = self._window.after(200, deferred_click)
+                    self._pending_click_pid = s.pid
 
             return handler
 
         def make_double_click(s: SessionInfo = session):
             def handler(event: Any):
-                self._double_clicked = True
+                self._double_clicked_pid = s.pid
                 if self._pending_click_id is not None:
                     self._window.after_cancel(self._pending_click_id)
                     self._pending_click_id = None
+                    self._pending_click_pid = None
                 if self._on_row_double_click:
                     self._on_row_double_click(s)
                 return "break"
@@ -435,6 +439,10 @@ class MainWindow:
                 pass
 
     def _remove_row(self, pid: int):
+        if self._pending_click_pid == pid and self._pending_click_id is not None:
+            self._window.after_cancel(self._pending_click_id)
+            self._pending_click_id = None
+            self._pending_click_pid = None
         row = self._rows.pop(pid, None)
         if row and row["frame"]:
             row["frame"].destroy()
