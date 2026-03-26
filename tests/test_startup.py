@@ -31,6 +31,12 @@ class TestStartupCmd:
         cmd = _startup_cmd()
         assert sys.executable in cmd or "python" in cmd
 
+    def test_includes_log_file_flag(self):
+        cmd = _startup_cmd()
+        assert "--log-file" in cmd
+        assert "claude-dashboard" in cmd
+        assert "dashboard.log" in cmd
+
 
 class TestSetRunOnStartupLinux:
     @patch("claude_dashboard.startup._IS_WINDOWS", False)

@@ -7,6 +7,8 @@ import logging
 import sys
 from pathlib import Path
 
+from claude_dashboard import config
+
 logger = logging.getLogger(__name__)
 
 _IS_WINDOWS = sys.platform == "win32"
@@ -20,6 +22,7 @@ _DESKTOP_FILENAME = "claude-dashboard.desktop"
 def _startup_cmd() -> str:
     """Build the command string for auto-start."""
     exe = Path(sys.executable)
+    log_flag = f' --log-file "{config.LOG_FILE}"'
     if _IS_WINDOWS:
         pythonw = exe.parent / "pythonw.exe"
         if not pythonw.exists():
@@ -27,8 +30,8 @@ def _startup_cmd() -> str:
                 "pythonw.exe not found at %s; startup may open a console window", pythonw
             )
             pythonw = exe
-        return f'"{pythonw}" -m claude_dashboard'
-    return f'"{exe}" -m claude_dashboard'
+        return f'"{pythonw}" -m claude_dashboard{log_flag}'
+    return f'"{exe}" -m claude_dashboard{log_flag}'
 
 
 def _desktop_file_path() -> Path:

@@ -3,6 +3,7 @@
 
 import argparse
 import logging
+import os
 import socket
 import sys
 
@@ -21,23 +22,44 @@ def _is_already_running() -> bool:
         sock.close()
 
 
+def _install_excepthook(*, logger: logging.Logger) -> None:
+    """Route uncaught exceptions through the logger so they reach --log-file."""
+
+    def _hook(exc_type, exc_value, exc_tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+            return
+        logger.critical("uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
+
+    sys.excepthook = _hook
+
+
 def main():
     parser = argparse.ArgumentParser(description="Dashboard for monitoring Claude Code sessions")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--quiet", "-q", action="store_true", help="Suppress non-essential output")
+    parser.add_argument("--debug", action="store_true", help="enable debug logging")
+    parser.add_argument("--quiet", "-q", action="store_true", help="suppress non-essential output")
     parser.add_argument(
-        "--ttl", type=int, default=0, help="Auto-quit after N seconds (0 = run forever)"
+        "--ttl", type=int, default=0, help="auto-quit after N seconds (0 = run forever)"
     )
+    parser.add_argument("--log-file", type=str, default=None, help="write log output to file")
     args = parser.parse_args()
 
     level = logging.DEBUG if args.debug else (logging.WARNING if args.quiet else logging.INFO)
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=sys.stderr,
-    )
+    log_kwargs: dict = {
+        "level": level,
+        "format": "%(asctime)s %(levelname)s %(name)s: %(message)s",
+    }
+    if args.log_file:
+        os.makedirs(os.path.dirname(os.path.abspath(args.log_file)), exist_ok=True)
+        log_kwargs["filename"] = args.log_file
+        log_kwargs["filemode"] = "a"
+    else:
+        log_kwargs["stream"] = sys.stderr
+    logging.basicConfig(**log_kwargs)
     # Suppress noisy third-party debug logging
     logging.getLogger("PIL").setLevel(logging.WARNING)
+
+    _install_excepthook(logger=logging.getLogger(__name__))
 
     if _is_already_running():
         logging.getLogger(__name__).error(

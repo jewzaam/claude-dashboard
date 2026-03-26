@@ -19,6 +19,9 @@ else:
 
 SETTINGS_FILE = SETTINGS_DIR / "settings.json"
 
+# Log file for startup / restart
+LOG_FILE = CLAUDE_HOME / "claude-dashboard" / "dashboard.log"
+
 # Poll interval
 DEFAULT_POLL_INTERVAL_SECONDS = 3
 

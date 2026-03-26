@@ -35,6 +35,20 @@ class TestBuildRestartArgs:
             args = build_restart_args()
         assert args == [sys.executable, "-m", "claude_dashboard", "--quiet"]
 
+    def test_preserves_log_file_flag(self):
+        with mock.patch.object(
+            sys, "argv", ["/path/__main__.py", "--debug", "--log-file", "/tmp/dash.log"]
+        ):
+            args = build_restart_args()
+        assert args == [
+            sys.executable,
+            "-m",
+            "claude_dashboard",
+            "--debug",
+            "--log-file",
+            "/tmp/dash.log",
+        ]
+
     def test_first_element_is_sys_executable(self):
         with mock.patch.object(sys, "argv", ["anything"]):
             args = build_restart_args()
