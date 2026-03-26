@@ -290,14 +290,23 @@ class MainWindow:
         session = row.session
         state = row.state
         container = row.container
-        bg = self._color_for_state(state)
-        fg = self._settings.text_color
+
+        if row.unattached:
+            bg = self._settings.color_unattached
+            fg = _COLOR_CONTAINER_FG  # dim text for ghosts
+            emoji = self._settings.emoji_unattached
+            container_text = ""
+        else:
+            bg = self._color_for_state(state)
+            fg = self._settings.text_color
+            emoji = self._emoji_for_state(state)
+            container_text = self._container_label(container)
 
         row_frame = tk.Frame(self._frame, bg=bg, height=self._settings.row_height, cursor="hand2")
         row_frame.pack(fill=tk.X, padx=1, pady=1)
         row_frame.pack_propagate(False)
 
-        status_var = tk.StringVar(value=self._emoji_for_state(state))
+        status_var = tk.StringVar(value=emoji)
         status_label = tk.Label(
             row_frame,
             textvariable=status_var,
@@ -310,7 +319,7 @@ class MainWindow:
         status_label.pack(side=tk.LEFT, padx=(6, 2))
 
         # Pack RIGHT items before cwd so they claim space first (cwd truncates)
-        container_var = tk.StringVar(value=self._container_label(container))
+        container_var = tk.StringVar(value=container_text)
         container_label = tk.Label(
             row_frame,
             textvariable=container_var,
@@ -411,13 +420,24 @@ class MainWindow:
 
     def _update_row(self, row_data: SessionRow):
         row = self._rows[row_data.session.pid]
-        bg = self._color_for_state(row_data.state)
 
-        row["status_var"].set(self._emoji_for_state(row_data.state))
+        if row_data.unattached:
+            bg = self._settings.color_unattached
+            fg = _COLOR_CONTAINER_FG
+            emoji = self._settings.emoji_unattached
+            container_text = ""
+        else:
+            bg = self._color_for_state(row_data.state)
+            fg = self._settings.text_color
+            emoji = self._emoji_for_state(row_data.state)
+            container_text = self._container_label(row_data.container)
+
+        row["status_var"].set(emoji)
         row["cwd_var"].set(
             self._cwd_display(row_data.session.cwd, row_data.branch, row_data.agent_count)
         )
-        row["container_var"].set(self._container_label(row_data.container))
+        row["container_var"].set(container_text)
+        row["cwd_label"].configure(fg=fg)
 
         # Show/hide flag dot
         if row_data.flagged:

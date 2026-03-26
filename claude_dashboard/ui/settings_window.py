@@ -123,6 +123,13 @@ class SettingsWindow:
         row = self._add_color_field(
             frame, "\u2b24 Flagged", "color_flagged", settings.color_flagged, row
         )
+        row = self._add_color_field(
+            frame,
+            f"{settings.emoji_unattached} Unattached",
+            "color_unattached",
+            settings.color_unattached,
+            row,
+        )
         row = self._add_color_field(frame, "Background", "window_bg", settings.window_bg, row)
         row = self._add_color_field(frame, "Text color", "text_color", settings.text_color, row)
 

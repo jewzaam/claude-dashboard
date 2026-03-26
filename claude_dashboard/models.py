@@ -17,3 +17,4 @@ class SessionRow(NamedTuple):
     branch: str
     flagged: bool
     agent_count: int
+    unattached: bool
