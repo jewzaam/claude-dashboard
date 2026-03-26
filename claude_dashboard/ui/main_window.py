@@ -44,7 +44,7 @@ class MainWindow:
         on_row_double_click: Callable[[SessionInfo], None] | None = None,
         on_row_middle_click: Callable[[SessionInfo], None] | None = None,
         on_position_save: Callable[[int, int], None] | None = None,
-        on_row_right_click: Callable[[SessionInfo, int, int], None] | None = None,
+        on_right_click: Callable[[int, int], None] | None = None,
     ):
         self._root = root
         self._settings = settings
@@ -52,7 +52,7 @@ class MainWindow:
         self._on_row_double_click = on_row_double_click
         self._on_row_middle_click = on_row_middle_click
         self._on_position_save = on_position_save
-        self._on_row_right_click = on_row_right_click
+        self._on_right_click = on_right_click
         self._rows: dict[int, dict[str, Any]] = {}
         self._row_order: list[int] = []
         self._drag_start_x = 0
@@ -80,6 +80,7 @@ class MainWindow:
         # Bindings
         self._window.bind("<Button-1>", self._on_drag_start)
         self._window.bind("<B1-Motion>", self._on_drag_motion)
+        self._window.bind("<Button-3>", self._on_right_click_event)
 
         # Apply all settings (position, size, colors, topmost)
         self.apply_settings(settings, restore_position=True)
@@ -165,16 +166,13 @@ class MainWindow:
             self._window.geometry(f"+{x}+{y}")
 
     # ------------------------------------------------------------------
-    # Row right-click
+    # Right-click context menu
     # ------------------------------------------------------------------
 
-    def _make_row_right_click(self, session: SessionInfo):
-        def handler(event: Any):
-            if self._on_row_right_click:
-                self._on_row_right_click(session, event.x_root, event.y_root)
-            return "break"
-
-        return handler
+    def _on_right_click_event(self, event: Any):
+        if self._on_right_click:
+            self._on_right_click(event.x_root, event.y_root)
+        return "break"
 
     # ------------------------------------------------------------------
     # Position persistence
@@ -387,14 +385,13 @@ class MainWindow:
         click = make_click()
         dbl_click = make_double_click()
         mid_click = make_middle_click()
-        right_click = self._make_row_right_click(session)
         for w in widgets:
             w.bind("<Button-1>", self._on_drag_start)
             w.bind("<B1-Motion>", self._on_drag_motion)
             w.bind("<ButtonRelease-1>", click)
             w.bind("<Double-1>", dbl_click)
             w.bind("<Button-2>", mid_click)
-            w.bind("<Button-3>", right_click)
+            w.bind("<Button-3>", self._on_right_click_event)
 
         self._rows[session.pid] = {
             "frame": row_frame,

@@ -7,8 +7,6 @@ import os
 import sys
 import threading
 import tkinter as tk
-from typing import Callable
-
 from claude_dashboard import config
 from claude_dashboard.hook_server import HookServer
 from claude_dashboard.platform.base import (
@@ -44,7 +42,6 @@ _STATE_PRIORITY = {
 }
 
 _DEBOUNCE_MS = 300  # Debounce window for state display updates (FR-043)
-_CONTEXT_MENU_TIMEOUT_MS = 3000
 
 
 class _AgentEntry:
@@ -114,7 +111,7 @@ class AppController:
             on_row_double_click=self._on_row_double_click,
             on_row_middle_click=self._on_row_middle_click,
             on_position_save=self._on_position_save,
-            on_row_right_click=self._on_row_right_click,
+            on_right_click=self._on_right_click,
         )
 
         # PID -> _SessionEntry
@@ -150,8 +147,9 @@ class AppController:
         )
         self._tray_state: StatusState | None = None
 
-        # Row context menu (rebuilt dynamically in _on_row_right_click)
+        # Session visibility menu (rebuilt dynamically in _on_right_click)
         self._context_menu = tk.Menu(self._root, tearoff=0)
+        self._session_vars: list[tk.BooleanVar] = []
 
         # Load saved session state for restart continuity
         self._saved_state = self._load_session_state()
@@ -515,45 +513,44 @@ class AppController:
             self._refresh_ui()
 
     # ------------------------------------------------------------------
-    # Row context menu
+    # Session visibility menu
     # ------------------------------------------------------------------
 
-    def _on_row_right_click(self, session: SessionInfo, x: int, y: int):
-        entry = self._sessions.get(session.pid)
-        if not entry:
-            return
-
+    def _on_right_click(self, x: int, y: int):
+        self._context_menu.unpost()
         self._context_menu.delete(0, tk.END)
+        self._session_vars.clear()
 
-        # Hide
+        # Header (clicking dismisses menu)
         self._context_menu.add_command(
-            label="Hide",
-            command=lambda: self._hide_session(session),
+            label="Show / Hide Sessions", command=self._context_menu.unpost
         )
+        self._context_menu.add_separator()
 
-        # Clear agents (only if agents present)
-        if entry.agents:
-            self._context_menu.add_command(
-                label="Clear agents",
-                command=lambda: self._clear_agents(session),
+        all_entries = self._sorted_entries()
+        for entry in all_entries:
+            var = tk.BooleanVar(value=not entry.hidden)
+            self._session_vars.append(var)
+            display_name = cwd_relative_to_home(entry.session.cwd)
+
+            def make_toggle(e=entry, v=var):
+                def toggle():
+                    e.hidden = not v.get()
+                    self._refresh_ui()
+
+                return toggle
+
+            self._context_menu.add_checkbutton(
+                label=display_name,
+                variable=var,
+                command=make_toggle(),
             )
 
-        # Flag / Unflag
-        flag_label = "Unflag" if entry.flagged else "Flag"
-        self._context_menu.add_command(
-            label=flag_label,
-            command=lambda: self._on_row_middle_click(session),
-        )
-
         self._context_menu.tk_popup(x, y)
-        self._root.after(_CONTEXT_MENU_TIMEOUT_MS, self._context_menu.unpost)
 
-    def _hide_session(self, session: SessionInfo):
-        entry = self._sessions.get(session.pid)
-        if entry:
-            entry.hidden = True
-            logger.info("pid=%d hidden via context menu", session.pid)
-            self._refresh_ui()
+    # ------------------------------------------------------------------
+    # Tray hidden sessions
+    # ------------------------------------------------------------------
 
     def _unhide_session(self, pid: int):
         entry = self._sessions.get(pid)
@@ -562,11 +559,10 @@ class AppController:
             logger.info("pid=%d unhidden via tray menu", pid)
             self._root.after(0, self._refresh_ui)
 
-    def _get_hidden_sessions(self) -> list[tuple[str, Callable]]:
+    def _get_hidden_sessions(self) -> list[tuple[str, object]]:
         """Return (display_name, unhide_callback) for each hidden session."""
         result = []
-        entries = list(self._sessions.values())
-        for entry in entries:
+        for entry in list(self._sessions.values()):
             if entry.hidden:
                 name = cwd_relative_to_home(entry.session.cwd)
 
@@ -574,7 +570,6 @@ class AppController:
                     self._unhide_session(p)
 
                 result.append((name, unhide))
-        logger.debug("get_hidden_sessions: %d hidden of %d total", len(result), len(entries))
         return result
 
     # ------------------------------------------------------------------
