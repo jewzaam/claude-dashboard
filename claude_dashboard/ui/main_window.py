@@ -309,17 +309,7 @@ class MainWindow:
         )
         status_label.pack(side=tk.LEFT, padx=(6, 2))
 
-        cwd_var = tk.StringVar(value=self._cwd_display(session.cwd, row.branch, row.agent_count))
-        cwd_label = tk.Label(
-            row_frame,
-            textvariable=cwd_var,
-            bg=bg,
-            fg=fg,
-            font=_FONT_BODY,
-            anchor=tk.W,
-        )
-        cwd_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
-
+        # Pack RIGHT items before cwd so they claim space first (cwd truncates)
         container_var = tk.StringVar(value=self._container_label(container))
         container_label = tk.Label(
             row_frame,
@@ -341,6 +331,17 @@ class MainWindow:
         )
         if row.flagged:
             flag_label.pack(side=tk.RIGHT, padx=(0, 2))
+
+        cwd_var = tk.StringVar(value=self._cwd_display(session.cwd, row.branch, row.agent_count))
+        cwd_label = tk.Label(
+            row_frame,
+            textvariable=cwd_var,
+            bg=bg,
+            fg=fg,
+            font=_FONT_BODY,
+            anchor=tk.W,
+        )
+        cwd_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
 
         # Click and right-click bindings on all widgets
         widgets = [row_frame, status_label, cwd_label, container_label, flag_label]
@@ -418,13 +419,17 @@ class MainWindow:
         )
         row["container_var"].set(self._container_label(row_data.container))
 
-        # Show/hide flag dot and update its color from settings
+        # Show/hide flag dot
         if row_data.flagged:
             row["flag_label"].configure(fg=self._settings.color_flagged)
             if not row["flag_label"].winfo_manager():
+                # Repack: container (rightmost), flag dot, then cwd
+                row["cwd_label"].pack_forget()
                 row["flag_label"].pack(side=tk.RIGHT, padx=(0, 2))
+                row["cwd_label"].pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
         else:
-            row["flag_label"].pack_forget()
+            if row["flag_label"].winfo_manager():
+                row["flag_label"].pack_forget()
 
         # Update row height if settings changed
         try:
