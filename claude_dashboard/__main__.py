@@ -13,6 +13,7 @@ from claude_dashboard import config
 def _is_already_running() -> bool:
     """Check if another instance is running by probing the hook server port."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.bind(("127.0.0.1", config.HOOK_PORT))
         return False
