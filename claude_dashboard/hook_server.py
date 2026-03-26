@@ -131,6 +131,13 @@ class _HookHandler(BaseHTTPRequestHandler):
         pass
 
 
+class _ReusableHTTPServer(HTTPServer):
+    """HTTPServer with SO_REUSEADDR so the port is available immediately after shutdown."""
+
+    allow_reuse_address = True
+    allow_reuse_port = True
+
+
 class HookServer:
     """Lightweight HTTP server for receiving Claude Code hook events."""
 
@@ -142,7 +149,7 @@ class HookServer:
         on_agent_stop: Callable[[str, str], None] = lambda sid, aid: None,
         port: int = 17384,
     ):
-        self._server = HTTPServer(("127.0.0.1", port), _HookHandler)
+        self._server = _ReusableHTTPServer(("127.0.0.1", port), _HookHandler)
         self._server.on_hook_event = on_hook_event  # type: ignore[attr-defined]
         self._server.on_session_end = on_session_end  # type: ignore[attr-defined]
         self._server.on_agent_stop = on_agent_stop  # type: ignore[attr-defined]
@@ -164,4 +171,5 @@ class HookServer:
         if self._thread and self._thread.is_alive():
             self._server.shutdown()
             self._thread.join(timeout=1.0)
-            logger.info("hook server stopped")
+        self._server.server_close()
+        logger.info("hook server stopped")

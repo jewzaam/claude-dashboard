@@ -27,6 +27,7 @@ _FONT_EMOJI = (_FONT_EMOJI_FAMILY, 12)
 _FONT_CONTAINER = (_FONT_FAMILY, 7)
 _COLOR_EMPTY_FG = "#666666"
 _COLOR_CONTAINER_FG = "#888888"
+_FLAG_DOT_CHAR = "\u2b24"  # ⬤
 _ROW_PAD_X = 1
 _ROW_PAD_Y = 1
 
@@ -43,7 +44,7 @@ class MainWindow:
         on_row_double_click: Callable[[SessionInfo], None] | None = None,
         on_row_middle_click: Callable[[SessionInfo], None] | None = None,
         on_position_save: Callable[[int, int], None] | None = None,
-        on_right_click: Callable[[int, int], None] | None = None,
+        on_row_right_click: Callable[[SessionInfo, int, int], None] | None = None,
     ):
         self._root = root
         self._settings = settings
@@ -51,7 +52,7 @@ class MainWindow:
         self._on_row_double_click = on_row_double_click
         self._on_row_middle_click = on_row_middle_click
         self._on_position_save = on_position_save
-        self._on_right_click = on_right_click
+        self._on_row_right_click = on_row_right_click
         self._rows: dict[int, dict[str, Any]] = {}
         self._row_order: list[int] = []
         self._drag_start_x = 0
@@ -79,7 +80,6 @@ class MainWindow:
         # Bindings
         self._window.bind("<Button-1>", self._on_drag_start)
         self._window.bind("<B1-Motion>", self._on_drag_motion)
-        self._window.bind("<Button-3>", self._on_right_click_event)
 
         # Apply all settings (position, size, colors, topmost)
         self.apply_settings(settings, restore_position=True)
@@ -165,13 +165,16 @@ class MainWindow:
             self._window.geometry(f"+{x}+{y}")
 
     # ------------------------------------------------------------------
-    # Right-click context menu
+    # Row right-click
     # ------------------------------------------------------------------
 
-    def _on_right_click_event(self, event: Any):
-        if self._on_right_click:
-            self._on_right_click(event.x_root, event.y_root)
-        return "break"
+    def _make_row_right_click(self, session: SessionInfo):
+        def handler(event: Any):
+            if self._on_row_right_click:
+                self._on_row_right_click(session, event.x_root, event.y_root)
+            return "break"
+
+        return handler
 
     # ------------------------------------------------------------------
     # Position persistence
@@ -288,7 +291,7 @@ class MainWindow:
         session = row.session
         state = row.state
         container = row.container
-        bg = self._settings.color_flagged if row.flagged else self._color_for_state(state)
+        bg = self._color_for_state(state)
         fg = self._settings.text_color
 
         row_frame = tk.Frame(self._frame, bg=bg, height=self._settings.row_height, cursor="hand2")
@@ -329,8 +332,19 @@ class MainWindow:
         )
         container_label.pack(side=tk.RIGHT, padx=(0, 6))
 
+        flag_label = tk.Label(
+            row_frame,
+            text=_FLAG_DOT_CHAR,
+            bg=bg,
+            fg=self._settings.color_flagged,
+            font=_FONT_CONTAINER,
+            anchor=tk.E,
+        )
+        if row.flagged:
+            flag_label.pack(side=tk.RIGHT, padx=(0, 2))
+
         # Click and right-click bindings on all widgets
-        widgets = [row_frame, status_label, cwd_label, container_label]
+        widgets = [row_frame, status_label, cwd_label, container_label, flag_label]
 
         def make_click(s: SessionInfo = session):
             def handler(event: Any):
@@ -373,13 +387,14 @@ class MainWindow:
         click = make_click()
         dbl_click = make_double_click()
         mid_click = make_middle_click()
+        right_click = self._make_row_right_click(session)
         for w in widgets:
             w.bind("<Button-1>", self._on_drag_start)
             w.bind("<B1-Motion>", self._on_drag_motion)
             w.bind("<ButtonRelease-1>", click)
             w.bind("<Double-1>", dbl_click)
             w.bind("<Button-2>", mid_click)
-            w.bind("<Button-3>", self._on_right_click_event)
+            w.bind("<Button-3>", right_click)
 
         self._rows[session.pid] = {
             "frame": row_frame,
@@ -389,14 +404,12 @@ class MainWindow:
             "status_label": status_label,
             "cwd_label": cwd_label,
             "container_label": container_label,
+            "flag_label": flag_label,
         }
 
     def _update_row(self, row_data: SessionRow):
         row = self._rows[row_data.session.pid]
-        if row_data.flagged:
-            bg = self._settings.color_flagged
-        else:
-            bg = self._color_for_state(row_data.state)
+        bg = self._color_for_state(row_data.state)
 
         row["status_var"].set(self._emoji_for_state(row_data.state))
         row["cwd_var"].set(
@@ -404,13 +417,21 @@ class MainWindow:
         )
         row["container_var"].set(self._container_label(row_data.container))
 
+        # Show/hide flag dot and update its color from settings
+        if row_data.flagged:
+            row["flag_label"].configure(fg=self._settings.color_flagged)
+            if not row["flag_label"].winfo_manager():
+                row["flag_label"].pack(side=tk.RIGHT, padx=(0, 2))
+        else:
+            row["flag_label"].pack_forget()
+
         # Update row height if settings changed
         try:
             row["frame"].configure(height=self._settings.row_height)
         except tk.TclError:
             pass
 
-        for key in ("frame", "status_label", "cwd_label", "container_label"):
+        for key in ("frame", "status_label", "cwd_label", "container_label", "flag_label"):
             try:
                 row[key].configure(bg=bg)
             except tk.TclError:

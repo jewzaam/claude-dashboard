@@ -111,20 +111,33 @@ def create_tray_icon(
     on_settings: Callable,
     on_restart: Callable,
     on_quit: Callable,
+    get_hidden_sessions: Callable[[], list[tuple[str, Callable]]],
 ) -> Any:
-    """Create and return a pystray Icon (not yet running)."""
+    """Create and return a pystray Icon (not yet running).
+
+    get_hidden_sessions returns a list of (display_name, unhide_callback) tuples.
+    """
     import pystray
 
     icon_image = generate_icon_image()
 
-    menu = pystray.Menu(
-        pystray.MenuItem("Show", on_show, default=True),
-        pystray.MenuItem("Hide", on_hide),
-        pystray.MenuItem("Settings", on_settings),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Restart", on_restart),
-        pystray.MenuItem("Quit", on_quit),
-    )
+    def _build_menu():
+        items = [
+            pystray.MenuItem("Show", on_show, default=True),
+            pystray.MenuItem("Hide", on_hide),
+        ]
+        hidden = get_hidden_sessions()
+        if hidden:
+            items.append(pystray.Menu.SEPARATOR)
+            for name, cb in hidden:
+                items.append(pystray.MenuItem(f"Unhide: {name}", cb))
+        items.append(pystray.Menu.SEPARATOR)
+        items.append(pystray.MenuItem("Settings", on_settings))
+        items.append(pystray.MenuItem("Restart", on_restart))
+        items.append(pystray.MenuItem("Quit", on_quit))
+        return items
+
+    menu = pystray.Menu(lambda: _build_menu())
 
     icon = pystray.Icon(
         name=TRAY_ICON_NAME,
