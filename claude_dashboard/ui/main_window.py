@@ -10,6 +10,7 @@ from claude_dashboard.platform.base import ContainerInfo, ContainerType
 from claude_dashboard.session import SessionInfo, cwd_relative_to_home
 from claude_dashboard.settings import Settings
 from claude_dashboard.config import StatusState
+from claude_dashboard.models import SessionRow
 
 logger = logging.getLogger(__name__)
 
@@ -186,11 +187,8 @@ class MainWindow:
     # Session rows
     # ------------------------------------------------------------------
 
-    def update_sessions(
-        self,
-        sessions: list[tuple[SessionInfo, StatusState, ContainerInfo | None, str, bool]],
-    ):
-        current_pids = {s.pid for s, _, _, _, _ in sessions}
+    def update_sessions(self, sessions: list[SessionRow]):
+        current_pids = {row.session.pid for row in sessions}
         changed = False
 
         # Remove stale rows
@@ -199,21 +197,21 @@ class MainWindow:
             changed = True
 
         # Add or update rows
-        for session, state, container, branch, flagged in sessions:
-            if session.pid in self._rows:
-                self._update_row(session, state, container, branch, flagged=flagged)
+        for row in sessions:
+            if row.session.pid in self._rows:
+                self._update_row(row)
             else:
-                self._add_row(session, state, container, branch, flagged=flagged)
+                self._add_row(row)
                 changed = True
 
         # Re-order rows only if the order changed
-        desired_order = [s.pid for s, _, _, _, _ in sessions]
+        desired_order = [row.session.pid for row in sessions]
         if desired_order != self._row_order:
-            for session, _, _, _, _ in sessions:
-                row = self._rows.get(session.pid)
-                if row:
-                    row["frame"].pack_forget()
-                    row["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
+            for sr in sessions:
+                row_data = self._rows.get(sr.session.pid)
+                if row_data:
+                    row_data["frame"].pack_forget()
+                    row_data["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
             self._row_order = desired_order
             changed = True
 
@@ -280,22 +278,19 @@ class MainWindow:
             ContainerType.SCREEN: "screen",
         }.get(container.container_type, container.container_type.value)
 
-    def _cwd_display(self, cwd: str, branch: str) -> str:
+    def _cwd_display(self, cwd: str, branch: str, agent_count: int = 0) -> str:
         display = cwd_relative_to_home(cwd)
+        if agent_count > 0:
+            display += f" (+{agent_count})"
         if branch:
             display += f"  [{branch}]"
         return display
 
-    def _add_row(
-        self,
-        session: SessionInfo,
-        state: StatusState,
-        container: ContainerInfo | None = None,
-        branch: str = "",
-        *,
-        flagged: bool = False,
-    ):
-        bg = self._settings.color_flagged if flagged else self._color_for_state(state)
+    def _add_row(self, row: SessionRow):
+        session = row.session
+        state = row.state
+        container = row.container
+        bg = self._settings.color_flagged if row.flagged else self._color_for_state(state)
         fg = self._settings.text_color
 
         row_frame = tk.Frame(self._frame, bg=bg, height=self._settings.row_height, cursor="hand2")
@@ -314,7 +309,7 @@ class MainWindow:
         )
         status_label.pack(side=tk.LEFT, padx=(6, 2))
 
-        cwd_var = tk.StringVar(value=self._cwd_display(session.cwd, branch))
+        cwd_var = tk.StringVar(value=self._cwd_display(session.cwd, row.branch, row.agent_count))
         cwd_label = tk.Label(
             row_frame,
             textvariable=cwd_var,
@@ -398,21 +393,18 @@ class MainWindow:
             "container_label": container_label,
         }
 
-    def _update_row(
-        self,
-        session: SessionInfo,
-        state: StatusState,
-        container: ContainerInfo | None = None,
-        branch: str = "",
-        *,
-        flagged: bool = False,
-    ):
-        row = self._rows[session.pid]
-        bg = self._settings.color_flagged if flagged else self._color_for_state(state)
+    def _update_row(self, row_data: SessionRow):
+        row = self._rows[row_data.session.pid]
+        if row_data.flagged:
+            bg = self._settings.color_flagged
+        else:
+            bg = self._color_for_state(row_data.state)
 
-        row["status_var"].set(self._emoji_for_state(state))
-        row["cwd_var"].set(self._cwd_display(session.cwd, branch))
-        row["container_var"].set(self._container_label(container))
+        row["status_var"].set(self._emoji_for_state(row_data.state))
+        row["cwd_var"].set(
+            self._cwd_display(row_data.session.cwd, row_data.branch, row_data.agent_count)
+        )
+        row["container_var"].set(self._container_label(row_data.container))
 
         # Update row height if settings changed
         try:

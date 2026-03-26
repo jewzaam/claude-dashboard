@@ -26,11 +26,34 @@ from claude_dashboard.session import (
 from claude_dashboard.settings import Settings, load_settings, save_settings
 from claude_dashboard.startup import set_run_on_startup
 from claude_dashboard.config import StatusState
+from claude_dashboard.models import SessionRow
 from claude_dashboard.tray import create_tray_icon, update_tray_icon
 from claude_dashboard.ui.main_window import MainWindow
 from claude_dashboard.ui.settings_window import SettingsWindow
 
 logger = logging.getLogger(__name__)
+
+_STATE_PRIORITY = {
+    StatusState.PERMISSION_REQUIRED: 0,
+    StatusState.AWAITING_INPUT: 1,
+    StatusState.WORKING: 2,
+    StatusState.READY: 3,
+    StatusState.IDLE: 4,
+    StatusState.UNKNOWN: 5,
+}
+
+_DEBOUNCE_MS = 300  # Debounce window for state display updates (FR-043)
+
+
+class _AgentEntry:
+    """Tracks an agent within a session."""
+
+    __slots__ = ("agent_id", "state", "agent_type")
+
+    def __init__(self, *, agent_id: str, state: StatusState, agent_type: str = ""):
+        self.agent_id = agent_id
+        self.state = state
+        self.agent_type = agent_type
 
 
 def build_restart_args() -> list[str]:
@@ -46,7 +69,7 @@ def build_restart_args() -> list[str]:
 class _SessionEntry:
     """Tracks a live session: its info, container, and current state."""
 
-    __slots__ = ("session", "container", "state", "hidden", "branch", "flagged")
+    __slots__ = ("session", "container", "state", "hidden", "branch", "flagged", "agents")
 
     def __init__(self, session: SessionInfo):
         self.session = session
@@ -55,6 +78,19 @@ class _SessionEntry:
         self.hidden: bool = False
         self.branch: str = ""
         self.flagged: bool = False
+        self.agents: dict[str, _AgentEntry] = {}
+
+    @property
+    def effective_state(self) -> StatusState:
+        """Highest-priority state across main process + all agents."""
+        best = self.state
+        best_p = _STATE_PRIORITY.get(best, 999)
+        for agent in self.agents.values():
+            p = _STATE_PRIORITY.get(agent.state, 999)
+            if p < best_p:
+                best = agent.state
+                best_p = p
+        return best
 
 
 class AppController:
@@ -87,10 +123,14 @@ class AppController:
         self._pending_hook_states: dict[str, StatusState] = {}
         self._first_tick_done = False
 
+        # Debounce state (FR-043)
+        self._debounce_id: str | None = None
+
         # Hook server
         self._hook_server = HookServer(
             on_hook_event=self._on_hook_event,
             on_session_end=self._on_hook_session_end,
+            on_agent_stop=self._on_hook_agent_stop,
             port=config.HOOK_PORT,
         )
 
@@ -206,15 +246,44 @@ class AppController:
     # Hook event callback (fired from HTTP server thread)
     # ------------------------------------------------------------------
 
-    def _on_hook_event(self, session_id: str, event: str, new_state: StatusState, cwd: str = ""):
+    def _on_hook_event(
+        self,
+        session_id: str,
+        event: str,
+        new_state: StatusState,
+        cwd: str = "",
+        agent_id: str = "",
+        agent_type: str = "",
+    ) -> None:
         """Called from hook server thread. Marshal to main thread."""
-        self._root.after(0, self._apply_hook_state, session_id, event, new_state, cwd)
+        self._root.after(
+            0,
+            self._apply_hook_state,
+            session_id,
+            event,
+            new_state,
+            cwd,
+            agent_id,
+            agent_type,
+        )
 
     def _on_hook_session_end(self, session_id: str):
         """Called from hook server thread on SessionEnd."""
         self._root.after(0, self._handle_session_end, session_id)
 
-    def _apply_hook_state(self, session_id: str, event: str, new_state: StatusState, cwd: str = ""):
+    def _on_hook_agent_stop(self, session_id: str, agent_id: str):
+        """Called from hook server thread on SubagentStop."""
+        self._root.after(0, self._handle_agent_stop, session_id, agent_id)
+
+    def _apply_hook_state(
+        self,
+        session_id: str,
+        event: str,
+        new_state: StatusState,
+        cwd: str = "",
+        agent_id: str = "",
+        agent_type: str = "",
+    ):
         """Apply a hook-driven state change on the main thread."""
         pid = self._session_id_to_pid.get(session_id)
 
@@ -233,9 +302,37 @@ class AppController:
             self._pending_hook_states[session_id] = new_state
             return
 
+        # pid guaranteed non-None after fallback matching above, but mypy can't infer
         entry = self._sessions.get(pid)  # type: ignore[arg-type, no-redef, assignment]
         if not entry:
             return
+
+        if agent_id:
+            # Agent event — register or update agent
+            agent = entry.agents.get(agent_id)
+            if agent is None:
+                agent = _AgentEntry(
+                    agent_id=agent_id,
+                    state=new_state,
+                    agent_type=agent_type,
+                )
+                entry.agents[agent_id] = agent
+                logger.debug(
+                    "pid=%d agent=%s registered state=%s",
+                    pid,
+                    agent_id[:12],
+                    new_state.value,
+                )
+            else:
+                agent.state = new_state
+            self._refresh_ui()
+            return
+
+        # Main process event
+        # Note: we do NOT clear agents on UserPromptSubmit because auto-wake
+        # events (fired after each SubagentStop) are indistinguishable from
+        # real user prompts and would prematurely clear active agents.
+        # Agents are removed individually via SubagentStop or on PID death.
 
         prior = entry.state
 
@@ -259,6 +356,24 @@ class AppController:
         )
         self._refresh_ui()
 
+    def _handle_agent_stop(self, session_id: str, agent_id: str):
+        """Remove an agent from a session."""
+        pid = self._session_id_to_pid.get(session_id)
+        if pid is None:
+            return
+        entry = self._sessions.get(pid)
+        if not entry:
+            return
+        removed = entry.agents.pop(agent_id, None)
+        if removed:
+            logger.debug(
+                "pid=%d agent=%s removed, %d agents remain",
+                pid,
+                agent_id[:12],
+                len(entry.agents),
+            )
+            self._refresh_ui()
+
     def _handle_session_end(self, session_id: str):
         """Handle SessionEnd hook — remove the session."""
         pid = self._session_id_to_pid.get(session_id)
@@ -278,9 +393,45 @@ class AppController:
         )
 
     def _refresh_ui(self):
+        """Debounced UI refresh. High-priority states bypass debounce (FR-043)."""
         all_entries = self._sorted_entries()
+        bypass = any(
+            entry.effective_state in (StatusState.PERMISSION_REQUIRED, StatusState.AWAITING_INPUT)
+            for entry in all_entries
+            if not entry.hidden
+        )
+
+        if bypass:
+            if self._debounce_id is not None:
+                self._root.after_cancel(self._debounce_id)
+                self._debounce_id = None
+            self._do_refresh_ui(all_entries)
+        else:
+            if self._debounce_id is not None:
+                self._root.after_cancel(self._debounce_id)
+            # Capture entries now — don't re-read at execution time (race condition)
+            self._debounce_id = self._root.after(
+                _DEBOUNCE_MS,
+                self._do_refresh_ui_deferred,
+                all_entries,
+            )
+
+    def _do_refresh_ui_deferred(self, all_entries: list["_SessionEntry"]):
+        """Called by debounce timer with pre-captured entries."""
+        self._debounce_id = None
+        self._do_refresh_ui(all_entries)
+
+    def _do_refresh_ui(self, all_entries: list["_SessionEntry"]):
+        """Actual UI refresh logic."""
         visible_states = [
-            (entry.session, entry.state, entry.container, entry.branch, entry.flagged)
+            SessionRow(
+                session=entry.session,
+                state=entry.effective_state,
+                container=entry.container,
+                branch=entry.branch,
+                flagged=entry.flagged,
+                agent_count=len(entry.agents),
+            )
             for entry in all_entries
             if not entry.hidden
         ]
@@ -457,30 +608,20 @@ class AppController:
     # Tray priority
     # ------------------------------------------------------------------
 
-    _STATE_PRIORITY = {
-        StatusState.PERMISSION_REQUIRED: 0,
-        StatusState.AWAITING_INPUT: 1,
-        StatusState.READY: 2,
-        StatusState.WORKING: 3,
-        StatusState.IDLE: 4,
-        StatusState.UNKNOWN: 5,
-    }
-
     def _highest_priority_state(
         self,
-        session_states: list[tuple[SessionInfo, StatusState, ContainerInfo | None, str, bool]],
+        session_states: list[SessionRow],
     ) -> StatusState | None:
         if not session_states:
             return None
         best = None
         best_priority = 999
-        for _, state, _, _, flagged in session_states:
-            # Flagged sessions are treated as READY priority
-            p = self._STATE_PRIORITY.get(state, 999)
-            if flagged:
-                p = min(p, self._STATE_PRIORITY[StatusState.READY])
+        for row in session_states:
+            p = _STATE_PRIORITY.get(row.state, 999)
+            if row.flagged:
+                p = min(p, _STATE_PRIORITY[StatusState.READY])
             if p < best_priority:
-                best = state
+                best = row.state
                 best_priority = p
         return best
 
