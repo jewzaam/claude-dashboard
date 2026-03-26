@@ -14,17 +14,18 @@ As a user with many active Claude sessions, I want to hide specific sessions fro
 
 **Why this priority**: Usability refinement. With many sessions, not all are relevant at all times. Hiding reduces noise without terminating sessions.
 
-**Independent Test**: Right-click the dashboard, open Sessions submenu, uncheck a session. It disappears from the dashboard. Check it again — it reappears. Close and restart the hidden session — it appears visible in the dashboard.
+**Independent Test**: Right-click a session row, select Hide. It disappears from the dashboard. Right-click the tray icon, select "Unhide: <session>" — it reappears. Close and restart the hidden session — it appears visible in the dashboard.
 
 **Acceptance Scenarios**:
 
-1. **Given** the dashboard is showing 3 sessions, **When** I right-click and open the Sessions submenu, **Then** I see 3 checkbutton entries ordered identically to the dashboard rows, each showing the session's display name (CWD relative to `~`), all checked by default.
-2. **Given** I uncheck a session in the Sessions submenu, **When** the menu closes, **Then** that session's row is immediately hidden from the dashboard.
-3. **Given** a session is hidden, **When** I right-click and open the Sessions submenu, **Then** the hidden session's entry is unchecked. Checking it makes the session visible again.
+1. **Given** the dashboard is showing 3 sessions, **When** I right-click a session row, **Then** I see a context menu with "Hide", "Clear agents" (if agents present), and "Flag"/"Unflag" options.
+2. **Given** I select "Hide" from the row context menu, **When** the menu closes, **Then** that session's row is immediately hidden from the dashboard.
+3. **Given** a session is hidden, **When** I right-click the tray icon, **Then** the tray menu includes an "Unhide: <session>" item. Clicking it makes the session visible again.
 4. **Given** all sessions are hidden (or no sessions exist), **When** I view the dashboard, **Then** it shows "No visible Claude sessions".
 5. **Given** a session is hidden and then terminates, **When** a new session starts with the same CWD, **Then** the new session is visible (hidden state does not carry over).
 6. **Given** a session is hidden, **When** the dashboard restarts, **Then** the session is visible (hidden state is not persisted across app restarts).
 7. **Given** a session is hidden, **When** the tray icon priority is calculated, **Then** the hidden session is excluded — it does not influence the tray icon color.
+8. **Given** the row context menu is open, **When** 3 seconds elapse, **Then** the menu auto-dismisses.
 
 ---
 
@@ -70,8 +71,16 @@ As a user, I want the dashboard to start automatically when I log in to my OS, s
 - **Hidden session receives attention state**: A hidden session entering PermissionRequired or AwaitingInput does NOT surface in the tray icon. The user chose to hide it.
 - **Auto-start with venv/pyenv**: The auto-start command uses `sys.executable` (absolute path) to ensure the correct Python interpreter is invoked, regardless of shell environment at login time.
 - **Registry/desktop file manually deleted**: On each startup and settings save, the OS auto-start mechanism is re-synced. If the registry key or `.desktop` file was manually removed, it is recreated if the setting is enabled.
+- **Context menu timeout**: Row context menu auto-dismisses after 3 seconds to prevent lingering menus blocking the UI.
+- **Flag persistence**: Flag state persists across dashboard restarts via `session-state.json`. Flag is identified by session CWD, so a new session at the same CWD inherits the flag state.
 
 ## Clarifications
+
+### Session 2026-03-26 (Flag Feature)
+
+- Q: Should flag state persist across restarts? → A: Yes. Flag is sticky and saved to `session-state.json` keyed by CWD.
+- Q: How is flag toggled? → A: Middle-click or row context menu "Flag"/"Unflag". Left-click does NOT clear flag (changed from earlier behavior).
+- Q: What visual indicator shows flag state? → A: Purple dot (⬤) left of container label. Dot color configurable via `color_flagged` setting.
 
 ### Session 2026-03-23
 
@@ -80,19 +89,24 @@ As a user, I want the dashboard to start automatically when I log in to my OS, s
 - Q: Does Apply persist to disk? → A: Yes. Apply and Save both persist. The only difference is Save also closes the window.
 - Q: Does Cancel revert previously-applied changes? → A: No. If Apply was clicked, those changes are already persisted. Cancel just closes the window.
 - Q: Should Linux auto-start use `python3` or `sys.executable`? → A: `sys.executable` (absolute path) to handle venv/pyenv setups correctly.
+- Q: How should sessions be hidden/unhidden after context menu change? → A: Hide via row right-click → "Hide". Unhide via tray icon right-click → "Unhide: <session>". Global "Sessions" submenu removed (replaced with per-row context menu).
 
 ## Requirements
 
 ### Functional Requirements
 
-- **FR-029**: The right-click context menu MUST include a "Sessions" submenu listing all tracked sessions as checkbutton entries, ordered identically to the dashboard rows. Checked = visible (default), unchecked = hidden. Toggling a checkbutton immediately updates visibility. The submenu MUST be rebuilt each time the context menu is posted to reflect current session state.
+- **FR-029**: Right-clicking a session row MUST open a context menu with "Hide", "Clear agents" (only if agents present), and "Flag"/"Unflag" options. The menu MUST auto-dismiss after 3 seconds. The tray icon right-click menu MUST include dynamic "Unhide: <session>" items for each hidden session (flat list, no nested submenus).
 - **FR-030**: Hidden session state MUST be stored on the session's internal tracking entry (not keyed by PID or CWD). When the session entry is removed (session terminates), the hidden state is destroyed. Hidden state is NOT persisted across app restarts.
 - **FR-031**: Hidden sessions MUST be excluded from both the dashboard display and the tray icon priority calculation.
 - **FR-032**: The settings dialog MUST have three buttons: Apply, Save, Cancel. Apply gathers form values, persists to disk, applies to dashboard, and keeps the window open. Save is Apply + close. Cancel closes without reverting previously-applied changes but still persists window/picker positions.
-- **FR-033**: System MUST support auto-start on OS login. On Windows, use `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\ClaudeDashboard` registry key with `pythonw.exe -m claude_dashboard`. On Linux, use `~/.config/autostart/claude-dashboard.desktop` with `sys.executable -m claude_dashboard`. Both use the full path to the Python interpreter. Unsupported platforms are a no-op with a log warning.
+- **FR-033**: System MUST support auto-start on OS login. On Windows, use `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\ClaudeDashboard` registry key with `pythonw.exe -m claude_dashboard --log-file <path>`. On Linux, use `~/.config/autostart/claude-dashboard.desktop` with `sys.executable -m claude_dashboard --log-file <path>`. Both use the full path to the Python interpreter and redirect logs to `~/.claude/claude-dashboard/dashboard.log`. Unsupported platforms are a no-op with a log warning.
 - **FR-034**: The `run_on_startup` setting MUST be persisted in `settings.json` (default: `false`). The OS auto-start mechanism MUST be synced on app startup and on settings save.
+- **FR-035**: Sessions MUST support a "flagged" state indicated by a colored dot (⬤) to the left of the container label. Flag state is sticky — toggled only by middle-click or row context menu "Flag"/"Unflag" option, NOT by left-click. Flag dot color is configurable via `color_flagged` setting (default: `"#9b59b6"` purple).
+- **FR-036**: Flag state and last-known StatusState MUST be persisted to `~/.claude/claude-dashboard/session-state.json` on every UI refresh, keyed by CWD. State is restored on dashboard startup. Hidden state is NOT persisted (transient only).
+- **FR-037**: The row context menu MUST auto-dismiss after 3 seconds (`_CONTEXT_MENU_TIMEOUT_MS` constant in code).
 
 ### New/Modified Entities
 
-- **Session** (modified): Gains `hidden: bool` attribute (default `False`). Not persisted.
-- **Settings** (modified): Gains `run_on_startup: bool` attribute (default `False`). Persisted in `settings.json`.
+- **Session** (modified): Gains `hidden: bool` attribute (default `False`). Not persisted. Gains `flagged: bool` attribute (default `False`). Persisted in `session-state.json` keyed by CWD.
+- **Settings** (modified): Gains `run_on_startup: bool` attribute (default `False`). Persisted in `settings.json`. Gains `color_flagged: str` attribute (default `"#9b59b6"` purple). Persisted in `settings.json`.
+- **SessionState** (new): Per-session state persisted to `~/.claude/claude-dashboard/session-state.json`. Attributes: `cwd: str`, `flagged: bool`, `state: str` (StatusState name). Restored on dashboard startup. Not saved for hidden sessions (hidden is transient).

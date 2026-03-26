@@ -1,7 +1,7 @@
 # Feature Specification: Agent Awareness
 
 **Created**: 2026-03-24
-**Status**: Spec'd (implementation pending)
+**Status**: Implemented
 **Version**: 0.4.0
 **Feature**: 003-agent-awareness
 **Dependencies**: `specs/001-session-dashboard/spec.md` (FR-015, FR-026, FR-027 — hook server and event mapping)
@@ -25,6 +25,7 @@ As a user running Claude Code sessions that spawn agents (foreground or backgrou
 5. **Given** agents are tracked from a previous turn, **When** each agent completes, **Then** it is removed individually via `SubagentStop`. Agents are NOT cleared on `UserPromptSubmit` because auto-wake events are indistinguishable from real user prompts. Orphaned agents (no `SubagentStop`) are cleared on PID death.
 6. **Given** a hook event arrives with an `agent_id` not yet tracked, **When** the event is NOT `SubagentStop`, **Then** the dashboard registers the agent. If `SubagentStop` is the first and only event for an `agent_id`, no agent is registered.
 7. **Given** a session has active agents, **When** the tray icon priority is calculated, **Then** agent states are included in the rollup (an agent needing permission makes the tray orange).
+8. **Given** a session has active agents, **When** I right-click the session row, **Then** the context menu includes a "Clear agents" option. Clicking it immediately clears all tracked agents for that session.
 
 ---
 
@@ -74,6 +75,7 @@ As a user running Claude Code sessions that spawn agents (foreground or backgrou
 - **FR-042**: The hook server MUST extract `agent_type` from hook payloads and pass it to the controller. Observed value: `"general-purpose"`. Stored on the agent entry for future use.
 - **FR-043**: The controller MUST debounce state display updates (200-500ms window) to absorb rapid auto-wake transitions (`UserPromptSubmit` → `Stop` cycles) that fire after each `SubagentStop`. This prevents visual flickering during agent completion sequences. High-priority states (PermissionRequired, AwaitingInput) MUST bypass the debounce and display immediately.
 - **FR-044**: Agents spawned by other agents (nested agents) MUST be tracked as flat peers in the session's agent dict. No parent-child hierarchy is tracked. The `(+N)` count reflects total active agents regardless of spawn origin.
+- **FR-045**: The row context menu (right-click on a session row) MUST include a "Clear agents" option when the session has active agents. Selecting "Clear agents" immediately removes all tracked agents for that session. The option is hidden when no agents are present.
 
 ### New/Modified Entities
 
