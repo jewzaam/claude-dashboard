@@ -48,14 +48,13 @@ class TestEffectiveState:
         assert entry.effective_state == StatusState.AWAITING_INPUT
 
     def test_all_states_in_priority_order(self):
-        """Verify the full priority chain: PERM > AWAIT > WORKING > READY > IDLE > UNKNOWN."""
+        """Verify the full priority chain: PERM > AWAIT > WORKING > READY > IDLE."""
         ordered = [
             StatusState.PERMISSION_REQUIRED,
             StatusState.AWAITING_INPUT,
             StatusState.WORKING,
             StatusState.READY,
             StatusState.IDLE,
-            StatusState.UNKNOWN,
         ]
         for i, higher in enumerate(ordered):
             for lower in ordered[i + 1 :]:
@@ -66,9 +65,9 @@ class TestEffectiveState:
 
     def test_empty_agents_dict_no_error(self):
         entry = _SessionEntry(_make_session())
-        entry.state = StatusState.UNKNOWN
+        entry.state = StatusState.IDLE
         assert entry.agents == {}
-        assert entry.effective_state == StatusState.UNKNOWN
+        assert entry.effective_state == StatusState.IDLE
 
     def test_agent_same_state_as_main(self):
         entry = _SessionEntry(_make_session())
@@ -151,6 +150,6 @@ class TestStatePriority:
     def test_permission_required_is_highest(self):
         assert _STATE_PRIORITY[StatusState.PERMISSION_REQUIRED] == 0
 
-    def test_unknown_is_lowest(self):
+    def test_idle_is_lowest(self):
         highest_val = max(_STATE_PRIORITY.values())
-        assert _STATE_PRIORITY[StatusState.UNKNOWN] == highest_val
+        assert _STATE_PRIORITY[StatusState.IDLE] == highest_val
