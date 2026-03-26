@@ -72,7 +72,16 @@ def build_restart_args() -> list[str]:
 class _SessionEntry:
     """Tracks a live session: its info, container, and current state."""
 
-    __slots__ = ("session", "container", "state", "hidden", "branch", "flagged", "agents")
+    __slots__ = (
+        "session",
+        "container",
+        "state",
+        "hidden",
+        "branch",
+        "flagged",
+        "agents",
+        "unattached",
+    )
 
     def __init__(self, session: SessionInfo):
         self.session = session
@@ -82,6 +91,7 @@ class _SessionEntry:
         self.branch: str = ""
         self.flagged: bool = False
         self.agents: dict[str, _AgentEntry] = {}
+        self.unattached: bool = False
 
     @property
     def effective_state(self) -> StatusState:
@@ -216,10 +226,16 @@ class AppController:
                 else:
                     self._sessions[session.pid].branch = detect_branch(session.cwd)
 
-            # Remove dead sessions
+            # Remove dead sessions (but not unattached placeholders)
             dead_pids = set(self._sessions.keys()) - alive_pids
             for pid in dead_pids:
-                self._remove_session(pid)
+                entry = self._sessions.get(pid)
+                if entry and not entry.unattached:
+                    self._remove_session(pid)
+
+            # On first tick, create unattached placeholders from state file
+            if not self._first_tick_done:
+                self._create_unattached_from_state(alive_pids)
 
             # Refresh UI (state may not have changed, but rows may have been added/removed)
             self._refresh_ui()
@@ -241,7 +257,19 @@ class AppController:
         entry.container = detect_container(session.pid)
         entry.container = find_window_for_session(session.cwd, entry.container)
         entry.branch = detect_branch(session.cwd)
-        self._apply_saved_state(entry)
+
+        # Replace unattached placeholder if one exists for this CWD
+        unattached_pid = self._find_unattached_pid(session.cwd)
+        if unattached_pid is not None:
+            old = self._sessions.pop(unattached_pid, None)
+            if old:
+                entry.flagged = old.flagged
+                logger.debug(
+                    "pid=%d replaced unattached placeholder for %s", session.pid, session.cwd
+                )
+        else:
+            self._apply_saved_state(entry)
+
         self._sessions[session.pid] = entry
         self._session_id_to_pid[session.session_id] = session.pid
 
@@ -257,6 +285,35 @@ class AppController:
             cwd_short,
             entry.state.value,
         )
+
+    def _find_unattached_pid(self, cwd: str) -> int | None:
+        """Find an unattached placeholder PID for the given CWD."""
+        for pid, entry in self._sessions.items():
+            if entry.unattached and entry.session.cwd == cwd:
+                return pid
+        return None
+
+    def _create_unattached_from_state(self, alive_pids: set[int]):
+        """Create ghost entries from state file for CWDs without live sessions."""
+        live_cwds = {e.session.cwd for e in self._sessions.values()}
+        for cwd, saved in self._saved_state.items():
+            if cwd in live_cwds:
+                continue
+            # Synthetic negative PID from CWD hash
+            synthetic_pid = -(abs(hash(cwd)) % 1_000_000_000)
+            session = SessionInfo(
+                pid=synthetic_pid,
+                session_id=f"unattached-{synthetic_pid}",
+                cwd=cwd,
+                started_at=0,
+                pid_alive=False,
+            )
+            entry = _SessionEntry(session)
+            entry.unattached = True
+            if saved.get("flagged"):
+                entry.flagged = True
+            self._sessions[synthetic_pid] = entry
+            logger.debug("created unattached placeholder for %s pid=%d", cwd, synthetic_pid)
 
     def _remove_session(self, pid: int):
         entry = self._sessions.pop(pid, None)
@@ -452,6 +509,7 @@ class AppController:
                 branch=entry.branch,
                 flagged=entry.flagged,
                 agent_count=len(entry.agents),
+                unattached=entry.unattached,
             )
             for entry in all_entries
             if not entry.hidden
@@ -472,6 +530,14 @@ class AppController:
     def _on_row_click(self, session: SessionInfo):
         logger.info("row clicked pid=%d cwd=%s", session.pid, session.cwd)
         entry = self._sessions.get(session.pid)
+
+        # Click unattached session to dismiss it
+        if entry and entry.unattached:
+            self._sessions.pop(session.pid, None)
+            logger.info("pid=%d unattached placeholder cleared", session.pid)
+            self._refresh_ui()
+            return
+
         container = entry.container if entry else None
 
         # Clicking a Ready session clears to Idle
@@ -707,6 +773,8 @@ class AppController:
         best = None
         best_priority = 999
         for row in session_states:
+            if row.unattached:
+                continue
             p = _STATE_PRIORITY.get(row.state, 999)
             if row.flagged:
                 p = min(p, _STATE_PRIORITY[StatusState.READY])

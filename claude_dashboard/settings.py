@@ -42,6 +42,7 @@ class Settings:
     emoji_idle: str = config.DEFAULT_EMOJI_IDLE
     emoji_awaiting_input: str = config.DEFAULT_EMOJI_AWAITING_INPUT
     emoji_permission_required: str = config.DEFAULT_EMOJI_PERMISSION_REQUIRED
+    emoji_unattached: str = config.DEFAULT_EMOJI_UNATTACHED
 
     # Status colors
     color_working: str = config.DEFAULT_COLOR_WORKING
@@ -50,6 +51,7 @@ class Settings:
     color_awaiting_input: str = config.DEFAULT_COLOR_AWAITING_INPUT
     color_permission_required: str = config.DEFAULT_COLOR_PERMISSION_REQUIRED
     color_flagged: str = config.DEFAULT_COLOR_FLAGGED
+    color_unattached: str = config.DEFAULT_COLOR_UNATTACHED
 
     # General UI
     window_bg: str = config.DEFAULT_WINDOW_BG
