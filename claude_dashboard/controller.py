@@ -5,8 +5,12 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 import threading
+import tempfile
 import tkinter as tk
+from typing import Callable
+
 from claude_dashboard import config
 from claude_dashboard.hook_server import HookServer
 from claude_dashboard.platform.base import (
@@ -308,9 +312,9 @@ class AppController:
         # Fallback: match by CWD if session_id not found (resumed sessions
         # may have a different session_id than what's in sessions/*.json)
         if pid is None and cwd:
-            for entry in self._sessions.values():
-                if entry.session.cwd == cwd:
-                    pid = entry.session.pid
+            for candidate in self._sessions.values():
+                if candidate.session.cwd == cwd:
+                    pid = candidate.session.pid
                     # Register this session_id for future lookups
                     self._session_id_to_pid[session_id] = pid
                     break
@@ -320,8 +324,7 @@ class AppController:
             self._pending_hook_states[session_id] = new_state
             return
 
-        # pid guaranteed non-None after fallback matching above, but mypy can't infer
-        entry = self._sessions.get(pid)  # type: ignore[arg-type, no-redef, assignment]
+        entry = self._sessions.get(pid)
         if not entry:
             return
 
@@ -489,9 +492,13 @@ class AppController:
                 logger.warning("failed to foreground pid=%d", session.pid)
 
     def _on_row_double_click(self, session: SessionInfo):
-        """Double-click an Idle/Unknown session to mark it Ready (deferred attention)."""
+        """Double-click toggles between Idle and Ready."""
         entry = self._sessions.get(session.pid)
-        if entry and entry.state == StatusState.IDLE:
+        if entry and entry.state == StatusState.READY:
+            entry.state = StatusState.IDLE
+            logger.debug("pid=%d double-clicked while ready, now idle", session.pid)
+            self._refresh_ui()
+        elif entry and entry.state == StatusState.IDLE:
             entry.state = StatusState.READY
             logger.debug("pid=%d double-clicked while idle, now ready", session.pid)
             self._refresh_ui()
@@ -559,7 +566,7 @@ class AppController:
             logger.info("pid=%d unhidden via tray menu", pid)
             self._root.after(0, self._refresh_ui)
 
-    def _get_hidden_sessions(self) -> list[tuple[str, object]]:
+    def _get_hidden_sessions(self) -> list[tuple[str, Callable]]:
         """Return (display_name, unhide_callback) for each hidden session."""
         result = []
         for entry in list(self._sessions.values()):
@@ -598,7 +605,16 @@ class AppController:
             }
         try:
             config.STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            config.STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+            data = json.dumps(state, indent=2)
+            fd, tmp_path = tempfile.mkstemp(dir=str(config.STATE_FILE.parent), suffix=".tmp")
+            try:
+                with open(fd, "w", encoding="utf-8") as fh:
+                    fh.write(data)
+                    fh.write("\n")
+                Path(tmp_path).replace(config.STATE_FILE)
+            except BaseException:
+                Path(tmp_path).unlink(missing_ok=True)
+                raise
         except OSError as exc:
             logger.debug("failed to save session state error=%s", exc)
 
@@ -648,7 +664,10 @@ class AppController:
         self._root.quit()
         logger.info("restarting dashboard")
         args = build_restart_args()
-        os.execv(sys.executable, args)
+        try:
+            os.execv(sys.executable, args)
+        except OSError:
+            logger.exception("failed to restart via execv")
 
     def _quit(self):
         self._save_window_position()
