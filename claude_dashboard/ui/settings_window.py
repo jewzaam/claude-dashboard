@@ -121,13 +121,6 @@ class SettingsWindow:
             row,
         )
         row = self._add_color_field(
-            frame,
-            f"{settings.emoji_unknown} Unknown",
-            "color_unknown",
-            settings.color_unknown,
-            row,
-        )
-        row = self._add_color_field(
             frame, "\u2691 Flagged", "color_flagged", settings.color_flagged, row
         )
         row = self._add_color_field(frame, "Background", "window_bg", settings.window_bg, row)

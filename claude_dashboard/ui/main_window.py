@@ -255,8 +255,7 @@ class MainWindow:
             StatusState.IDLE: self._settings.color_idle,
             StatusState.AWAITING_INPUT: self._settings.color_awaiting_input,
             StatusState.PERMISSION_REQUIRED: self._settings.color_permission_required,
-            StatusState.UNKNOWN: self._settings.color_unknown,
-        }.get(state, self._settings.color_unknown)
+        }.get(state, self._settings.color_idle)
 
     def _emoji_for_state(self, state: StatusState) -> str:
         return {
@@ -265,8 +264,7 @@ class MainWindow:
             StatusState.IDLE: self._settings.emoji_idle,
             StatusState.AWAITING_INPUT: self._settings.emoji_awaiting_input,
             StatusState.PERMISSION_REQUIRED: self._settings.emoji_permission_required,
-            StatusState.UNKNOWN: self._settings.emoji_unknown,
-        }.get(state, self._settings.emoji_unknown)
+        }.get(state, self._settings.emoji_idle)
 
     def _container_label(self, container: ContainerInfo | None) -> str:
         if not container or container.container_type == ContainerType.UNKNOWN:

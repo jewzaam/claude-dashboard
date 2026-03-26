@@ -39,7 +39,6 @@ _STATE_PRIORITY = {
     StatusState.WORKING: 2,
     StatusState.READY: 3,
     StatusState.IDLE: 4,
-    StatusState.UNKNOWN: 5,
 }
 
 _DEBOUNCE_MS = 300  # Debounce window for state display updates (FR-043)
@@ -74,7 +73,7 @@ class _SessionEntry:
     def __init__(self, session: SessionInfo):
         self.session = session
         self.container: ContainerInfo | None = None
-        self.state: StatusState = StatusState.UNKNOWN
+        self.state: StatusState = StatusState.IDLE
         self.hidden: bool = False
         self.branch: str = ""
         self.flagged: bool = False
@@ -213,10 +212,7 @@ class AppController:
 
     def _add_session(self, session: SessionInfo):
         entry = _SessionEntry(session)
-        # Sessions found after first tick default to IDLE (new session, not yet working).
-        # Sessions found on first tick stay UNKNOWN (dashboard started late, state unknown).
-        if self._first_tick_done:
-            entry.state = StatusState.IDLE
+        # All new sessions start as IDLE until a hook event updates them.
         entry.container = detect_container(session.pid)
         entry.container = find_window_for_session(session.cwd, entry.container)
         entry.branch = detect_branch(session.cwd)
@@ -474,7 +470,7 @@ class AppController:
     def _on_row_double_click(self, session: SessionInfo):
         """Double-click an Idle/Unknown session to mark it Ready (deferred attention)."""
         entry = self._sessions.get(session.pid)
-        if entry and entry.state in (StatusState.IDLE, StatusState.UNKNOWN):
+        if entry and entry.state == StatusState.IDLE:
             entry.state = StatusState.READY
             logger.debug("pid=%d double-clicked while idle, now ready", session.pid)
             self._refresh_ui()

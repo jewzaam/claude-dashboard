@@ -35,7 +35,6 @@ class StatusState(Enum):
     IDLE = "idle"
     AWAITING_INPUT = "awaiting_input"
     PERMISSION_REQUIRED = "permission_required"
-    UNKNOWN = "unknown"
 
 
 # UI defaults
@@ -49,7 +48,6 @@ DEFAULT_EMOJI_READY = "\u23f8\ufe0f"  # ⏸️ (same icon as idle, color disting
 DEFAULT_EMOJI_IDLE = "\u23f8\ufe0f"  # ⏸️
 DEFAULT_EMOJI_AWAITING_INPUT = "\u2753"  # ❓
 DEFAULT_EMOJI_PERMISSION_REQUIRED = "\u26a0\ufe0f"  # ⚠️
-DEFAULT_EMOJI_UNKNOWN = "\U0001f937"  # 🤷
 
 # Status colors (row background)
 DEFAULT_COLOR_WORKING = "#5a5a5a"
@@ -57,7 +55,6 @@ DEFAULT_COLOR_READY = "#047857"
 DEFAULT_COLOR_IDLE = "#2a2a2a"
 DEFAULT_COLOR_AWAITING_INPUT = "#fbbf24"
 DEFAULT_COLOR_PERMISSION_REQUIRED = "#d97706"
-DEFAULT_COLOR_UNKNOWN = "#2a2a2a"
 DEFAULT_COLOR_FLAGGED = "#7c3aed"
 
 # General UI
