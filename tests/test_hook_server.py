@@ -15,7 +15,7 @@ class TestHookServer:
         received: list[tuple[str, str, StatusState]] = []
         event = threading.Event()
 
-        def on_hook(session_id, hook_event, state, cwd=""):
+        def on_hook(session_id, hook_event, state, cwd="", agent_id="", agent_type=""):
             received.append((session_id, hook_event, state))
             event.set()
 
@@ -44,7 +44,7 @@ class TestHookServer:
             with urllib.request.urlopen(req, timeout=5) as resp:
                 assert resp.status == 200
 
-            event.wait(timeout=2)
+            assert event.wait(timeout=2), "Callback did not fire within 2s"
             assert len(received) == 1
             assert received[0] == ("test-session-123", "Stop", StatusState.IDLE)
         finally:
@@ -55,7 +55,7 @@ class TestHookServer:
         received: list[tuple[str, str, StatusState]] = []
         event = threading.Event()
 
-        def on_hook(session_id, hook_event, state, cwd=""):
+        def on_hook(session_id, hook_event, state, cwd="", agent_id="", agent_type=""):
             received.append((session_id, hook_event, state))
             event.set()
 
@@ -85,7 +85,7 @@ class TestHookServer:
             with urllib.request.urlopen(req, timeout=5):
                 pass
 
-            event.wait(timeout=2)
+            assert event.wait(timeout=2), "Callback did not fire within 2s"
             assert received[0][2] == StatusState.PERMISSION_REQUIRED
         finally:
             server.stop()
@@ -123,7 +123,7 @@ class TestHookServer:
             with urllib.request.urlopen(req, timeout=5):
                 pass
 
-            event.wait(timeout=2)
+            assert event.wait(timeout=2), "Callback did not fire within 2s"
             assert ended == ["ending-session"]
         finally:
             server.stop()
@@ -173,5 +173,129 @@ class TestHookServer:
                 assert False, "Expected HTTP error"
             except urllib.error.HTTPError as e:
                 assert e.code == 404
+        finally:
+            server.stop()
+
+    def test_agent_event_passes_agent_id(self):
+        """Hook event with agent_id passes it through the callback."""
+        received: list[tuple] = []
+        event = threading.Event()
+
+        def on_hook(session_id, hook_event, state, cwd="", agent_id="", agent_type=""):
+            received.append((session_id, hook_event, state, agent_id, agent_type))
+            event.set()
+
+        server = HookServer(
+            on_hook_event=on_hook,
+            on_session_end=lambda sid: None,
+            on_agent_stop=lambda sid, aid: None,
+            port=0,
+        )
+        server.start()
+
+        try:
+            payload = json.dumps(
+                {
+                    "session_id": "test-session",
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "Bash",
+                    "agent_id": "a41d1801a7ca",
+                    "agent_type": "general-purpose",
+                }
+            ).encode()
+
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{server.port}/hook",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5):
+                pass
+
+            assert event.wait(timeout=2), "Callback did not fire within 2s"
+            assert len(received) == 1
+            assert received[0][3] == "a41d1801a7ca"
+            assert received[0][4] == "general-purpose"
+        finally:
+            server.stop()
+
+    def test_agent_stop_fires_callback(self):
+        """SubagentStop fires the on_agent_stop callback."""
+        stopped: list[tuple] = []
+        event = threading.Event()
+
+        def on_stop(session_id, agent_id):
+            stopped.append((session_id, agent_id))
+            event.set()
+
+        server = HookServer(
+            on_hook_event=lambda *a, **kw: None,
+            on_session_end=lambda sid: None,
+            on_agent_stop=on_stop,
+            port=0,
+        )
+        server.start()
+
+        try:
+            payload = json.dumps(
+                {
+                    "session_id": "test-session",
+                    "hook_event_name": "SubagentStop",
+                    "agent_id": "a41d1801a7ca",
+                    "agent_type": "general-purpose",
+                }
+            ).encode()
+
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{server.port}/hook",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5):
+                pass
+
+            assert event.wait(timeout=2), "Callback did not fire within 2s"
+            assert stopped == [("test-session", "a41d1801a7ca")]
+        finally:
+            server.stop()
+
+    def test_main_event_has_empty_agent_id(self):
+        """Hook event without agent_id passes empty strings."""
+        received: list[tuple] = []
+        event = threading.Event()
+
+        def on_hook(session_id, hook_event, state, cwd="", agent_id="", agent_type=""):
+            received.append((agent_id, agent_type))
+            event.set()
+
+        server = HookServer(
+            on_hook_event=on_hook,
+            on_session_end=lambda sid: None,
+            on_agent_stop=lambda sid, aid: None,
+            port=0,
+        )
+        server.start()
+
+        try:
+            payload = json.dumps(
+                {
+                    "session_id": "test-session",
+                    "hook_event_name": "Stop",
+                }
+            ).encode()
+
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{server.port}/hook",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=5):
+                pass
+
+            assert event.wait(timeout=2), "Callback did not fire within 2s"
+            assert received[0] == ("", "")
         finally:
             server.stop()

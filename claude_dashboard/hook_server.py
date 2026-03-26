@@ -11,6 +11,10 @@ from claude_dashboard.config import StatusState
 
 logger = logging.getLogger(__name__)
 
+
+# Callback: (session_id, event, state, cwd, agent_id, agent_type) -> None
+_HookEventCallback = Callable[[str, str, StatusState, str, str, str], None]
+
 _MAX_PAYLOAD_BYTES = 65536  # 64 KB — hook payloads are small JSON
 
 # Event → state mapping
@@ -72,23 +76,51 @@ class _HookHandler(BaseHTTPRequestHandler):
         event = body.get("hook_event_name", "")
         tool_name = body.get("tool_name", "")
         cwd = body.get("cwd", "")
+        agent_id = body.get("agent_id", "")
+        agent_type = body.get("agent_type", "")
 
         state = map_event_to_state(event, tool_name=tool_name)
         mapped = state.value if state else "ignored"
         logger.debug(
-            "event=%s tool=%s mapped=%s session=%s",
+            "event=%s tool=%s mapped=%s session=%s agent=%s",
             event,
             tool_name or "-",
             mapped,
             session_id[:8] if session_id else "-",
+            agent_id[:12] if agent_id else "-",
         )
 
-        if state is not None and session_id:
-            self.server.on_hook_event(session_id, event, state, cwd)  # type: ignore[attr-defined]
+        try:
+            if state is not None and session_id:
+                self.server.on_hook_event(  # type: ignore[attr-defined]
+                    session_id,
+                    event,
+                    state,
+                    cwd,
+                    agent_id=agent_id,
+                    agent_type=agent_type,
+                )
+            elif state is None and agent_id and event != "SubagentStop" and session_id:
+                # Agent event with no mapped state (e.g. SubagentStart).
+                # Pass through as WORKING so the agent gets registered (FR-036).
+                self.server.on_hook_event(  # type: ignore[attr-defined]
+                    session_id,
+                    event,
+                    StatusState.WORKING,
+                    cwd,
+                    agent_id=agent_id,
+                    agent_type=agent_type,
+                )
 
-        # SessionEnd — signal removal
-        if event == "SessionEnd" and session_id:
-            self.server.on_session_end(session_id)  # type: ignore[attr-defined]
+            # SubagentStop — signal agent removal
+            if event == "SubagentStop" and session_id and agent_id:
+                self.server.on_agent_stop(session_id, agent_id)  # type: ignore[attr-defined]
+
+            # SessionEnd — signal removal
+            if event == "SessionEnd" and session_id:
+                self.server.on_session_end(session_id)  # type: ignore[attr-defined]
+        except Exception:
+            logger.exception("callback error processing event=%s", event)
 
         self.send_response(200)
         self.end_headers()
@@ -105,13 +137,15 @@ class HookServer:
     def __init__(
         self,
         *,
-        on_hook_event: Callable[[str, str, StatusState, str], None],
+        on_hook_event: _HookEventCallback,
         on_session_end: Callable[[str], None],
+        on_agent_stop: Callable[[str, str], None] = lambda sid, aid: None,
         port: int = 17384,
     ):
         self._server = HTTPServer(("127.0.0.1", port), _HookHandler)
         self._server.on_hook_event = on_hook_event  # type: ignore[attr-defined]
         self._server.on_session_end = on_session_end  # type: ignore[attr-defined]
+        self._server.on_agent_stop = on_agent_stop  # type: ignore[attr-defined]
         self._port = self._server.server_address[1]
         self._thread: Thread | None = None
 
@@ -129,4 +163,5 @@ class HookServer:
         """Shut down the server (safe to call multiple times)."""
         if self._thread and self._thread.is_alive():
             self._server.shutdown()
+            self._thread.join(timeout=1.0)
             logger.info("hook server stopped")

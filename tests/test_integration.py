@@ -27,19 +27,28 @@ class TestStateTransitions:
     def _make_server(self):
         states: dict[str, StatusState] = {}
         ended: list[str] = []
+        agent_stopped: list[tuple[str, str]] = []
 
-        def on_hook(session_id, event, state, cwd=""):
+        def on_hook(session_id, event, state, cwd="", agent_id="", agent_type=""):
             states[session_id] = state
 
         def on_end(session_id):
             ended.append(session_id)
 
-        server = HookServer(on_hook_event=on_hook, on_session_end=on_end, port=0)
-        return server, states, ended
+        def on_agent_stop(session_id, agent_id):
+            agent_stopped.append((session_id, agent_id))
+
+        server = HookServer(
+            on_hook_event=on_hook,
+            on_session_end=on_end,
+            on_agent_stop=on_agent_stop,
+            port=0,
+        )
+        return server, states, ended, agent_stopped
 
     def test_full_tool_lifecycle(self):
         """user prompt → tool use → permission → approval → stop → idle."""
-        server, states, _ = self._make_server()
+        server, states, _, _ = self._make_server()
         server.start()
         sid = "lifecycle-test"
 
@@ -78,7 +87,7 @@ class TestStateTransitions:
 
     def test_ask_user_question(self):
         """AskUserQuestion → AWAITING_INPUT, then answer → WORKING → IDLE."""
-        server, states, _ = self._make_server()
+        server, states, _, _ = self._make_server()
         server.start()
         sid = "question-test"
 
@@ -105,7 +114,7 @@ class TestStateTransitions:
 
     def test_session_end(self):
         """SessionEnd fires the on_session_end callback."""
-        server, states, ended = self._make_server()
+        server, states, ended, _ = self._make_server()
         server.start()
         sid = "ending-test"
 
@@ -120,7 +129,7 @@ class TestStateTransitions:
 
     def test_multiple_sessions_independent(self):
         """Two sessions maintain independent state."""
-        server, states, _ = self._make_server()
+        server, states, _, _ = self._make_server()
         server.start()
 
         try:
@@ -141,7 +150,7 @@ class TestStateTransitions:
 
     def test_rapid_tool_calls_stay_working(self):
         """Multiple auto-approved tools in sequence → never flickers to permission."""
-        server, states, _ = self._make_server()
+        server, states, _, _ = self._make_server()
         server.start()
         sid = "rapid-test"
         all_states: list[StatusState] = []
@@ -149,9 +158,9 @@ class TestStateTransitions:
         # Override to capture every state
         original = server._server.on_hook_event  # type: ignore[attr-defined]
 
-        def tracking_hook(session_id, event, state, cwd=""):
+        def tracking_hook(session_id, event, state, cwd="", agent_id="", agent_type=""):
             all_states.append(state)
-            original(session_id, event, state, cwd)
+            original(session_id, event, state, cwd, agent_id=agent_id, agent_type=agent_type)
 
         server._server.on_hook_event = tracking_hook  # type: ignore[attr-defined]
 
@@ -168,5 +177,195 @@ class TestStateTransitions:
             # Should never see PERMISSION_REQUIRED
             assert StatusState.PERMISSION_REQUIRED not in all_states
             assert all_states[-1] == StatusState.IDLE
+        finally:
+            server.stop()
+
+    def test_agent_lifecycle(self):
+        """Agent tool use → SubagentStop fires agent_stop callback."""
+        server, states, _, agent_stopped = self._make_server()
+        server.start()
+        sid = "agent-test"
+
+        try:
+            # Main starts
+            _post_hook(server.port, {"session_id": sid, "hook_event_name": "UserPromptSubmit"})
+            assert states[sid] == StatusState.WORKING
+
+            # Agent starts working (PreToolUse with agent_id)
+            _post_hook(
+                server.port,
+                {
+                    "session_id": sid,
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "Bash",
+                    "agent_id": "agent-1",
+                    "agent_type": "general-purpose",
+                },
+            )
+            assert states[sid] == StatusState.WORKING
+
+            # Main stops (idle) but agent is still working
+            _post_hook(server.port, {"session_id": sid, "hook_event_name": "Stop"})
+            assert states[sid] == StatusState.IDLE
+
+            # Agent finishes
+            _post_hook(
+                server.port,
+                {
+                    "session_id": sid,
+                    "hook_event_name": "SubagentStop",
+                    "agent_id": "agent-1",
+                },
+            )
+            assert agent_stopped == [(sid, "agent-1")]
+        finally:
+            server.stop()
+
+    def test_agent_permission_request(self):
+        """Agent PermissionRequest carries agent_id through callback."""
+        server, states, _, _ = self._make_server()
+        server.start()
+        sid = "agent-perm-test"
+
+        try:
+            _post_hook(
+                server.port,
+                {
+                    "session_id": sid,
+                    "hook_event_name": "PermissionRequest",
+                    "tool_name": "Read",
+                    "agent_id": "agent-2",
+                    "agent_type": "general-purpose",
+                },
+            )
+            assert states[sid] == StatusState.PERMISSION_REQUIRED
+        finally:
+            server.stop()
+
+    def test_subagent_start_registers_agent(self):
+        """SubagentStart with agent_id registers the agent via passthrough."""
+        server, states, _, _ = self._make_server()
+        server.start()
+        sid = "start-reg-test"
+
+        try:
+            # SubagentStart has no mapped state but carries agent_id —
+            # hook server passes it through as WORKING to register the agent.
+            _post_hook(
+                server.port,
+                {
+                    "session_id": sid,
+                    "hook_event_name": "SubagentStart",
+                    "agent_id": "agent-early",
+                    "agent_type": "general-purpose",
+                },
+            )
+            # SubagentStart is unmapped → passthrough injects WORKING
+            assert states[sid] == StatusState.WORKING
+        finally:
+            server.stop()
+
+    def test_staggered_agent_completion(self):
+        """Multiple agents complete at different times — count decrements correctly."""
+        server, states, _, agent_stopped = self._make_server()
+        server.start()
+        sid = "stagger-test"
+
+        try:
+            # Main starts
+            _post_hook(server.port, {"session_id": sid, "hook_event_name": "UserPromptSubmit"})
+
+            # 3 agents register via PreToolUse
+            for aid in ["a1", "a2", "a3"]:
+                _post_hook(
+                    server.port,
+                    {
+                        "session_id": sid,
+                        "hook_event_name": "PreToolUse",
+                        "tool_name": "Bash",
+                        "agent_id": aid,
+                        "agent_type": "general-purpose",
+                    },
+                )
+
+            # Main stops
+            _post_hook(server.port, {"session_id": sid, "hook_event_name": "Stop"})
+
+            # Agents complete one at a time (out of order)
+            _post_hook(
+                server.port,
+                {
+                    "session_id": sid,
+                    "hook_event_name": "SubagentStop",
+                    "agent_id": "a2",
+                },
+            )
+            assert ("stagger-test", "a2") in agent_stopped
+
+            _post_hook(
+                server.port,
+                {
+                    "session_id": sid,
+                    "hook_event_name": "SubagentStop",
+                    "agent_id": "a1",
+                },
+            )
+            assert ("stagger-test", "a1") in agent_stopped
+
+            _post_hook(
+                server.port,
+                {
+                    "session_id": sid,
+                    "hook_event_name": "SubagentStop",
+                    "agent_id": "a3",
+                },
+            )
+            assert len(agent_stopped) == 3
+        finally:
+            server.stop()
+
+    def test_user_prompt_does_not_clear_agents(self):
+        """UserPromptSubmit must NOT clear active agents (auto-wake indistinguishable)."""
+        server, states, _, _ = self._make_server()
+        server.start()
+        sid = "no-clear-test"
+
+        try:
+            # Agent registers
+            _post_hook(
+                server.port,
+                {
+                    "session_id": sid,
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "Bash",
+                    "agent_id": "agent-persist",
+                    "agent_type": "general-purpose",
+                },
+            )
+            assert states[sid] == StatusState.WORKING
+
+            # Auto-wake UserPromptSubmit fires (no agent_id)
+            _post_hook(
+                server.port,
+                {
+                    "session_id": sid,
+                    "hook_event_name": "UserPromptSubmit",
+                },
+            )
+            # Agent state still tracked — callback still receives WORKING
+            assert states[sid] == StatusState.WORKING
+
+            # Agent still alive — subsequent event updates it
+            _post_hook(
+                server.port,
+                {
+                    "session_id": sid,
+                    "hook_event_name": "PostToolUse",
+                    "tool_name": "Bash",
+                    "agent_id": "agent-persist",
+                    "agent_type": "general-purpose",
+                },
+            )
+            assert states[sid] == StatusState.WORKING
         finally:
             server.stop()
