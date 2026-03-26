@@ -172,6 +172,31 @@ When Claude crashes, no `SessionEnd` hook fires. The discovery poll detects the 
 
 When a session is resumed, hooks may fire with the original session ID rather than the new one. The dashboard matches by CWD as a fallback.
 
+## UI Interactions
+
+### Row Context Menu (Right-Click)
+
+Right-clicking a session row opens a context menu with:
+- **Hide** — hides the session from the dashboard (transient, not persisted)
+- **Clear agents** — visible only if the session has active agents; clears all tracked agents
+- **Flag** / **Unflag** — toggles the flag state (sticky, survives restart via state persistence)
+
+The context menu auto-dismisses after 3 seconds (`_CONTEXT_MENU_TIMEOUT_MS`).
+
+### Flag Indicator
+
+Flagged sessions display a colored dot (⬤) to the left of the container label. The dot color is configurable (`color_flagged` in settings). Flag state is sticky — only middle-click or the context menu toggles it; left-click does not clear the flag.
+
+Flag state persists across dashboard restarts via `~/.claude/claude-dashboard/session-state.json`.
+
+### Tray Icon Menu
+
+The tray icon right-click menu is fully dynamic:
+- **Show** / **Hide** — toggles dashboard visibility
+- **Unhide: <session>** — one item per hidden session (flat list, no submenus due to pystray limitations on Linux)
+- **Settings** — opens settings dialog
+- **Quit** — exits the dashboard
+
 ## Colors and Emojis
 
-All colors and emojis are configurable in Settings (right-click → Settings).
+All colors and emojis are configurable in Settings (accessible via tray icon right-click → Settings).
