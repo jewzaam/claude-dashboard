@@ -686,11 +686,15 @@ class AppController:
         """Snapshot mutable session state to disk."""
         state = {}
         for entry in self._sessions.values():
+            agents = {
+                aid: {"state": a.state.value, "agent_type": a.agent_type}
+                for aid, a in entry.agents.items()
+            }
             state[entry.session.cwd] = {
                 "state": entry.state.value,
                 "hidden": entry.hidden,
                 "flagged": entry.flagged,
-                "agent_count": len(entry.agents),
+                "agents": agents,
             }
         try:
             config.STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -720,6 +724,20 @@ class AppController:
                 entry.state = StatusState(state_val)
             except ValueError:
                 pass
+        saved_agents = saved.get("agents")
+        if isinstance(saved_agents, dict):
+            for aid, adata in saved_agents.items():
+                if not isinstance(adata, dict):
+                    continue
+                try:
+                    agent_state = StatusState(adata["state"])
+                except (KeyError, ValueError):
+                    continue
+                entry.agents[aid] = _AgentEntry(
+                    agent_id=aid,
+                    state=agent_state,
+                    agent_type=adata.get("agent_type", ""),
+                )
 
     # ------------------------------------------------------------------
     # Window management
