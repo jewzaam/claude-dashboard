@@ -48,6 +48,12 @@ _STATE_PRIORITY = {
 _DEBOUNCE_MS = 300  # Debounce window for state display updates (FR-043)
 
 
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert '#rrggbb' hex string to (r, g, b) tuple."""
+    h = hex_color.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
 class _AgentEntry:
     """Tracks an agent within a session."""
 
@@ -152,8 +158,7 @@ class AppController:
 
         # Tray
         self._tray_icon = create_tray_icon(
-            on_show=lambda icon, item: self._root.after(0, self._show_window),
-            on_hide=lambda icon, item: self._root.after(0, self._hide_window),
+            on_toggle=lambda icon, item: self._root.after(0, self._toggle_window),
             on_settings=lambda icon, item: self._root.after(0, self._open_settings),
             on_restart=lambda icon, item: self._root.after(0, self._restart),
             on_quit=lambda icon, item: self._root.after(0, self._quit),
@@ -710,6 +715,12 @@ class AppController:
     # Window management
     # ------------------------------------------------------------------
 
+    def _toggle_window(self):
+        if self._main_window.toplevel.winfo_viewable():
+            self._main_window.hide()
+        else:
+            self._main_window.show()
+
     def _show_window(self):
         self._main_window.show()
 
@@ -792,12 +803,14 @@ class AppController:
         return best
 
     def _tray_color_for_state(self, state: StatusState | None) -> tuple[int, int, int]:
-        if state == StatusState.PERMISSION_REQUIRED:
-            return (255, 165, 0)
-        if state == StatusState.AWAITING_INPUT:
-            return (50, 205, 50)
-        if state == StatusState.READY:
-            return (26, 92, 58)
-        if state == StatusState.WORKING:
-            return (100, 149, 237)
-        return (128, 128, 128)
+        color_map = {
+            StatusState.PERMISSION_REQUIRED: self._settings.color_permission_required,
+            StatusState.AWAITING_INPUT: self._settings.color_awaiting_input,
+            StatusState.READY: self._settings.color_ready,
+            StatusState.WORKING: self._settings.color_working,
+            StatusState.IDLE: self._settings.color_idle,
+        }
+        hex_color = (
+            color_map.get(state, self._settings.color_idle) if state else self._settings.color_idle
+        )
+        return _hex_to_rgb(hex_color)

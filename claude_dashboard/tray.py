@@ -14,91 +14,32 @@ _DEFAULT_COLOR = (128, 128, 128)  # Gray
 
 
 def generate_icon_image(*, color: tuple[int, int, int] = _DEFAULT_COLOR) -> Image.Image:
-    """Generate a PIL Image for the tray icon — robot face with status badge.
+    """Generate a PIL Image for the tray icon — off-center eye.
 
-    Draws a vector robot face that fills the icon, with a small colored
-    dot in the bottom-right corner indicating session state.
+    An asymmetric eye shape looking slightly to the right. Solid state
+    color fill, transparent background. The off-center pupil gives it
+    personality — 'keeping an eye on your sessions'.
     """
     size = TRAY_ICON_SIZE[0]
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
 
-    # --- Robot head (rounded rectangle fills most of the icon) ---
-    head_margin = 4
-    head_top = 8
-    head_bottom = size - 8
-    head_left = head_margin
-    head_right = size - head_margin
-    head_radius = 12
-    head_color = (180, 190, 205)  # Light steel blue-gray
+    cx, cy = size // 2, size // 2
+    margin = 3
 
-    draw.rounded_rectangle(
-        [head_left, head_top, head_right, head_bottom],
-        radius=head_radius,
-        fill=head_color,
-    )
-
-    # --- Antenna ---
-    antenna_x = size // 2
-    antenna_base = head_top
-    antenna_tip = 2
-    draw.line([(antenna_x, antenna_base), (antenna_x, antenna_tip)], fill=(140, 150, 165), width=3)
+    # --- Outer eye (filled circle, nearly full icon) ---
     draw.ellipse(
-        [antenna_x - 4, antenna_tip - 3, antenna_x + 4, antenna_tip + 5],
-        fill=(100, 180, 255),
-    )
-
-    # --- Eyes (rounded rectangles) ---
-    eye_top = head_top + 14
-    eye_bottom = eye_top + 14
-    eye_radius = 4
-    eye_color = (50, 60, 80)
-
-    # Left eye
-    draw.rounded_rectangle(
-        [head_left + 10, eye_top, head_left + 24, eye_bottom],
-        radius=eye_radius,
-        fill=eye_color,
-    )
-    # Right eye
-    draw.rounded_rectangle(
-        [head_right - 24, eye_top, head_right - 10, eye_bottom],
-        radius=eye_radius,
-        fill=eye_color,
-    )
-
-    # --- Mouth (horizontal line with rounded ends) ---
-    mouth_y = head_bottom - 16
-    mouth_left = head_left + 14
-    mouth_right = head_right - 14
-    draw.rounded_rectangle(
-        [mouth_left, mouth_y, mouth_right, mouth_y + 6],
-        radius=3,
-        fill=eye_color,
-    )
-
-    # --- Status badge (colored dot, bottom-right corner) ---
-    badge_radius = 9
-    badge_cx = size - badge_radius - 1
-    badge_cy = size - badge_radius - 1
-    # White outline for contrast
-    draw.ellipse(
-        [
-            badge_cx - badge_radius - 2,
-            badge_cy - badge_radius - 2,
-            badge_cx + badge_radius + 2,
-            badge_cy + badge_radius + 2,
-        ],
-        fill=(255, 255, 255),
-    )
-    draw.ellipse(
-        [
-            badge_cx - badge_radius,
-            badge_cy - badge_radius,
-            badge_cx + badge_radius,
-            badge_cy + badge_radius,
-        ],
+        [margin, margin, size - margin, size - margin],
         fill=color,
+    )
+
+    # --- Iris/pupil (dark circle, offset right and slightly up) ---
+    pupil_r = 10
+    pupil_cx = cx + 6
+    pupil_cy = cy - 2
+    draw.ellipse(
+        [pupil_cx - pupil_r, pupil_cy - pupil_r, pupil_cx + pupil_r, pupil_cy + pupil_r],
+        fill=(20, 20, 20),
     )
 
     return image
@@ -106,8 +47,7 @@ def generate_icon_image(*, color: tuple[int, int, int] = _DEFAULT_COLOR) -> Imag
 
 def create_tray_icon(
     *,
-    on_show: Callable,
-    on_hide: Callable,
+    on_toggle: Callable,
     on_settings: Callable,
     on_restart: Callable,
     on_quit: Callable,
@@ -115,6 +55,7 @@ def create_tray_icon(
 ) -> Any:
     """Create and return a pystray Icon (not yet running).
 
+    on_toggle is called on left-click to toggle dashboard visibility.
     get_hidden_sessions returns a list of (display_name, unhide_callback) tuples.
     """
     import pystray
@@ -122,9 +63,8 @@ def create_tray_icon(
     icon_image = generate_icon_image()
 
     def _build_menu():
-        items = [
-            pystray.MenuItem("Show", on_show, default=True),
-            pystray.MenuItem("Hide", on_hide),
+        items: list = [
+            pystray.MenuItem("Toggle", on_toggle, default=True),
         ]
         hidden = get_hidden_sessions()
         if hidden:
