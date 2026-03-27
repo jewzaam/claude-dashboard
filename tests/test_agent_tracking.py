@@ -140,6 +140,137 @@ class TestSessionEntryAgentLifecycle:
         assert len(entry.agents) == 2
 
 
+class TestAgentStatePersistence:
+    """Test agent state serialization/deserialization for restart continuity."""
+
+    def _serialize_entry(self, entry):
+        """Replicate controller._save_session_state serialization for one entry."""
+        agents = {
+            aid: {"state": a.state.value, "agent_type": a.agent_type}
+            for aid, a in entry.agents.items()
+        }
+        return {
+            "state": entry.state.value,
+            "hidden": entry.hidden,
+            "flagged": entry.flagged,
+            "agents": agents,
+        }
+
+    def _restore_agents(self, entry, saved):
+        """Replicate controller._apply_saved_state agent restoration."""
+        saved_agents = saved.get("agents")
+        if isinstance(saved_agents, dict):
+            for aid, adata in saved_agents.items():
+                if not isinstance(adata, dict):
+                    continue
+                try:
+                    agent_state = StatusState(adata["state"])
+                except (KeyError, ValueError):
+                    continue
+                entry.agents[aid] = _AgentEntry(
+                    agent_id=aid,
+                    state=agent_state,
+                    agent_type=adata.get("agent_type", ""),
+                )
+
+    def test_roundtrip_single_agent(self):
+        entry = _SessionEntry(_make_session())
+        entry.state = StatusState.IDLE
+        entry.agents["a1"] = _AgentEntry(
+            agent_id="a1", state=StatusState.WORKING, agent_type="general-purpose"
+        )
+        saved = self._serialize_entry(entry)
+
+        restored = _SessionEntry(_make_session())
+        self._restore_agents(restored, saved)
+        assert len(restored.agents) == 1
+        assert restored.agents["a1"].state == StatusState.WORKING
+        assert restored.agents["a1"].agent_type == "general-purpose"
+
+    def test_roundtrip_multiple_agents(self):
+        entry = _SessionEntry(_make_session())
+        entry.agents["a1"] = _AgentEntry(agent_id="a1", state=StatusState.WORKING)
+        entry.agents["a2"] = _AgentEntry(
+            agent_id="a2", state=StatusState.PERMISSION_REQUIRED, agent_type="general-purpose"
+        )
+        saved = self._serialize_entry(entry)
+
+        restored = _SessionEntry(_make_session())
+        self._restore_agents(restored, saved)
+        assert len(restored.agents) == 2
+        assert restored.agents["a1"].state == StatusState.WORKING
+        assert restored.agents["a2"].state == StatusState.PERMISSION_REQUIRED
+
+    def test_roundtrip_preserves_effective_state(self):
+        entry = _SessionEntry(_make_session())
+        entry.state = StatusState.IDLE
+        entry.agents["a1"] = _AgentEntry(agent_id="a1", state=StatusState.PERMISSION_REQUIRED)
+        assert entry.effective_state == StatusState.PERMISSION_REQUIRED
+        saved = self._serialize_entry(entry)
+
+        restored = _SessionEntry(_make_session())
+        restored.state = StatusState(saved["state"])
+        self._restore_agents(restored, saved)
+        assert restored.effective_state == StatusState.PERMISSION_REQUIRED
+
+    def test_no_agents_key_restores_empty(self):
+        saved = {"state": "idle", "hidden": False, "flagged": False}
+        restored = _SessionEntry(_make_session())
+        self._restore_agents(restored, saved)
+        assert len(restored.agents) == 0
+
+    def test_empty_agents_dict_restores_empty(self):
+        saved = {"state": "idle", "agents": {}}
+        restored = _SessionEntry(_make_session())
+        self._restore_agents(restored, saved)
+        assert len(restored.agents) == 0
+
+    def test_invalid_agent_state_skipped(self):
+        saved = {"agents": {"a1": {"state": "bogus_state", "agent_type": ""}}}
+        restored = _SessionEntry(_make_session())
+        self._restore_agents(restored, saved)
+        assert len(restored.agents) == 0
+
+    def test_missing_state_key_skipped(self):
+        saved = {"agents": {"a1": {"agent_type": "general-purpose"}}}
+        restored = _SessionEntry(_make_session())
+        self._restore_agents(restored, saved)
+        assert len(restored.agents) == 0
+
+    def test_non_dict_agent_data_skipped(self):
+        saved = {"agents": {"a1": "not-a-dict"}}
+        restored = _SessionEntry(_make_session())
+        self._restore_agents(restored, saved)
+        assert len(restored.agents) == 0
+
+    def test_missing_agent_type_defaults_empty(self):
+        saved = {"agents": {"a1": {"state": "working"}}}
+        restored = _SessionEntry(_make_session())
+        self._restore_agents(restored, saved)
+        assert len(restored.agents) == 1
+        assert restored.agents["a1"].agent_type == ""
+
+    def test_json_roundtrip(self):
+        """Full JSON serialize/deserialize roundtrip."""
+        import json
+
+        entry = _SessionEntry(_make_session())
+        entry.state = StatusState.IDLE
+        entry.agents["long-agent-id-abc123"] = _AgentEntry(
+            agent_id="long-agent-id-abc123",
+            state=StatusState.AWAITING_INPUT,
+            agent_type="general-purpose",
+        )
+        saved = self._serialize_entry(entry)
+        json_str = json.dumps(saved)
+        loaded = json.loads(json_str)
+
+        restored = _SessionEntry(_make_session())
+        self._restore_agents(restored, loaded)
+        assert restored.agents["long-agent-id-abc123"].state == StatusState.AWAITING_INPUT
+        assert restored.agents["long-agent-id-abc123"].agent_type == "general-purpose"
+
+
 class TestStatePriority:
     """Test module-level _STATE_PRIORITY constant."""
 
