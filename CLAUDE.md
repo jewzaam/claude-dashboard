@@ -8,8 +8,7 @@ Cross-platform Tkinter dashboard that monitors running Claude Code sessions. Sho
 make install-dev    # Install package + dev deps
 make install-hooks  # Merge hook config into ~/.claude/settings.json
 make check          # format-check, lint, typecheck, test, coverage
-make run            # Run (logs to ~/.claude/claude-dashboard/dashboard.log)
-make run DEBUG=1    # Run with debug logging
+make run            # Run with debug logging (rotated at 2 MB, 1 backup)
 python -m claude_dashboard                     # Run with console output
 python -m claude_dashboard --debug             # Run with debug logging to console
 python -m claude_dashboard --log-file <path>   # Redirect logs to file (append mode)
@@ -36,7 +35,8 @@ HTTP hooks are documented by Claude Code but don't work in practice (tested 2026
 | `claude_dashboard/hook_server.py` | HTTP server on port 17384, event→state mapping, SO_REUSEADDR/SO_REUSEPORT |
 | `claude_dashboard/controller.py` | Session lifecycle, hook wiring, UI coordination, session state persistence |
 | `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers |
-| `claude_dashboard/ui/main_window.py` | Dashboard window with session rows, row right-click context menu |
+| `claude_dashboard/file_utils.py` | Atomic JSON file writes (shared by settings + state persistence) |
+| `claude_dashboard/ui/main_window.py` | Dashboard window with session rows |
 | `claude_dashboard/ui/settings_window.py` | Modal settings editor |
 | `claude_dashboard/ui/color_picker.py` | Custom color picker with palette grid, hex entry, live preview |
 | `claude_dashboard/tray.py` | System tray icon, dynamic menu with unhide items |
@@ -65,6 +65,30 @@ HTTP hooks are documented by Claude Code but don't work in practice (tested 2026
 
 See `docs/state-transitions.md` for the full state machine diagram and gap analysis.
 
+## Design Decisions
+
+Decisions recorded here exist because they were non-obvious, caused confusion, or were independently re-proposed as "fixes" during review. They are intentional.
+
+### Agent lifecycle — no TTL or pruning
+
+Agents can run for arbitrarily long periods (hours). There is no reliable signal to distinguish "still working quietly" from "orphaned after interrupt". A TTL would kill legitimate long-running agents. The only known cause of orphaned agents is user interrupt (Ctrl+C) where `SubagentStop` doesn't fire — and the most common cleanup path (PID death removes the session + all agents) already handles this. The narrow gap (session alive, agent interrupted) is accepted until Claude Code provides a better signal. **Do not add agent TTL, pruning, or timeout-based cleanup.**
+
+### Agent permission debounce (5 seconds)
+
+Agent permission requests are debounced for 5 seconds before surfacing in the UI. Agents are typically run via skills that auto-resolve permission prompts, so most agent permission events are transient noise. If the permission is resolved within 5s, the user never sees it. If still pending after 5s, the UI updates. Main process permission requests are NOT debounced — those always need user action.
+
+### Text color — auto-contrast, not configurable
+
+Text color is computed per-row from the background color using W3C sRGB contrast ratios. The `text_color` setting field exists in the Settings dataclass for backward compat but is unused. Removing the setting from the UI was intentional — users pick status colors, text adapts automatically.
+
+### Platform detection — centralized in config.py
+
+`config.IS_WINDOWS` and `config.IS_LINUX` are the single source of truth. Do not add `platform.system()` or `sys.platform` checks in other modules — import from config instead.
+
+### Hook relay `--debug` flag
+
+The relay script always runs with `--debug` in hooks-settings.json, logging raw payloads to `~/.claude/claude-dashboard/logs/hook-payloads.jsonl`. This is safe because both the relay log and the dashboard log use `RotatingFileHandler` (2 MB, 1 backup).
+
 ## Docs
 
 ### Feature Specs (per-feature directories)
@@ -92,6 +116,8 @@ See `docs/state-transitions.md` for the full state machine diagram and gap analy
 - Read `~/.claude/ide/*.lock` files (contain auth tokens)
 - Use timeout-based state inference — hooks or nothing
 - Duplicate settings logic between init and apply paths
+- Add agent TTL, pruning, or timeout-based cleanup (see Design Decisions)
+- Add `platform.system()` / `sys.platform` checks outside config.py
 
 ## Active Technologies
 - Python 3.11+ + Tkinter, psutil, pystray, Pillow (003-agent-awareness)
@@ -106,8 +132,9 @@ See `docs/state-transitions.md` for the full state machine diagram and gap analy
 - Clean shutdown with `SO_REUSEADDR`/`SO_REUSEPORT` on hook server socket
 
 ### UI Interactions
-- **Row context menu** (right-click): Hide, Clear agents (if present), Flag/Unflag
-- **Flag indicator**: Purple dot (⬤) left of container label. Sticky — only middle-click or context menu toggles
+- **Right-click menu**: Global show/hide session visibility toggles
+- **Middle-click**: Toggle flag on clicked row
+- **Flag indicator**: Purple dot (⬤) left of container label. Sticky — only middle-click toggles
 - **Tray menu**: Fully dynamic with "Unhide: <session>" items when sessions are hidden
 
 ### State Persistence
@@ -119,4 +146,5 @@ See `docs/state-transitions.md` for the full state machine diagram and gap analy
 - Dashboard tracks agents per session
 - Effective state is highest priority across main + all agents
 - Agent count indicator `(+N)` shown when agents active
-- "Clear agents" in row context menu when agents present
+- Agent state persisted across dashboard restarts
+- Agent permission requests debounced 5s before surfacing in UI

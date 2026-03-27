@@ -3,11 +3,11 @@
 
 import json
 import logging
-import tempfile
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 from claude_dashboard import config
+from claude_dashboard.file_utils import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -118,23 +118,7 @@ def save_settings(settings: Settings, *, path: Path | None = None) -> None:
     """Save settings to JSON file using atomic write (temp + rename)."""
     settings_path = path or config.SETTINGS_FILE
 
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-
-    data = json.dumps(asdict(settings), indent=2, ensure_ascii=False)
-
-    # Atomic write: write to temp file in same directory, then rename
     try:
-        fd, tmp_path = tempfile.mkstemp(
-            dir=str(settings_path.parent),
-            suffix=".tmp",
-        )
-        try:
-            with open(fd, "w", encoding="utf-8") as fh:
-                fh.write(data)
-                fh.write("\n")
-            Path(tmp_path).replace(settings_path)
-        except BaseException:
-            Path(tmp_path).unlink(missing_ok=True)
-            raise
+        atomic_write_json(data=asdict(settings), path=settings_path)
     except OSError as exc:
         logger.error("failed to save settings error=%s", exc)

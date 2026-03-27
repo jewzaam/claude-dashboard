@@ -5,12 +5,16 @@ import platform
 from enum import Enum
 from pathlib import Path
 
+# Platform detection — single source of truth for the entire codebase
+IS_WINDOWS = platform.system() == "Windows"
+IS_LINUX = platform.system() == "Linux"
+
 # Claude CLI paths
 CLAUDE_HOME = Path.home() / ".claude"
 SESSIONS_DIR = CLAUDE_HOME / "sessions"
 
 # Application settings path
-if platform.system() == "Windows":
+if IS_WINDOWS:
     _appdata = Path.home() / "AppData" / "Roaming"
     SETTINGS_DIR = _appdata / "claude-dashboard"
 else:

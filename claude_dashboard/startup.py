@@ -8,11 +8,9 @@ import sys
 from pathlib import Path
 
 from claude_dashboard import config
+from claude_dashboard.config import IS_LINUX, IS_WINDOWS
 
 logger = logging.getLogger(__name__)
-
-_IS_WINDOWS = sys.platform == "win32"
-_IS_LINUX = sys.platform == "linux"
 
 _REG_RUN_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _REG_VALUE_NAME = "ClaudeDashboard"
@@ -23,7 +21,7 @@ def _startup_cmd() -> str:
     """Build the command string for auto-start."""
     exe = Path(sys.executable)
     log_flag = f' --log-file "{config.LOG_FILE}"'
-    if _IS_WINDOWS:
+    if IS_WINDOWS:
         pythonw = exe.parent / "pythonw.exe"
         if not pythonw.exists():
             logger.warning(
@@ -39,11 +37,11 @@ def _desktop_file_path() -> Path:
     return Path.home() / ".config" / "autostart" / _DESKTOP_FILENAME
 
 
-def set_run_on_startup(enabled: bool) -> None:
+def set_run_on_startup(*, enabled: bool) -> None:
     """Write or remove the OS auto-start entry."""
-    if _IS_WINDOWS:
+    if IS_WINDOWS:
         _set_windows(enabled)
-    elif _IS_LINUX:
+    elif IS_LINUX:
         _set_linux(enabled)
     else:
         logger.warning("Auto-start not supported on platform=%s", sys.platform)
@@ -51,9 +49,9 @@ def set_run_on_startup(enabled: bool) -> None:
 
 def get_run_on_startup() -> bool:
     """Return True if the OS auto-start entry currently exists."""
-    if _IS_WINDOWS:
+    if IS_WINDOWS:
         return _get_windows()
-    if _IS_LINUX:
+    if IS_LINUX:
         return _get_linux()
     return False
 

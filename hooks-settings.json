@@ -1,37 +1,37 @@
 {
   "hooks": {
     "UserPromptSubmit": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py --debug"}]}
     ],
     "PreToolUse": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py --debug"}]}
     ],
     "PermissionRequest": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py --debug"}]}
     ],
     "PostToolUse": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py --debug"}]}
     ],
     "PostToolUseFailure": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py --debug"}]}
     ],
     "Stop": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py --debug"}]}
     ],
     "StopFailure": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py --debug"}]}
     ],
     "SessionEnd": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py --debug"}]}
     ],
     "Notification": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py --debug"}]}
     ],
     "SubagentStart": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py --debug"}]}
     ],
     "SubagentStop": [
-      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py"}]}
+      {"hooks": [{"type": "command", "command": "python3 ~/.claude/claude-dashboard/scripts/hook_relay.py --debug"}]}
     ]
   }
 }

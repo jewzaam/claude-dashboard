@@ -2,11 +2,11 @@
 """Modal settings editor dialog."""
 
 import logging
-import platform as _plat
 import tkinter as tk
 from dataclasses import asdict
 from typing import Callable
 
+from claude_dashboard.config import IS_WINDOWS
 from claude_dashboard.settings import Settings
 from claude_dashboard.ui.color_picker import ColorPickerDialog
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 _CHROME_BG = "#2a2a2a"
 _CHROME_FG = "#e0e0e0"
 _CHROME_HEADING_FG = "#aaaaaa"
-_FONT_FAMILY = "Segoe UI" if _plat.system() == "Windows" else "Noto Sans"
+_FONT_FAMILY = "Segoe UI" if IS_WINDOWS else "Noto Sans"
 _CHROME_FONT = (_FONT_FAMILY, 9)
 _CHROME_HEADING_FONT = (_FONT_FAMILY, 9, "bold")
 
