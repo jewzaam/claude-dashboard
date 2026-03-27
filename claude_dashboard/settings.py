@@ -29,6 +29,7 @@ class Settings:
     # Row dimensions
     row_height: int = config.DEFAULT_ROW_HEIGHT
     row_width: int = config.DEFAULT_ROW_WIDTH
+    font_size: int = config.DEFAULT_FONT_SIZE
 
     # Poll
     poll_interval_seconds: int = config.DEFAULT_POLL_INTERVAL_SECONDS
