@@ -38,6 +38,24 @@ _FLAG_DOT_CHAR = "\u2b24"  # ⬤
 _ROW_PAD_X = 1
 _ROW_PAD_Y = 1
 
+# Auto-contrast text colors (W3C contrast ratio + warm two-tone)
+_TEXT_LIGHT = "#f5f0e8"  # warm white for dark backgrounds
+_TEXT_DARK = "#1a1520"  # cool near-black for light backgrounds
+
+
+def _contrast_text_for_bg(bg_hex: str) -> str:
+    """Pick light or dark text color based on W3C contrast ratio against bg."""
+    r, g, b = int(bg_hex[1:3], 16), int(bg_hex[3:5], 16), int(bg_hex[5:7], 16)
+
+    def _srgb_linear(c: int) -> float:
+        s = c / 255.0
+        return s / 12.92 if s <= 0.03928 else ((s + 0.055) / 1.055) ** 2.4
+
+    luminance = 0.2126 * _srgb_linear(r) + 0.7152 * _srgb_linear(g) + 0.0722 * _srgb_linear(b)
+    ratio_light = 1.05 / (luminance + 0.05)
+    ratio_dark = (luminance + 0.05) / 0.05
+    return _TEXT_LIGHT if ratio_light > ratio_dark else _TEXT_DARK
+
 
 class MainWindow:
     """Dashboard window with a vertical stack of session rows."""
@@ -307,7 +325,7 @@ class MainWindow:
             container_text = ""
         else:
             bg = self._color_for_state(state)
-            fg = self._settings.text_color
+            fg = _contrast_text_for_bg(bg)
             emoji = self._emoji_for_state(state)
             container_text = self._container_label(container)
 
@@ -437,7 +455,7 @@ class MainWindow:
             container_text = ""
         else:
             bg = self._color_for_state(row_data.state)
-            fg = self._settings.text_color
+            fg = _contrast_text_for_bg(bg)
             emoji = self._emoji_for_state(row_data.state)
             container_text = self._container_label(row_data.container)
 
