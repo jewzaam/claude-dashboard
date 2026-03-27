@@ -12,6 +12,7 @@ Use --marker TEXT to inject a labeled boundary line into the log.
 
 import json
 import logging
+import logging.handlers
 import sys
 import urllib.request
 from datetime import datetime, timezone
@@ -30,7 +31,12 @@ def _configure_logging(*, debug: bool) -> None:
         logger.setLevel(logging.DEBUG)
         try:
             _LOG_DIR.mkdir(parents=True, exist_ok=True)
-            handler = logging.FileHandler(_LOG_FILE, encoding="utf-8")
+            handler = logging.handlers.RotatingFileHandler(
+                _LOG_FILE,
+                maxBytes=2 * 1024 * 1024,
+                backupCount=1,
+                encoding="utf-8",
+            )
             handler.setLevel(logging.DEBUG)
             handler.setFormatter(logging.Formatter("%(message)s"))
             logger.addHandler(handler)

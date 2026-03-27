@@ -2,13 +2,12 @@
 """Abstract interface for platform-specific operations."""
 
 import logging
-import platform as _plat
 from dataclasses import dataclass
 from enum import Enum
 
-logger = logging.getLogger(__name__)
+from claude_dashboard.config import IS_WINDOWS
 
-_PLATFORM = _plat.system()
+logger = logging.getLogger(__name__)
 
 
 class ContainerType(str, Enum):
@@ -34,7 +33,7 @@ class ContainerInfo:
 
 def detect_container(pid: int) -> ContainerInfo:
     """Detect the containing application for a Claude session."""
-    if _PLATFORM == "Windows":
+    if IS_WINDOWS:
         from claude_dashboard.platform.windows import detect_container_windows
 
         return detect_container_windows(pid)
@@ -46,7 +45,7 @@ def detect_container(pid: int) -> ContainerInfo:
 
 def foreground_window(container: ContainerInfo, *, cwd: str = "") -> bool:
     """Bring the container's window to the foreground."""
-    if _PLATFORM == "Windows":
+    if IS_WINDOWS:
         if container.window_handle == 0:
             logger.debug("no window handle for container pid=%d", container.process_pid)
             return False
@@ -64,7 +63,7 @@ def find_window_for_session(
     container: ContainerInfo,
 ) -> ContainerInfo:
     """Find the specific window for a session based on CWD."""
-    if _PLATFORM == "Windows":
+    if IS_WINDOWS:
         from claude_dashboard.platform.windows import match_window_by_cwd
 
         return match_window_by_cwd(cwd, container)

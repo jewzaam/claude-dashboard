@@ -2,20 +2,19 @@
 """Dashboard window — dynamic row grid showing Claude sessions."""
 
 import logging
-import platform as _plat
 import tkinter as tk
 from typing import Any, Callable
 
+from claude_dashboard.config import IS_WINDOWS, StatusState
+from claude_dashboard.models import SessionRow
 from claude_dashboard.platform.base import ContainerInfo, ContainerType
 from claude_dashboard.session import SessionInfo, cwd_relative_to_home
 from claude_dashboard.settings import Settings
-from claude_dashboard.config import StatusState
-from claude_dashboard.models import SessionRow
 
 logger = logging.getLogger(__name__)
 
 # Dashboard UI constants — platform-aware font selection
-if _plat.system() == "Windows":
+if IS_WINDOWS:
     _FONT_FAMILY = "Segoe UI"
     _FONT_EMOJI_FAMILY = "Segoe UI Emoji"
 else:
@@ -133,6 +132,13 @@ class MainWindow:
             x = settings.window_x
             y = settings.window_y
             if x is not None and y is not None:
+                # Sanity check: discard positions entirely off-screen
+                # (e.g., from a disconnected monitor). Don't clamp to
+                # edges — that shifts the window on every restart.
+                screen_w = self._root.winfo_screenwidth()
+                screen_h = self._root.winfo_screenheight()
+                if x < -screen_w or x > 2 * screen_w or y < -screen_h or y > 2 * screen_h:
+                    x, y = 0, 0
                 if settings.grow_up:
                     # y is the saved bottom edge — will be adjusted in
                     # update_sessions once we know the actual height
@@ -306,7 +312,7 @@ class MainWindow:
         }.get(container.container_type, container.container_type.value)
 
     def _cwd_display(self, cwd: str, branch: str, agent_count: int = 0) -> str:
-        display = cwd_relative_to_home(cwd)
+        display = cwd_relative_to_home(cwd=cwd)
         if agent_count > 0:
             display += f" (+{agent_count})"
         if branch:

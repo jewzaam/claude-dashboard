@@ -47,12 +47,12 @@ def discover_sessions(*, sessions_dir: Path | None = None) -> list[SessionInfo]:
             if session.pid and session.session_id:
                 sessions.append(session)
         except (json.JSONDecodeError, OSError) as exc:
-            logger.debug("failed to read session file=%s error=%s", session_file, exc)
+            logger.warning("failed to read session file=%s error=%s", session_file, exc)
 
-    return sorted(sessions, key=lambda s: cwd_relative_to_home(s.cwd).lower())
+    return sorted(sessions, key=lambda s: cwd_relative_to_home(cwd=s.cwd).lower())
 
 
-def validate_pid(pid: int) -> bool:
+def validate_pid(*, pid: int) -> bool:
     """Check if a process with the given PID is alive and is a Claude process."""
     try:
         if not psutil.pid_exists(pid):
@@ -64,7 +64,7 @@ def validate_pid(pid: int) -> bool:
         return False
 
 
-def encode_project_key(cwd: str) -> str:
+def encode_project_key(*, cwd: str) -> str:
     """Encode a CWD path as a Claude project key.
 
     Replaces path separators and colons with dashes.
@@ -84,7 +84,7 @@ def encode_project_key(cwd: str) -> str:
 _DEFAULT_BRANCHES = frozenset({"main", "master"})
 
 
-def detect_branch(cwd: str) -> str:
+def detect_branch(*, cwd: str) -> str:
     """Return the active git branch for a directory, or empty string on failure.
 
     Reads .git/HEAD directly — no subprocess or external dependency needed.
@@ -104,12 +104,12 @@ def detect_branch(cwd: str) -> str:
         return ""
 
 
-def cwd_basename(cwd: str) -> str:
+def cwd_basename(*, cwd: str) -> str:
     """Extract the last path component from a CWD, handling both / and \\ separators."""
     return cwd.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
 
 
-def cwd_relative_to_home(cwd: str) -> str:
+def cwd_relative_to_home(*, cwd: str) -> str:
     """Convert a CWD path to be relative to ~.
 
     e.g., "C:\\Users\\user\\source\\my-project" -> "~/source/my-project"

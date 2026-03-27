@@ -5,13 +5,13 @@ import json
 import logging
 import os
 import sys
-from pathlib import Path
+
 import threading
-import tempfile
 import tkinter as tk
 from typing import Callable
 
 from claude_dashboard import config
+from claude_dashboard.file_utils import atomic_write_json
 from claude_dashboard.hook_server import HookServer
 from claude_dashboard.platform.base import (
     ContainerInfo,
@@ -154,6 +154,8 @@ class AppController:
 
         # Debounce state (FR-043)
         self._debounce_id: str | None = None
+        # Agent permission debounce: agent_id -> after() id
+        self._agent_perm_debounce: dict[str, str] = {}
 
         # Hook server
         self._hook_server = HookServer(
@@ -164,7 +166,7 @@ class AppController:
         )
 
         # Sync OS auto-start with settings
-        set_run_on_startup(self._settings.run_on_startup)
+        set_run_on_startup(enabled=self._settings.run_on_startup)
 
         # Tray
         self._tray_icon = create_tray_icon(
@@ -181,6 +183,9 @@ class AppController:
         self._context_menu_open = False
         self._context_menu.bind("<Unmap>", lambda e: setattr(self, "_context_menu_open", False))
         self._session_vars: list[tk.BooleanVar] = []
+
+        # Incremental counter for synthetic PIDs (unattached placeholders)
+        self._next_synthetic_pid: int = -1
 
         # Load saved session state for restart continuity
         self._saved_state = self._load_session_state()
@@ -233,7 +238,7 @@ class AppController:
             alive_pids = set()
 
             for session in discovered:
-                if not validate_pid(session.pid):
+                if not validate_pid(pid=session.pid):
                     continue
                 session.pid_alive = True
                 alive_pids.add(session.pid)
@@ -241,7 +246,7 @@ class AppController:
                 if session.pid not in self._sessions:
                     self._add_session(session)
                 else:
-                    self._sessions[session.pid].branch = detect_branch(session.cwd)
+                    self._sessions[session.pid].branch = detect_branch(cwd=session.cwd)
 
             # Remove dead sessions (but not unattached placeholders)
             dead_pids = set(self._sessions.keys()) - alive_pids
@@ -273,7 +278,7 @@ class AppController:
         # All new sessions start as IDLE until a hook event updates them.
         entry.container = detect_container(session.pid)
         entry.container = find_window_for_session(session.cwd, entry.container)
-        entry.branch = detect_branch(session.cwd)
+        entry.branch = detect_branch(cwd=session.cwd)
 
         # Replace unattached placeholder if one exists for this CWD
         unattached_pid = self._find_unattached_pid(session.cwd)
@@ -295,7 +300,7 @@ class AppController:
         if buffered is not None:
             entry.state = buffered
 
-        cwd_short = cwd_basename(session.cwd)
+        cwd_short = cwd_basename(cwd=session.cwd)
         logger.debug(
             "pid=%d project=%s new_state=%s prior_state=None",
             session.pid,
@@ -316,8 +321,8 @@ class AppController:
         for cwd, saved in self._saved_state.items():
             if cwd in live_cwds:
                 continue
-            # Synthetic negative PID from CWD hash
-            synthetic_pid = -(abs(hash(cwd)) % 1_000_000_000)
+            self._next_synthetic_pid -= 1
+            synthetic_pid = self._next_synthetic_pid
             session = SessionInfo(
                 pid=synthetic_pid,
                 session_id=f"unattached-{synthetic_pid}",
@@ -420,6 +425,22 @@ class AppController:
                 )
             else:
                 agent.state = new_state
+
+            # Debounce agent permission requests by 5s — agents are typically
+            # run via skills that auto-resolve permission prompts. Only surface
+            # in the UI if the permission is still pending after the delay.
+            if new_state == StatusState.PERMISSION_REQUIRED:
+                pending = self._agent_perm_debounce.pop(agent_id, None)
+                if pending is not None:
+                    self._root.after_cancel(pending)
+                self._agent_perm_debounce[agent_id] = self._root.after(
+                    5000, self._flush_agent_perm_debounce, agent_id
+                )
+                return
+            # Non-permission event clears any pending debounce for this agent
+            pending = self._agent_perm_debounce.pop(agent_id, None)
+            if pending is not None:
+                self._root.after_cancel(pending)
             self._refresh_ui()
             return
 
@@ -439,8 +460,8 @@ class AppController:
             return
 
         entry.state = new_state
-        entry.branch = detect_branch(entry.session.cwd)
-        cwd_short = cwd_basename(entry.session.cwd)
+        entry.branch = detect_branch(cwd=entry.session.cwd)
+        cwd_short = cwd_basename(cwd=entry.session.cwd)
         logger.debug(
             "pid=%d project=%s new_state=%s prior_state=%s event=%s",
             pid,
@@ -451,8 +472,17 @@ class AppController:
         )
         self._refresh_ui()
 
+    def _flush_agent_perm_debounce(self, agent_id: str):
+        """Debounce timer expired — agent permission is still pending, show it."""
+        self._agent_perm_debounce.pop(agent_id, None)
+        self._refresh_ui()
+
     def _handle_agent_stop(self, session_id: str, agent_id: str):
         """Remove an agent from a session."""
+        # Cancel any pending permission debounce for this agent
+        pending = self._agent_perm_debounce.pop(agent_id, None)
+        if pending is not None:
+            self._root.after_cancel(pending)
         pid = self._session_id_to_pid.get(session_id)
         if pid is None:
             return
@@ -484,7 +514,7 @@ class AppController:
         """Return all session entries sorted by display name."""
         return sorted(
             self._sessions.values(),
-            key=lambda e: cwd_relative_to_home(e.session.cwd).lower(),
+            key=lambda e: cwd_relative_to_home(cwd=e.session.cwd).lower(),
         )
 
     def _refresh_ui(self):
@@ -626,7 +656,7 @@ class AppController:
         for entry in all_entries:
             var = tk.BooleanVar(value=not entry.hidden)
             self._session_vars.append(var)
-            display_name = cwd_relative_to_home(entry.session.cwd)
+            display_name = cwd_relative_to_home(cwd=entry.session.cwd)
 
             def make_toggle(e=entry, v=var):
                 def toggle():
@@ -660,7 +690,7 @@ class AppController:
         result = []
         for entry in list(self._sessions.values()):
             if entry.hidden:
-                name = cwd_relative_to_home(entry.session.cwd)
+                name = cwd_relative_to_home(cwd=entry.session.cwd)
 
                 def unhide(icon, item, p=entry.session.pid):
                     self._unhide_session(p)
@@ -697,17 +727,7 @@ class AppController:
                 "agents": agents,
             }
         try:
-            config.STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            data = json.dumps(state, indent=2)
-            fd, tmp_path = tempfile.mkstemp(dir=str(config.STATE_FILE.parent), suffix=".tmp")
-            try:
-                with open(fd, "w", encoding="utf-8") as fh:
-                    fh.write(data)
-                    fh.write("\n")
-                Path(tmp_path).replace(config.STATE_FILE)
-            except BaseException:
-                Path(tmp_path).unlink(missing_ok=True)
-                raise
+            atomic_write_json(data=state, path=config.STATE_FILE)
         except OSError as exc:
             logger.debug("failed to save session state error=%s", exc)
 
@@ -761,7 +781,7 @@ class AppController:
     def _on_settings_save(self, new_settings: Settings):
         self._settings = new_settings
         self._save_settings_safe()
-        set_run_on_startup(new_settings.run_on_startup)
+        set_run_on_startup(enabled=new_settings.run_on_startup)
         self._main_window.apply_settings(new_settings)
         self._refresh_ui()
         logger.info("settings saved and applied")

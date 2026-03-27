@@ -3,6 +3,7 @@
 
 import argparse
 import logging
+import logging.handlers
 import os
 import socket
 import sys
@@ -45,18 +46,25 @@ def main():
     parser.add_argument("--log-file", type=str, default=None, help="write log output to file")
     args = parser.parse_args()
 
-    level = logging.DEBUG if args.debug else (logging.WARNING if args.quiet else logging.INFO)
-    log_kwargs: dict = {
-        "level": level,
-        "format": "%(asctime)s %(levelname)s %(name)s: %(message)s",
-    }
+    log_fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
     if args.log_file:
+        # File logging: default to DEBUG (you're logging to file for diagnostics),
+        # rotate at 2 MB, keep 1 backup.
+        level = logging.DEBUG if args.debug else logging.INFO
+        if args.quiet:
+            level = logging.WARNING
         os.makedirs(os.path.dirname(os.path.abspath(args.log_file)), exist_ok=True)
-        log_kwargs["filename"] = args.log_file
-        log_kwargs["filemode"] = "a"
+        handler = logging.handlers.RotatingFileHandler(
+            args.log_file,
+            maxBytes=2 * 1024 * 1024,
+            backupCount=1,
+            encoding="utf-8",
+        )
+        handler.setFormatter(logging.Formatter(log_fmt))
+        logging.basicConfig(level=level, handlers=[handler])
     else:
-        log_kwargs["stream"] = sys.stderr
-    logging.basicConfig(**log_kwargs)
+        level = logging.DEBUG if args.debug else (logging.WARNING if args.quiet else logging.INFO)
+        logging.basicConfig(level=level, format=log_fmt, stream=sys.stderr)
     # Suppress noisy third-party debug logging
     logging.getLogger("PIL").setLevel(logging.WARNING)
 

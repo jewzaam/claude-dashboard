@@ -23,6 +23,30 @@ CLAUDE_SETTINGS = Path.home() / ".claude" / "settings.json"
 INSTALL_DIR = Path.home() / ".claude" / "claude-dashboard" / "scripts"
 
 
+_RELAY_MARKER = ".claude/claude-dashboard/scripts/hook_relay.py"
+
+
+def _hook_entry_key(item: object) -> str | None:
+    """Extract a stable identity key from a hook rule entry.
+
+    Hook rules look like: {"hooks": [{"type": "command", "command": "...hook_relay.py ..."}]}
+    Returns the script basename (e.g. "hook_relay.py") so that command-line
+    flag changes (like adding --debug) replace the existing entry instead of
+    duplicating it.
+    """
+    if not isinstance(item, dict):
+        return None
+    hooks = item.get("hooks")
+    if not isinstance(hooks, list):
+        return None
+    for hook in hooks:
+        if isinstance(hook, dict):
+            cmd = hook.get("command", "")
+            if _RELAY_MARKER in cmd:
+                return _RELAY_MARKER
+    return None
+
+
 def _deep_merge(src: dict, dest: dict) -> dict:
     """Merge src into dest recursively. Returns dest (mutated)."""
     for key, src_val in src.items():
@@ -31,13 +55,24 @@ def _deep_merge(src: dict, dest: dict) -> dict:
         elif isinstance(src_val, dict) and isinstance(dest[key], dict):
             _deep_merge(src_val, dest[key])
         elif isinstance(src_val, list) and isinstance(dest[key], list):
-            # Union with dedup
+            # Build index of dest items by hook identity key (if any)
+            keyed_indices: dict[str, int] = {}
+            for i, item in enumerate(dest[key]):
+                hk = _hook_entry_key(item)
+                if hk is not None:
+                    keyed_indices[hk] = i
+
             existing = {json.dumps(item, sort_keys=True) for item in dest[key]}
             for item in src_val:
-                serialized = json.dumps(item, sort_keys=True)
-                if serialized not in existing:
-                    dest[key].append(item)
-                    existing.add(serialized)
+                hk = _hook_entry_key(item)
+                if hk is not None and hk in keyed_indices:
+                    # Replace existing hook entry in-place
+                    dest[key][keyed_indices[hk]] = item
+                else:
+                    serialized = json.dumps(item, sort_keys=True)
+                    if serialized not in existing:
+                        dest[key].append(item)
+                        existing.add(serialized)
         else:
             dest[key] = src_val
     return dest

@@ -67,15 +67,15 @@ class TestDiscoverSessions:
 
 class TestEncodeProjectKey:
     def test_windows_path(self):
-        result = encode_project_key("C:\\Users\\user\\source\\my-project")
+        result = encode_project_key(cwd="C:\\Users\\user\\source\\my-project")
         assert result == "C--Users-user-source-my-project"
 
     def test_linux_path(self):
-        result = encode_project_key("/home/user/source/my-project")
+        result = encode_project_key(cwd="/home/user/source/my-project")
         assert result == "home-user-source-my-project"
 
     def test_forward_slash_path(self):
-        result = encode_project_key("C:/Users/user/source/my-project")
+        result = encode_project_key(cwd="C:/Users/user/source/my-project")
         assert result == "C--Users-user-source-my-project"
 
 
@@ -85,11 +85,11 @@ class TestCwdRelativeToHome:
 
         home = str(Path.home()).replace("\\", "/")
         cwd = home + "/source/my-project"
-        result = cwd_relative_to_home(cwd)
+        result = cwd_relative_to_home(cwd=cwd)
         assert result == "~/source/my-project"
 
     def test_preserves_non_home_paths(self):
-        result = cwd_relative_to_home("/opt/somewhere/else")
+        result = cwd_relative_to_home(cwd="/opt/somewhere/else")
         assert result == "/opt/somewhere/else"
 
     def test_strips_home_prefix_backslash(self):
@@ -97,7 +97,7 @@ class TestCwdRelativeToHome:
 
         home = str(Path.home())
         cwd = home + "\\source\\project"
-        result = cwd_relative_to_home(cwd)
+        result = cwd_relative_to_home(cwd=cwd)
         assert result == "~/source/project"
 
 
@@ -106,37 +106,37 @@ class TestDetectBranch:
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
         (git_dir / "HEAD").write_text("ref: refs/heads/feature-xyz\n", encoding="utf-8")
-        assert detect_branch(str(tmp_path)) == "feature-xyz"
+        assert detect_branch(cwd=str(tmp_path)) == "feature-xyz"
 
     def test_returns_empty_for_main(self, tmp_path):
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
         (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
-        assert detect_branch(str(tmp_path)) == ""
+        assert detect_branch(cwd=str(tmp_path)) == ""
 
     def test_returns_empty_for_master(self, tmp_path):
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
         (git_dir / "HEAD").write_text("ref: refs/heads/master\n", encoding="utf-8")
-        assert detect_branch(str(tmp_path)) == ""
+        assert detect_branch(cwd=str(tmp_path)) == ""
 
     def test_returns_empty_for_detached_head(self, tmp_path):
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
         (git_dir / "HEAD").write_text("abc123def456\n", encoding="utf-8")
-        assert detect_branch(str(tmp_path)) == ""
+        assert detect_branch(cwd=str(tmp_path)) == ""
 
     def test_returns_empty_for_non_git_dir(self, tmp_path):
-        assert detect_branch(str(tmp_path)) == ""
+        assert detect_branch(cwd=str(tmp_path)) == ""
 
     def test_returns_empty_for_nonexistent_dir(self, tmp_path):
-        assert detect_branch(str(tmp_path / "nonexistent")) == ""
+        assert detect_branch(cwd=str(tmp_path / "nonexistent")) == ""
 
     def test_handles_nested_branch_name(self, tmp_path):
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
         (git_dir / "HEAD").write_text("ref: refs/heads/feature/my-work\n", encoding="utf-8")
-        assert detect_branch(str(tmp_path)) == "feature/my-work"
+        assert detect_branch(cwd=str(tmp_path)) == "feature/my-work"
 
 
 class TestValidatePid:
@@ -146,7 +146,7 @@ class TestValidatePid:
         mock_proc = MagicMock()
         mock_proc.name.return_value = "claude.exe"
         mock_psutil.Process.return_value = mock_proc
-        assert validate_pid(1234) is True
+        assert validate_pid(pid=1234) is True
 
     @patch("claude_dashboard.session.psutil")
     def test_alive_non_claude_process(self, mock_psutil):
@@ -154,12 +154,12 @@ class TestValidatePid:
         mock_proc = MagicMock()
         mock_proc.name.return_value = "python.exe"
         mock_psutil.Process.return_value = mock_proc
-        assert validate_pid(1234) is False
+        assert validate_pid(pid=1234) is False
 
     @patch("claude_dashboard.session.psutil")
     def test_dead_pid(self, mock_psutil):
         mock_psutil.pid_exists.return_value = False
-        assert validate_pid(1234) is False
+        assert validate_pid(pid=1234) is False
 
     @patch("claude_dashboard.session.psutil")
     def test_access_denied(self, mock_psutil):
@@ -169,4 +169,4 @@ class TestValidatePid:
         mock_psutil.Process.side_effect = psutil.AccessDenied(1234)
         mock_psutil.AccessDenied = psutil.AccessDenied
         mock_psutil.NoSuchProcess = psutil.NoSuchProcess
-        assert validate_pid(1234) is False
+        assert validate_pid(pid=1234) is False

@@ -50,6 +50,6 @@ test-verbose: install-dev ## Run tests with verbose output
 coverage: install-dev ## Run tests with coverage report
 	$(PYTHON) -m pytest --cov=claude_dashboard --cov-report=term-missing
 
-run: ## Start the app (use DEBUG=1 for debug logging)
+run: ## Start the app (always debug to file, rotated at 2 MB)
 	@echo "Logging to $(LOG_FILE)"
-	$(PYTHON) -m claude_dashboard $(if $(DEBUG),--debug) --log-file $(LOG_FILE)
+	$(PYTHON) -m claude_dashboard --debug --log-file $(LOG_FILE)

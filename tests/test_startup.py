@@ -18,7 +18,7 @@ class TestStartupCmd:
         assert "-m claude_dashboard" in cmd
         assert cmd.startswith('"')
 
-    @patch("claude_dashboard.startup._IS_WINDOWS", True)
+    @patch("claude_dashboard.startup.IS_WINDOWS", True)
     def test_prefers_pythonw_on_windows(self, tmp_path):
         pythonw = tmp_path / "pythonw.exe"
         pythonw.touch()
@@ -26,7 +26,7 @@ class TestStartupCmd:
             cmd = _startup_cmd()
             assert "pythonw.exe" in cmd
 
-    @patch("claude_dashboard.startup._IS_WINDOWS", False)
+    @patch("claude_dashboard.startup.IS_WINDOWS", False)
     def test_uses_sys_executable_on_linux(self):
         cmd = _startup_cmd()
         assert sys.executable in cmd or "python" in cmd
@@ -39,45 +39,45 @@ class TestStartupCmd:
 
 
 class TestSetRunOnStartupLinux:
-    @patch("claude_dashboard.startup._IS_WINDOWS", False)
-    @patch("claude_dashboard.startup._IS_LINUX", True)
+    @patch("claude_dashboard.startup.IS_WINDOWS", False)
+    @patch("claude_dashboard.startup.IS_LINUX", True)
     def test_creates_desktop_file_when_enabled(self, tmp_path):
         desktop_path = tmp_path / "claude-dashboard.desktop"
         with patch("claude_dashboard.startup._desktop_file_path", return_value=desktop_path):
-            set_run_on_startup(True)
+            set_run_on_startup(enabled=True)
         assert desktop_path.exists()
         content = desktop_path.read_text()
         assert "[Desktop Entry]" in content
         assert "claude_dashboard" in content
 
-    @patch("claude_dashboard.startup._IS_WINDOWS", False)
-    @patch("claude_dashboard.startup._IS_LINUX", True)
+    @patch("claude_dashboard.startup.IS_WINDOWS", False)
+    @patch("claude_dashboard.startup.IS_LINUX", True)
     def test_removes_desktop_file_when_disabled(self, tmp_path):
         desktop_path = tmp_path / "claude-dashboard.desktop"
         desktop_path.write_text("[Desktop Entry]\n")
         with patch("claude_dashboard.startup._desktop_file_path", return_value=desktop_path):
-            set_run_on_startup(False)
+            set_run_on_startup(enabled=False)
         assert not desktop_path.exists()
 
-    @patch("claude_dashboard.startup._IS_WINDOWS", False)
-    @patch("claude_dashboard.startup._IS_LINUX", True)
+    @patch("claude_dashboard.startup.IS_WINDOWS", False)
+    @patch("claude_dashboard.startup.IS_LINUX", True)
     def test_no_error_removing_nonexistent_file(self, tmp_path):
         desktop_path = tmp_path / "claude-dashboard.desktop"
         with patch("claude_dashboard.startup._desktop_file_path", return_value=desktop_path):
-            set_run_on_startup(False)  # should not raise
+            set_run_on_startup(enabled=False)  # should not raise
 
 
 class TestGetRunOnStartupLinux:
-    @patch("claude_dashboard.startup._IS_WINDOWS", False)
-    @patch("claude_dashboard.startup._IS_LINUX", True)
+    @patch("claude_dashboard.startup.IS_WINDOWS", False)
+    @patch("claude_dashboard.startup.IS_LINUX", True)
     def test_returns_true_when_desktop_file_exists(self, tmp_path):
         desktop_path = tmp_path / "claude-dashboard.desktop"
         desktop_path.write_text("[Desktop Entry]\n")
         with patch("claude_dashboard.startup._desktop_file_path", return_value=desktop_path):
             assert get_run_on_startup() is True
 
-    @patch("claude_dashboard.startup._IS_WINDOWS", False)
-    @patch("claude_dashboard.startup._IS_LINUX", True)
+    @patch("claude_dashboard.startup.IS_WINDOWS", False)
+    @patch("claude_dashboard.startup.IS_LINUX", True)
     def test_returns_false_when_no_desktop_file(self, tmp_path):
         desktop_path = tmp_path / "claude-dashboard.desktop"
         with patch("claude_dashboard.startup._desktop_file_path", return_value=desktop_path):
@@ -85,33 +85,33 @@ class TestGetRunOnStartupLinux:
 
 
 class TestSetRunOnStartupWindows:
-    @patch("claude_dashboard.startup._IS_WINDOWS", True)
-    @patch("claude_dashboard.startup._IS_LINUX", False)
+    @patch("claude_dashboard.startup.IS_WINDOWS", True)
+    @patch("claude_dashboard.startup.IS_LINUX", False)
     def test_sets_registry_key_when_enabled(self):
         mock_winreg = MagicMock()
         mock_key = MagicMock()
         mock_winreg.OpenKey.return_value = mock_key
         with patch.dict("sys.modules", {"winreg": mock_winreg}):
-            set_run_on_startup(True)
+            set_run_on_startup(enabled=True)
         mock_winreg.SetValueEx.assert_called_once()
         args = mock_winreg.SetValueEx.call_args[0]
         assert args[1] == _REG_VALUE_NAME
         assert "claude_dashboard" in args[4]
 
-    @patch("claude_dashboard.startup._IS_WINDOWS", True)
-    @patch("claude_dashboard.startup._IS_LINUX", False)
+    @patch("claude_dashboard.startup.IS_WINDOWS", True)
+    @patch("claude_dashboard.startup.IS_LINUX", False)
     def test_deletes_registry_key_when_disabled(self):
         mock_winreg = MagicMock()
         mock_key = MagicMock()
         mock_winreg.OpenKey.return_value = mock_key
         with patch.dict("sys.modules", {"winreg": mock_winreg}):
-            set_run_on_startup(False)
+            set_run_on_startup(enabled=False)
         mock_winreg.DeleteValue.assert_called_once_with(mock_key, _REG_VALUE_NAME)
 
 
 class TestGetRunOnStartupWindows:
-    @patch("claude_dashboard.startup._IS_WINDOWS", True)
-    @patch("claude_dashboard.startup._IS_LINUX", False)
+    @patch("claude_dashboard.startup.IS_WINDOWS", True)
+    @patch("claude_dashboard.startup.IS_LINUX", False)
     def test_returns_true_when_key_exists(self):
         mock_winreg = MagicMock()
         mock_key = MagicMock()
@@ -119,8 +119,8 @@ class TestGetRunOnStartupWindows:
         with patch.dict("sys.modules", {"winreg": mock_winreg}):
             assert get_run_on_startup() is True
 
-    @patch("claude_dashboard.startup._IS_WINDOWS", True)
-    @patch("claude_dashboard.startup._IS_LINUX", False)
+    @patch("claude_dashboard.startup.IS_WINDOWS", True)
+    @patch("claude_dashboard.startup.IS_LINUX", False)
     def test_returns_false_when_key_missing(self):
         mock_winreg = MagicMock()
         mock_key = MagicMock()
