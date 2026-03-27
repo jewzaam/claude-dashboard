@@ -22,9 +22,16 @@ else:
     _FONT_FAMILY = "Noto Sans"
     _FONT_EMOJI_FAMILY = "Noto Emoji"
 
-_FONT_BODY = (_FONT_FAMILY, 9)
-_FONT_EMOJI = (_FONT_EMOJI_FAMILY, 12)
-_FONT_CONTAINER = (_FONT_FAMILY, 7)
+
+def _build_fonts(size: int) -> tuple[tuple, tuple, tuple]:
+    """Build (body, emoji, container) font tuples from a base size."""
+    return (
+        (_FONT_FAMILY, size),
+        (_FONT_EMOJI_FAMILY, size + 3),
+        (_FONT_FAMILY, max(size - 2, 6)),
+    )
+
+
 _COLOR_EMPTY_FG = "#666666"
 _COLOR_CONTAINER_FG = "#888888"
 _FLAG_DOT_CHAR = "\u2b24"  # ⬤
@@ -53,6 +60,7 @@ class MainWindow:
         self._on_row_middle_click = on_row_middle_click
         self._on_position_save = on_position_save
         self._on_right_click = on_right_click
+        self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._rows: dict[int, dict[str, Any]] = {}
         self._row_order: list[int] = []
         self._drag_start_x = 0
@@ -74,7 +82,7 @@ class MainWindow:
             self._frame,
             text="No visible Claude sessions",
             fg=_COLOR_EMPTY_FG,
-            font=_FONT_BODY,
+            font=self._font_body,
         )
         self._empty_label.pack(pady=10)
 
@@ -93,13 +101,14 @@ class MainWindow:
     def apply_settings(self, settings: Settings, *, restore_position: bool = False):
         """Apply settings to the window. Does NOT change position unless restore_position=True."""
         self._settings = settings
+        self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._force_resize = True
 
         # Window attributes
         self._window.wm_attributes("-topmost", bool(settings.always_on_top))
         self._window.configure(bg=settings.window_bg)
         self._frame.configure(bg=settings.window_bg)
-        self._empty_label.configure(bg=settings.window_bg)
+        self._empty_label.configure(bg=settings.window_bg, font=self._font_body)
 
         # Position — only on initial startup, not on settings changes
         if restore_position:
@@ -312,7 +321,7 @@ class MainWindow:
             textvariable=status_var,
             bg=bg,
             fg=fg,
-            font=_FONT_EMOJI,
+            font=self._font_emoji,
             width=2,
             anchor=tk.CENTER,
         )
@@ -325,7 +334,7 @@ class MainWindow:
             textvariable=container_var,
             bg=bg,
             fg=_COLOR_CONTAINER_FG,
-            font=_FONT_CONTAINER,
+            font=self._font_container,
             anchor=tk.E,
         )
         container_label.pack(side=tk.RIGHT, padx=(0, 6))
@@ -335,7 +344,7 @@ class MainWindow:
             text=_FLAG_DOT_CHAR,
             bg=bg,
             fg=self._settings.color_flagged,
-            font=_FONT_CONTAINER,
+            font=self._font_container,
             anchor=tk.E,
         )
         if row.flagged:
@@ -347,7 +356,7 @@ class MainWindow:
             textvariable=cwd_var,
             bg=bg,
             fg=fg,
-            font=_FONT_BODY,
+            font=self._font_body,
             anchor=tk.W,
         )
         cwd_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
@@ -437,7 +446,10 @@ class MainWindow:
             self._cwd_display(row_data.session.cwd, row_data.branch, row_data.agent_count)
         )
         row["container_var"].set(container_text)
-        row["cwd_label"].configure(fg=fg)
+        row["cwd_label"].configure(fg=fg, font=self._font_body)
+        row["status_label"].configure(font=self._font_emoji)
+        row["container_label"].configure(font=self._font_container)
+        row["flag_label"].configure(font=self._font_container)
 
         # Show/hide flag dot
         if row_data.flagged:

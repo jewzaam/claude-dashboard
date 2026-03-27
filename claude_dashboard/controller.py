@@ -163,6 +163,8 @@ class AppController:
 
         # Session visibility menu (rebuilt dynamically in _on_right_click)
         self._context_menu = tk.Menu(self._root, tearoff=0)
+        self._context_menu_open = False
+        self._context_menu.bind("<Unmap>", lambda e: setattr(self, "_context_menu_open", False))
         self._session_vars: list[tk.BooleanVar] = []
 
         # Load saved session state for restart continuity
@@ -590,6 +592,11 @@ class AppController:
     # ------------------------------------------------------------------
 
     def _on_right_click(self, x: int, y: int):
+        # Toggle: if menu is visible, just close it
+        if self._context_menu_open:
+            self._context_menu.unpost()
+            self._context_menu_open = False
+            return
         self._context_menu.unpost()
         self._context_menu.delete(0, tk.END)
         self._session_vars.clear()
@@ -619,6 +626,7 @@ class AppController:
                 command=make_toggle(),
             )
 
+        self._context_menu_open = True
         self._context_menu.tk_popup(x, y)
 
     # ------------------------------------------------------------------
