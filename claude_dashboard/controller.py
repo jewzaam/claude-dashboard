@@ -45,6 +45,16 @@ _STATE_PRIORITY = {
     StatusState.IDLE: 4,
 }
 
+# States where the user can take an action (approve, answer, navigate, etc.)
+_ACTIONABLE_STATES = frozenset(
+    {
+        StatusState.PERMISSION_REQUIRED,
+        StatusState.AWAITING_INPUT,
+        StatusState.READY,
+        StatusState.IDLE,
+    }
+)
+
 _DEBOUNCE_MS = 300  # Debounce window for state display updates (FR-043)
 
 
@@ -787,6 +797,11 @@ class AppController:
         self,
         session_states: list[SessionRow],
     ) -> StatusState | None:
+        """Pick the highest-priority actionable state for the tray icon.
+
+        Non-actionable states (e.g. Working) are skipped — the tray icon
+        should only reflect states where the user can take action.
+        """
         if not session_states:
             return None
         best = None
@@ -794,11 +809,12 @@ class AppController:
         for row in session_states:
             if row.unattached:
                 continue
-            p = _STATE_PRIORITY.get(row.state, 999)
-            if row.flagged:
-                p = min(p, _STATE_PRIORITY[StatusState.READY])
+            state = row.state
+            if state not in _ACTIONABLE_STATES:
+                continue
+            p = _STATE_PRIORITY.get(state, 999)
             if p < best_priority:
-                best = row.state
+                best = state
                 best_priority = p
         return best
 
