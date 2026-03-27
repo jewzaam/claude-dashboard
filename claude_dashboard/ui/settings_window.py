@@ -132,7 +132,6 @@ class SettingsWindow:
             row,
         )
         row = self._add_color_field(frame, "Background", "window_bg", settings.window_bg, row)
-        row = self._add_color_field(frame, "Text color", "text_color", settings.text_color, row)
 
         btn_frame = tk.Frame(frame, bg=_CHROME_BG)
         btn_frame.grid(row=row, column=0, columnspan=3, pady=(12, 0), sticky=tk.E)
