@@ -21,10 +21,11 @@ class TestVscodeTasksTemplate:
         assert len(parsed["tasks"]) == 2
         claude_task = parsed["tasks"][0]
         assert claude_task["command"] == "claude"
+        assert claude_task["label"] == "claude"
         assert claude_task["runOptions"]["runOn"] == "folderOpen"
         assert claude_task["presentation"]["group"] == "claude-dev"
         terminal_task = parsed["tasks"][1]
-        assert terminal_task["label"] == "Terminal"
+        assert terminal_task["label"] == "bash"
         assert terminal_task["presentation"]["group"] == "claude-dev"
         assert terminal_task["isBackground"] is True
 
