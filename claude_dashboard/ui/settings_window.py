@@ -122,7 +122,35 @@ class SettingsWindow:
             row,
         )
         row = self._add_color_field(
-            frame, "\u2b24 Flagged", "color_flagged", settings.color_flagged, row
+            frame, "\u2b24 Manual flag", "color_flag_manual", settings.color_flag_manual, row
+        )
+        row = self._add_color_field(
+            frame,
+            "\u2b24 Unstaged changes",
+            "color_flag_unstaged",
+            settings.color_flag_unstaged,
+            row,
+        )
+        row = self._add_color_field(
+            frame,
+            "\u2b24 Staged uncommitted",
+            "color_flag_staged",
+            settings.color_flag_staged,
+            row,
+        )
+        row = self._add_color_field(
+            frame,
+            "\u2b24 Unpushed commits",
+            "color_flag_unpushed",
+            settings.color_flag_unpushed,
+            row,
+        )
+        row = self._add_color_field(
+            frame,
+            "\u2b24 Unmerged branch",
+            "color_flag_unmerged",
+            settings.color_flag_unmerged,
+            row,
         )
         row = self._add_color_field(
             frame,

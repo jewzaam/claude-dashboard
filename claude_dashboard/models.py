@@ -3,7 +3,7 @@
 
 from typing import NamedTuple
 
-from claude_dashboard.config import StatusState
+from claude_dashboard.config import GitStatus, StatusState
 from claude_dashboard.platform.base import ContainerInfo
 from claude_dashboard.session import SessionInfo
 
@@ -16,5 +16,6 @@ class SessionRow(NamedTuple):
     container: ContainerInfo | None
     branch: str
     flagged: bool
+    git_status: GitStatus
     agent_count: int
     unattached: bool

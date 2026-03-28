@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sys
+import time
 
 import threading
 import tkinter as tk
@@ -24,12 +25,13 @@ from claude_dashboard.session import (
     cwd_basename,
     cwd_relative_to_home,
     detect_branch,
+    detect_git_status,
     discover_sessions,
     validate_pid,
 )
 from claude_dashboard.settings import Settings, load_settings, save_settings
 from claude_dashboard.startup import set_run_on_startup
-from claude_dashboard.config import StatusState
+from claude_dashboard.config import GitStatus, StatusState
 from claude_dashboard.models import SessionRow
 from claude_dashboard.tray import create_tray_icon, update_tray_icon
 from claude_dashboard.ui.main_window import MainWindow
@@ -95,6 +97,7 @@ class _SessionEntry:
         "hidden",
         "branch",
         "flagged",
+        "git_status",
         "agents",
         "unattached",
     )
@@ -106,6 +109,7 @@ class _SessionEntry:
         self.hidden: bool = False
         self.branch: str = ""
         self.flagged: bool = False
+        self.git_status: GitStatus = GitStatus.CLEAN
         self.agents: dict[str, _AgentEntry] = {}
         self.unattached: bool = False
 
@@ -247,6 +251,17 @@ class AppController:
                     self._add_session(session)
                 else:
                     self._sessions[session.pid].branch = detect_branch(cwd=session.cwd)
+                    start = time.monotonic()
+                    new_git_status = detect_git_status(cwd=session.cwd)
+                    elapsed = time.monotonic() - start
+                    if elapsed > 0.5:
+                        logger.warning(
+                            "pid=%d git status took %.1fs, using cached value",
+                            session.pid,
+                            elapsed,
+                        )
+                    else:
+                        self._sessions[session.pid].git_status = new_git_status
 
             # Remove dead sessions (but not unattached placeholders)
             dead_pids = set(self._sessions.keys()) - alive_pids
@@ -279,6 +294,15 @@ class AppController:
         entry.container = detect_container(session.pid)
         entry.container = find_window_for_session(session.cwd, entry.container)
         entry.branch = detect_branch(cwd=session.cwd)
+        start = time.monotonic()
+        entry.git_status = detect_git_status(cwd=session.cwd)
+        elapsed = time.monotonic() - start
+        if elapsed > 0.5:
+            logger.warning(
+                "pid=%d git status took %.1fs on first detection",
+                session.pid,
+                elapsed,
+            )
 
         # Replace unattached placeholder if one exists for this CWD
         unattached_pid = self._find_unattached_pid(session.cwd)
@@ -555,6 +579,7 @@ class AppController:
                 container=entry.container,
                 branch=entry.branch,
                 flagged=entry.flagged,
+                git_status=entry.git_status,
                 agent_count=len(entry.agents),
                 unattached=entry.unattached,
             )

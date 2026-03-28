@@ -51,7 +51,11 @@ class Settings:
     color_idle: str = config.DEFAULT_COLOR_IDLE
     color_awaiting_input: str = config.DEFAULT_COLOR_AWAITING_INPUT
     color_permission_required: str = config.DEFAULT_COLOR_PERMISSION_REQUIRED
-    color_flagged: str = config.DEFAULT_COLOR_FLAGGED
+    color_flag_manual: str = config.DEFAULT_COLOR_FLAG_MANUAL
+    color_flag_unstaged: str = config.DEFAULT_COLOR_FLAG_UNSTAGED
+    color_flag_staged: str = config.DEFAULT_COLOR_FLAG_STAGED
+    color_flag_unpushed: str = config.DEFAULT_COLOR_FLAG_UNPUSHED
+    color_flag_unmerged: str = config.DEFAULT_COLOR_FLAG_UNMERGED
     color_unattached: str = config.DEFAULT_COLOR_UNATTACHED
 
     # General UI
@@ -76,6 +80,12 @@ def load_settings(*, path: Path | None = None) -> Settings:
     if not isinstance(raw, dict):
         logger.warning("settings file is not a JSON object, using defaults")
         return Settings()
+
+    # Migrate legacy color_flagged → color_flag_manual
+    if "color_flagged" in raw and "color_flag_manual" not in raw:
+        raw["color_flag_manual"] = raw.pop("color_flagged")
+    elif "color_flagged" in raw:
+        del raw["color_flagged"]
 
     # Filter to known fields only
     known_fields = {f.name for f in fields(Settings)}
