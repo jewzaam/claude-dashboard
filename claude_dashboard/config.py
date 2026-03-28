@@ -93,6 +93,7 @@ DEFAULT_WINDOW_BG = "#1a1a1a"
 DEFAULT_TEXT_COLOR = "#e0e0e0"
 
 # VS Code tasks.json template for ghost session restart.
+# Two tasks with the same group split the terminal: Claude left, shell right.
 VSCODE_TASKS_JSON_TEMPLATE = json.dumps(
     {
         "version": "2.0.0",
@@ -101,9 +102,26 @@ VSCODE_TASKS_JSON_TEMPLATE = json.dumps(
                 "label": "Start Claude Code",
                 "type": "shell",
                 "command": "claude",
-                "presentation": {"reveal": "always", "panel": "new"},
+                "presentation": {
+                    "reveal": "always",
+                    "panel": "new",
+                    "group": "claude-dev",
+                },
                 "runOptions": {"runOn": "folderOpen"},
-            }
+            },
+            {
+                "label": "Terminal",
+                "type": "shell",
+                "command": "exec bash -li",
+                "isBackground": True,
+                "problemMatcher": [],
+                "presentation": {
+                    "reveal": "always",
+                    "panel": "new",
+                    "group": "claude-dev",
+                },
+                "runOptions": {"runOn": "folderOpen"},
+            },
         ],
     },
     indent=2,
