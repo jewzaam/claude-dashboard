@@ -179,7 +179,17 @@ class TestDetectGitStatus:
     def test_clean_repo(self, tmp_path):
         subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "--allow-empty", "-m", "init"],
+            [
+                "git",
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@test",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
             cwd=tmp_path,
             capture_output=True,
         )
@@ -189,7 +199,17 @@ class TestDetectGitStatus:
     def test_unstaged_changes(self, tmp_path):
         subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "--allow-empty", "-m", "init"],
+            [
+                "git",
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@test",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
             cwd=tmp_path,
             capture_output=True,
         )
@@ -200,7 +220,17 @@ class TestDetectGitStatus:
     def test_staged_uncommitted(self, tmp_path):
         subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "--allow-empty", "-m", "init"],
+            [
+                "git",
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@test",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
             cwd=tmp_path,
             capture_output=True,
         )
@@ -212,13 +242,33 @@ class TestDetectGitStatus:
     def test_committed_not_pushed(self, tmp_path):
         subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "--allow-empty", "-m", "init"],
+            [
+                "git",
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@test",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
             cwd=tmp_path,
             capture_output=True,
         )
         subprocess.run(["git", "checkout", "-b", "feature-x"], cwd=tmp_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "--allow-empty", "-m", "feature work"],
+            [
+                "git",
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@test",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "feature work",
+            ],
             cwd=tmp_path,
             capture_output=True,
         )
@@ -231,14 +281,34 @@ class TestDetectGitStatus:
         subprocess.run(["git", "init", "--bare", "-b", "main", str(bare)], capture_output=True)
         subprocess.run(["git", "clone", str(bare), str(clone)], capture_output=True)
         subprocess.run(
-            ["git", "commit", "--allow-empty", "-m", "init"],
+            [
+                "git",
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@test",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
             cwd=clone,
             capture_output=True,
         )
         subprocess.run(["git", "push", "-u", "origin", "main"], cwd=clone, capture_output=True)
         subprocess.run(["git", "checkout", "-b", "feature-y"], cwd=clone, capture_output=True)
         subprocess.run(
-            ["git", "commit", "--allow-empty", "-m", "feat"],
+            [
+                "git",
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@test",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "feat",
+            ],
             cwd=clone,
             capture_output=True,
         )
@@ -257,7 +327,17 @@ class TestDetectGitStatus:
     def test_unstaged_trumps_staged(self, tmp_path):
         subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "--allow-empty", "-m", "init"],
+            [
+                "git",
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@test",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
             cwd=tmp_path,
             capture_output=True,
         )
@@ -274,7 +354,17 @@ class TestDetectGitStatus:
     def test_default_branch_clean(self, tmp_path):
         subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "--allow-empty", "-m", "init"],
+            [
+                "git",
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@test",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
             cwd=tmp_path,
             capture_output=True,
         )
