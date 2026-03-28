@@ -355,6 +355,18 @@ class MainWindow:
         row_frame.pack(fill=tk.X, padx=1, pady=1)
         row_frame.pack_propagate(False)
 
+        # Pack LEFT: flag dot → emoji (visual indicators grouped together)
+        flag_color = self._flag_color(row)
+        flag_label = tk.Label(
+            row_frame,
+            text=_FLAG_DOT_CHAR,
+            bg=bg,
+            fg=flag_color if flag_color is not None else bg,
+            font=self._font_container,
+            anchor=tk.CENTER,
+        )
+        flag_label.pack(side=tk.LEFT, padx=(6, 0))
+
         status_var = tk.StringVar(value=emoji)
         status_label = tk.Label(
             row_frame,
@@ -365,21 +377,9 @@ class MainWindow:
             width=2,
             anchor=tk.CENTER,
         )
-        status_label.pack(side=tk.LEFT, padx=(6, 2))
+        status_label.pack(side=tk.LEFT, padx=(0, 2))
 
-        # Pack RIGHT items before cwd so they claim space first (cwd truncates).
-        # Pack order: flag dot (far right) → container label (left of dot).
-        flag_color = self._flag_color(row)
-        flag_label = tk.Label(
-            row_frame,
-            text=_FLAG_DOT_CHAR,
-            bg=bg,
-            fg=flag_color if flag_color is not None else bg,
-            font=self._font_container,
-            anchor=tk.E,
-        )
-        flag_label.pack(side=tk.RIGHT, padx=(0, 6))
-
+        # Pack RIGHT: container label
         container_var = tk.StringVar(value=container_text)
         container_label = tk.Label(
             row_frame,
@@ -389,7 +389,7 @@ class MainWindow:
             font=self._font_container,
             anchor=tk.E,
         )
-        container_label.pack(side=tk.RIGHT, padx=(0, 2))
+        container_label.pack(side=tk.RIGHT, padx=(0, 6))
 
         cwd_var = tk.StringVar(value=self._cwd_display(session.cwd, row.branch, row.agent_count))
         cwd_label = tk.Label(
