@@ -177,7 +177,7 @@ class TestValidatePid:
 
 class TestDetectGitStatus:
     def test_clean_repo(self, tmp_path):
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
         subprocess.run(
             ["git", "commit", "--allow-empty", "-m", "init"],
             cwd=tmp_path,
@@ -187,7 +187,7 @@ class TestDetectGitStatus:
         assert result == GitStatus.CLEAN
 
     def test_unstaged_changes(self, tmp_path):
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
         subprocess.run(
             ["git", "commit", "--allow-empty", "-m", "init"],
             cwd=tmp_path,
@@ -198,7 +198,7 @@ class TestDetectGitStatus:
         assert result == GitStatus.UNSTAGED_CHANGES
 
     def test_staged_uncommitted(self, tmp_path):
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
         subprocess.run(
             ["git", "commit", "--allow-empty", "-m", "init"],
             cwd=tmp_path,
@@ -210,7 +210,7 @@ class TestDetectGitStatus:
         assert result == GitStatus.STAGED_UNCOMMITTED
 
     def test_committed_not_pushed(self, tmp_path):
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
         subprocess.run(
             ["git", "commit", "--allow-empty", "-m", "init"],
             cwd=tmp_path,
@@ -228,7 +228,7 @@ class TestDetectGitStatus:
     def test_pushed_not_merged(self, tmp_path):
         bare = tmp_path / "bare.git"
         clone = tmp_path / "clone"
-        subprocess.run(["git", "init", "--bare", str(bare)], capture_output=True)
+        subprocess.run(["git", "init", "--bare", "-b", "main", str(bare)], capture_output=True)
         subprocess.run(["git", "clone", str(bare), str(clone)], capture_output=True)
         subprocess.run(
             ["git", "commit", "--allow-empty", "-m", "init"],
@@ -255,7 +255,7 @@ class TestDetectGitStatus:
         assert result == GitStatus.CLEAN
 
     def test_unstaged_trumps_staged(self, tmp_path):
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
         subprocess.run(
             ["git", "commit", "--allow-empty", "-m", "init"],
             cwd=tmp_path,
