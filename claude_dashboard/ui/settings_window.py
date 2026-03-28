@@ -270,15 +270,27 @@ class SettingsWindow:
         for key, color_list in self._color_vars.items():
             merged[key] = color_list[0]
         try:
-            merged["settings_x"] = self._window.winfo_x()
-            merged["settings_y"] = self._window.winfo_y()
-        except tk.TclError:
-            pass
+            x, y = self._get_window_position()
+            merged["settings_x"] = x
+            merged["settings_y"] = y
+        except Exception as exc:
+            logger.warning("failed to get settings window position error=%s", exc)
         pos = getattr(self, "_picker_pos", None)
         if pos:
             merged["color_picker_x"] = pos[0]
             merged["color_picker_y"] = pos[1]
         return Settings(**merged)
+
+    def _get_window_position(self) -> tuple[int, int]:
+        """Parse position from geometry string to avoid WM decoration drift."""
+        import re
+
+        geo = self._window.geometry()
+        # geometry format: "WxH+X+Y" or "WxH-X+Y" etc.
+        match = re.search(r"([+-]\d+)([+-]\d+)$", geo)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+        return self._window.winfo_x(), self._window.winfo_y()
 
     def _on_apply_click(self):
         """Apply settings and persist, keep window open."""
@@ -295,10 +307,11 @@ class SettingsWindow:
         """Cancel — persist window/picker positions only, then close."""
         merged = {**asdict(self._base_settings)}
         try:
-            merged["settings_x"] = self._window.winfo_x()
-            merged["settings_y"] = self._window.winfo_y()
-        except tk.TclError:
-            pass
+            x, y = self._get_window_position()
+            merged["settings_x"] = x
+            merged["settings_y"] = y
+        except Exception as exc:
+            logger.warning("failed to get settings window position error=%s", exc)
         pos = getattr(self, "_picker_pos", None)
         if pos:
             merged["color_picker_x"] = pos[0]
