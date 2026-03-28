@@ -24,7 +24,7 @@ class Settings:
     color_picker_x: int | None = None
     color_picker_y: int | None = None
     always_on_top: bool = config.DEFAULT_ALWAYS_ON_TOP
-    grow_up: bool = False
+    grow_up: bool = config.DEFAULT_GROW_UP
 
     # Row dimensions
     row_height: int = config.DEFAULT_ROW_HEIGHT
@@ -35,7 +35,7 @@ class Settings:
     poll_interval_seconds: int = config.DEFAULT_POLL_INTERVAL_SECONDS
 
     # Startup
-    run_on_startup: bool = False
+    run_on_startup: bool = config.DEFAULT_RUN_ON_STARTUP
 
     # Status emojis
     emoji_working: str = config.DEFAULT_EMOJI_WORKING
