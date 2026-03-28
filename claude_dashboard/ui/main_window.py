@@ -5,7 +5,7 @@ import logging
 import tkinter as tk
 from typing import Any, Callable
 
-from claude_dashboard.config import IS_WINDOWS, StatusState
+from claude_dashboard.config import IS_WINDOWS, GitStatus, StatusState
 from claude_dashboard.models import SessionRow
 from claude_dashboard.platform.base import ContainerInfo, ContainerType
 from claude_dashboard.session import SessionInfo, cwd_relative_to_home
@@ -319,6 +319,20 @@ class MainWindow:
             display += f"  [{branch}]"
         return display
 
+    def _flag_color(self, row: SessionRow) -> str | None:
+        """Return flag dot color based on manual flag and git status priority."""
+        if row.flagged:
+            return self._settings.color_flag_manual
+        if row.git_status == GitStatus.UNSTAGED_CHANGES:
+            return self._settings.color_flag_unstaged
+        if row.git_status == GitStatus.STAGED_UNCOMMITTED:
+            return self._settings.color_flag_staged
+        if row.git_status == GitStatus.COMMITTED_NOT_PUSHED:
+            return self._settings.color_flag_unpushed
+        if row.git_status == GitStatus.PUSHED_NOT_MERGED:
+            return self._settings.color_flag_unmerged
+        return None
+
     def _add_row(self, row: SessionRow):
         session = row.session
         state = row.state
@@ -363,15 +377,16 @@ class MainWindow:
         )
         container_label.pack(side=tk.RIGHT, padx=(0, 6))
 
+        flag_color = self._flag_color(row)
         flag_label = tk.Label(
             row_frame,
             text=_FLAG_DOT_CHAR,
             bg=bg,
-            fg=self._settings.color_flagged,
+            fg=flag_color or self._settings.color_flag_manual,
             font=self._font_container,
             anchor=tk.E,
         )
-        if row.flagged:
+        if flag_color is not None:
             flag_label.pack(side=tk.RIGHT, padx=(0, 2))
 
         cwd_var = tk.StringVar(value=self._cwd_display(session.cwd, row.branch, row.agent_count))
@@ -476,10 +491,10 @@ class MainWindow:
         row["flag_label"].configure(font=self._font_container)
 
         # Show/hide flag dot
-        if row_data.flagged:
-            row["flag_label"].configure(fg=self._settings.color_flagged)
+        flag_color = self._flag_color(row_data)
+        if flag_color is not None:
+            row["flag_label"].configure(fg=flag_color)
             if not row["flag_label"].winfo_manager():
-                # Repack: container (rightmost), flag dot, then cwd
                 row["cwd_label"].pack_forget()
                 row["flag_label"].pack(side=tk.RIGHT, padx=(0, 2))
                 row["cwd_label"].pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))

@@ -2,11 +2,14 @@
 """Tests for session discovery."""
 
 import json
+import subprocess
 from unittest.mock import MagicMock, patch
 
+from claude_dashboard.config import GitStatus
 from claude_dashboard.session import (
     cwd_relative_to_home,
     detect_branch,
+    detect_git_status,
     discover_sessions,
     encode_project_key,
     validate_pid,
@@ -170,3 +173,110 @@ class TestValidatePid:
         mock_psutil.AccessDenied = psutil.AccessDenied
         mock_psutil.NoSuchProcess = psutil.NoSuchProcess
         assert validate_pid(pid=1234) is False
+
+
+class TestDetectGitStatus:
+    def test_clean_repo(self, tmp_path):
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.CLEAN
+
+    def test_unstaged_changes(self, tmp_path):
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        (tmp_path / "new_file.txt").write_text("hello")
+        result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.UNSTAGED_CHANGES
+
+    def test_staged_uncommitted(self, tmp_path):
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        (tmp_path / "staged.txt").write_text("hello")
+        subprocess.run(["git", "add", "staged.txt"], cwd=tmp_path, capture_output=True)
+        result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.STAGED_UNCOMMITTED
+
+    def test_committed_not_pushed(self, tmp_path):
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        subprocess.run(["git", "checkout", "-b", "feature-x"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "feature work"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.COMMITTED_NOT_PUSHED
+
+    def test_pushed_not_merged(self, tmp_path):
+        bare = tmp_path / "bare.git"
+        clone = tmp_path / "clone"
+        subprocess.run(["git", "init", "--bare", str(bare)], capture_output=True)
+        subprocess.run(["git", "clone", str(bare), str(clone)], capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=clone,
+            capture_output=True,
+        )
+        subprocess.run(["git", "push", "-u", "origin", "main"], cwd=clone, capture_output=True)
+        subprocess.run(["git", "checkout", "-b", "feature-y"], cwd=clone, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "feat"],
+            cwd=clone,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "push", "-u", "origin", "feature-y"],
+            cwd=clone,
+            capture_output=True,
+        )
+        result = detect_git_status(cwd=str(clone))
+        assert result == GitStatus.PUSHED_NOT_MERGED
+
+    def test_non_git_dir(self, tmp_path):
+        result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.CLEAN
+
+    def test_unstaged_trumps_staged(self, tmp_path):
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        (tmp_path / "staged.txt").write_text("staged")
+        subprocess.run(["git", "add", "staged.txt"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "unstaged.txt").write_text("unstaged")
+        result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.UNSTAGED_CHANGES
+
+    def test_nonexistent_dir(self):
+        result = detect_git_status(cwd="/nonexistent/path/xyz")
+        assert result == GitStatus.CLEAN
+
+    def test_default_branch_clean(self, tmp_path):
+        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=tmp_path,
+            capture_output=True,
+        )
+        result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.CLEAN

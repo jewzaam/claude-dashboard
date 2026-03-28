@@ -47,6 +47,16 @@ class StatusState(Enum):
     PERMISSION_REQUIRED = "permission_required"
 
 
+class GitStatus(Enum):
+    """Git working tree status for flag dot display."""
+
+    CLEAN = "clean"
+    PUSHED_NOT_MERGED = "pushed_not_merged"
+    COMMITTED_NOT_PUSHED = "committed_not_pushed"
+    STAGED_UNCOMMITTED = "staged_uncommitted"
+    UNSTAGED_CHANGES = "unstaged_changes"
+
+
 # UI defaults
 DEFAULT_ROW_HEIGHT = 28
 DEFAULT_ROW_WIDTH = 500
@@ -67,7 +77,11 @@ DEFAULT_COLOR_READY = "#047857"
 DEFAULT_COLOR_IDLE = "#2a2a2a"
 DEFAULT_COLOR_AWAITING_INPUT = "#fbbf24"
 DEFAULT_COLOR_PERMISSION_REQUIRED = "#d97706"
-DEFAULT_COLOR_FLAGGED = "#7c3aed"
+DEFAULT_COLOR_FLAG_MANUAL = "#ef4444"
+DEFAULT_COLOR_FLAG_UNSTAGED = "#dc2626"
+DEFAULT_COLOR_FLAG_STAGED = "#b91c1c"
+DEFAULT_COLOR_FLAG_UNPUSHED = "#991b1b"
+DEFAULT_COLOR_FLAG_UNMERGED = "#7f1d1d"
 DEFAULT_COLOR_UNATTACHED = "#2a2a2a"
 
 # General UI

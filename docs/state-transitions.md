@@ -185,7 +185,7 @@ The context menu auto-dismisses after 3 seconds (`_CONTEXT_MENU_TIMEOUT_MS`).
 
 ### Flag Indicator
 
-Flagged sessions display a colored dot (⬤) to the left of the container label. The dot color is configurable (`color_flagged` in settings). Flag state is sticky — only middle-click or the context menu toggles it; left-click does not clear the flag.
+Flagged sessions display a colored dot (⬤) to the left of the container label. The dot color reflects git working tree status (see Git Status Flags below) and is configurable via `color_flag_*` settings. Flag state is sticky — only middle-click or the context menu toggles it; left-click does not clear the flag.
 
 Flag state persists across dashboard restarts via `~/.claude/claude-dashboard/session-state.json`.
 

@@ -3,12 +3,14 @@
 
 import json
 import logging
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import psutil
 
 from claude_dashboard import config
+from claude_dashboard.config import GitStatus
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,89 @@ def detect_branch(*, cwd: str) -> str:
         return branch
     except OSError:
         return ""
+
+
+def detect_git_status(*, cwd: str) -> GitStatus:
+    """Detect git working tree status for flag display.
+
+    Returns the highest-priority git status found. Uses subprocess calls
+    to git (read-only). Returns CLEAN for non-git directories.
+    """
+    git_path = Path(cwd) / ".git"
+    if not git_path.exists():
+        return GitStatus.CLEAN
+
+    has_unstaged = False
+    has_staged = False
+
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if len(line) < 2:
+                    continue
+                index_col = line[0]
+                work_col = line[1]
+                if line.startswith("??"):
+                    has_unstaged = True
+                else:
+                    if work_col != " ":
+                        has_unstaged = True
+                    if index_col != " ":
+                        has_staged = True
+    except (OSError, subprocess.TimeoutExpired):
+        return GitStatus.CLEAN
+
+    if has_unstaged:
+        return GitStatus.UNSTAGED_CHANGES
+    if has_staged:
+        return GitStatus.STAGED_UNCOMMITTED
+
+    branch = detect_branch(cwd=cwd)
+
+    has_upstream = False
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", "@{u}..HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode == 0:
+            has_upstream = True
+            if result.stdout.strip():
+                return GitStatus.COMMITTED_NOT_PUSHED
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+    if not has_upstream and branch:
+        for default in _DEFAULT_BRANCHES:
+            try:
+                fallback = subprocess.run(
+                    ["git", "log", "--oneline", f"{default}..HEAD"],
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+                if fallback.returncode == 0:
+                    if fallback.stdout.strip():
+                        return GitStatus.COMMITTED_NOT_PUSHED
+                    break
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+
+    if branch:
+        return GitStatus.PUSHED_NOT_MERGED
+
+    return GitStatus.CLEAN
 
 
 def cwd_basename(*, cwd: str) -> str:

@@ -34,7 +34,7 @@ HTTP hooks are documented by Claude Code but don't work in practice (tested 2026
 | `claude_dashboard/config.py` | Constants, StatusState enum, defaults, LOG_FILE, STATE_FILE |
 | `claude_dashboard/hook_server.py` | HTTP server on port 17384, event→state mapping, SO_REUSEADDR/SO_REUSEPORT |
 | `claude_dashboard/controller.py` | Session lifecycle, hook wiring, UI coordination, session state persistence |
-| `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers |
+| `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers, `detect_git_status()` |
 | `claude_dashboard/file_utils.py` | Atomic JSON file writes (shared by settings + state persistence) |
 | `claude_dashboard/ui/main_window.py` | Dashboard window with session rows |
 | `claude_dashboard/ui/settings_window.py` | Modal settings editor |
@@ -140,7 +140,13 @@ The relay script always runs with `--debug` in hooks-settings.json, logging raw 
 ### State Persistence
 - Session state (flagged, state) saved to `~/.claude/claude-dashboard/session-state.json`
 - Restored on startup (except hidden — hidden is transient)
-- Flag color configurable via `color_flagged` setting
+- Flag color determined by git status, configurable via 5 `color_flag_*` settings (manual, unstaged, staged, unpushed, unmerged)
+
+### Git Status Flags
+- Flag dot automatically reflects git working tree status
+- 5 states: manual flag > unstaged > staged uncommitted > committed not pushed > pushed not merged
+- Red graduation colors, all configurable via settings
+- Detection runs on each discovery tick via git subprocess calls
 
 ### Agent Awareness (US9)
 - Dashboard tracks agents per session
