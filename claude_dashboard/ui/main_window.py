@@ -64,19 +64,21 @@ class MainWindow:
         root: tk.Tk,
         settings: Settings,
         *,
-        on_row_click: Callable[[SessionInfo], None] | None = None,
+        on_row_left_click: Callable[[SessionInfo], None] | None = None,
         on_row_double_click: Callable[[SessionInfo], None] | None = None,
         on_row_middle_click: Callable[[SessionInfo], None] | None = None,
         on_position_save: Callable[[int, int], None] | None = None,
         on_right_click: Callable[[int, int], None] | None = None,
+        on_row_right_click: Callable[[SessionInfo, int, int], None] | None = None,
     ):
         self._root = root
         self._settings = settings
-        self._on_row_click = on_row_click
+        self._on_row_left_click = on_row_left_click
         self._on_row_double_click = on_row_double_click
         self._on_row_middle_click = on_row_middle_click
         self._on_position_save = on_position_save
         self._on_right_click = on_right_click
+        self._on_row_right_click = on_row_right_click
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._rows: dict[int, dict[str, Any]] = {}
         self._row_order: list[int] = []
@@ -365,7 +367,19 @@ class MainWindow:
         )
         status_label.pack(side=tk.LEFT, padx=(6, 2))
 
-        # Pack RIGHT items before cwd so they claim space first (cwd truncates)
+        # Pack RIGHT items before cwd so they claim space first (cwd truncates).
+        # Pack order: flag dot (far right) → container label (left of dot).
+        flag_color = self._flag_color(row)
+        flag_label = tk.Label(
+            row_frame,
+            text=_FLAG_DOT_CHAR,
+            bg=bg,
+            fg=flag_color if flag_color is not None else bg,
+            font=self._font_container,
+            anchor=tk.E,
+        )
+        flag_label.pack(side=tk.RIGHT, padx=(0, 6))
+
         container_var = tk.StringVar(value=container_text)
         container_label = tk.Label(
             row_frame,
@@ -375,19 +389,7 @@ class MainWindow:
             font=self._font_container,
             anchor=tk.E,
         )
-        container_label.pack(side=tk.RIGHT, padx=(0, 6))
-
-        flag_color = self._flag_color(row)
-        flag_label = tk.Label(
-            row_frame,
-            text=_FLAG_DOT_CHAR,
-            bg=bg,
-            fg=flag_color or self._settings.color_flag_manual,
-            font=self._font_container,
-            anchor=tk.E,
-        )
-        if flag_color is not None:
-            flag_label.pack(side=tk.RIGHT, padx=(0, 2))
+        container_label.pack(side=tk.RIGHT, padx=(0, 2))
 
         cwd_var = tk.StringVar(value=self._cwd_display(session.cwd, row.branch, row.agent_count))
         cwd_label = tk.Label(
@@ -408,15 +410,15 @@ class MainWindow:
                 if self._double_clicked_pid == s.pid:
                     self._double_clicked_pid = None
                     return
-                if not self._dragged and self._on_row_click:
+                if not self._dragged and self._on_row_left_click:
                     # Delay single-click so double-click can suppress it.
                     # On Linux, <ButtonRelease-1> fires before <Double-1>,
                     # so without a delay the single-click runs first.
                     def deferred_click(session: SessionInfo = s):
                         self._pending_click_id = None
                         self._pending_click_pid = None
-                        if self._double_clicked_pid != session.pid and self._on_row_click:
-                            self._on_row_click(session)
+                        if self._double_clicked_pid != session.pid and self._on_row_left_click:
+                            self._on_row_left_click(session)
                         self._double_clicked_pid = None
 
                     self._pending_click_id = self._window.after(200, deferred_click)
@@ -444,16 +446,25 @@ class MainWindow:
 
             return handler
 
+        def make_right_click(s: SessionInfo = session):
+            def handler(event: Any):
+                if self._on_row_right_click:
+                    self._on_row_right_click(s, event.x_root, event.y_root)
+                return "break"
+
+            return handler
+
         click = make_click()
         dbl_click = make_double_click()
         mid_click = make_middle_click()
+        right_click = make_right_click()
         for w in widgets:
             w.bind("<Button-1>", self._on_drag_start)
             w.bind("<B1-Motion>", self._on_drag_motion)
             w.bind("<ButtonRelease-1>", click)
             w.bind("<Double-1>", dbl_click)
             w.bind("<Button-2>", mid_click)
-            w.bind("<Button-3>", self._on_right_click_event)
+            w.bind("<Button-3>", right_click)
 
         self._rows[session.pid] = {
             "frame": row_frame,
@@ -490,17 +501,9 @@ class MainWindow:
         row["container_label"].configure(font=self._font_container)
         row["flag_label"].configure(font=self._font_container)
 
-        # Show/hide flag dot
+        # Update flag dot color (always packed as placeholder for alignment)
         flag_color = self._flag_color(row_data)
-        if flag_color is not None:
-            row["flag_label"].configure(fg=flag_color)
-            if not row["flag_label"].winfo_manager():
-                row["cwd_label"].pack_forget()
-                row["flag_label"].pack(side=tk.RIGHT, padx=(0, 2))
-                row["cwd_label"].pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
-        else:
-            if row["flag_label"].winfo_manager():
-                row["flag_label"].pack_forget()
+        row["flag_label"].configure(fg=flag_color if flag_color is not None else bg)
 
         # Update row height if settings changed
         try:
