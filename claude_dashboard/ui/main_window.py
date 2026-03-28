@@ -7,6 +7,8 @@ from typing import Any, Callable
 
 import io
 
+from PIL import Image
+
 from claude_dashboard import config
 from claude_dashboard.tray import generate_icon_image
 from claude_dashboard.config import IS_WINDOWS, GitStatus, StatusState
@@ -52,15 +54,9 @@ def _pil_to_photoimage(pil_image: Any) -> tk.PhotoImage:
     return tk.PhotoImage(data=buf.getvalue())
 
 
-def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
-    """Convert '#rrggbb' hex string to (r, g, b) tuple."""
-    h = hex_color.lstrip("#")
-    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-
-
 def _contrast_text_for_bg(bg_hex: str) -> str:
     """Pick light or dark text color based on W3C contrast ratio against bg."""
-    r, g, b = int(bg_hex[1:3], 16), int(bg_hex[3:5], 16), int(bg_hex[5:7], 16)
+    r, g, b = config.hex_to_rgb(hex_color=bg_hex)
 
     def _srgb_linear(c: int) -> float:
         s = c / 255.0
@@ -111,6 +107,7 @@ class MainWindow:
         self._pending_click_id: str | None = None  # Pending after() id for delayed single-click
         self._pending_click_pid: int | None = None  # PID associated with pending click
         self._force_resize = False
+        self._icon_cache: dict[tuple, tk.PhotoImage] = {}
 
         # Create the window shell — apply_settings handles all configuration
         self._window = tk.Toplevel(root)
@@ -147,8 +144,10 @@ class MainWindow:
 
     def _create_title_bar(self) -> tk.Frame:
         """Create the faux title bar row at the top of the dashboard."""
-        bg = config.DEFAULT_COLOR_UNATTACHED
-        fg = _contrast_text_for_bg(bg)
+        self._title_bg = config.DEFAULT_COLOR_UNATTACHED
+        self._title_fg = _contrast_text_for_bg(self._title_bg)
+        bg = self._title_bg
+        fg = self._title_fg
 
         frame = tk.Frame(
             self._frame,
@@ -163,7 +162,7 @@ class MainWindow:
 
         # Left side: eye icon (hardcoded ready green), emoji, title text
         icon_size = max(self._settings.row_height - 8, 16)
-        icon_rgb = _hex_to_rgb(config.DEFAULT_COLOR_READY)
+        icon_rgb = config.hex_to_rgb(hex_color=config.DEFAULT_COLOR_READY)
         self._title_icon_image = _pil_to_photoimage(
             generate_icon_image(color=icon_rgb).resize((icon_size, icon_size))
         )
@@ -265,20 +264,12 @@ class MainWindow:
     def update_title_bar(
         self,
         *,
-        tray_color_hex: str,
         daily_cost: float,
         limits: dict,
     ):
-        """Update the title bar with current tray color, cost, and limit data."""
-        bg = config.DEFAULT_COLOR_UNATTACHED
-        fg = _contrast_text_for_bg(bg)
-
-        # Update fonts in case settings changed
-        self._title_emoji_label.configure(font=self._font_emoji)
-        self._title_text_label.configure(font=self._font_body)
-        self._title_cost_label.configure(font=self._font_body)
-        self._title_7d_label.configure(font=self._font_body)
-        self._title_5h_label.configure(font=self._font_body)
+        """Update the title bar with current cost and limit data."""
+        bg = self._title_bg
+        fg = self._title_fg
 
         # Right-side info
         cost_text = f"${daily_cost:.2f}" if daily_cost > 0 else ""
@@ -316,6 +307,14 @@ class MainWindow:
         self._settings = settings
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._force_resize = True
+        self._icon_cache.clear()
+
+        # Update title bar fonts
+        self._title_emoji_label.configure(font=self._font_emoji)
+        self._title_text_label.configure(font=self._font_body)
+        self._title_cost_label.configure(font=self._font_body)
+        self._title_7d_label.configure(font=self._font_body)
+        self._title_5h_label.configure(font=self._font_body)
 
         # Window attributes
         self._window.wm_attributes("-topmost", bool(settings.always_on_top))
@@ -524,22 +523,30 @@ class MainWindow:
         eye_color = self._git_status_color(row)
         pupil_color_hex = self._settings.color_flag_manual if row.flagged else None
 
+        cache_key = (eye_color, pupil_color_hex, icon_size)
+        cached = self._icon_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         if eye_color is None and pupil_color_hex is None:
             # No git status, no flag — transparent placeholder
-            from PIL import Image
-
             blank = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
-            return _pil_to_photoimage(blank)
+            result = _pil_to_photoimage(blank)
+        else:
+            # Eye outer = git status, pupil = manual flag
+            # If only flagged (no git status), use neutral gray eye with flag-colored pupil
+            eye_rgb = config.hex_to_rgb(hex_color=eye_color) if eye_color else (90, 90, 90)
 
-        # Eye outer = git status, pupil = manual flag
-        # If only flagged (no git status), use neutral gray eye with flag-colored pupil
-        eye_rgb = _hex_to_rgb(eye_color) if eye_color else (90, 90, 90)
+            if pupil_color_hex is not None:
+                img = generate_icon_image(
+                    color=eye_rgb, pupil_color=config.hex_to_rgb(hex_color=pupil_color_hex)
+                )
+            else:
+                img = generate_icon_image(color=eye_rgb)
+            result = _pil_to_photoimage(img.resize((icon_size, icon_size)))
 
-        kwargs: dict = {"color": eye_rgb}
-        if pupil_color_hex is not None:
-            kwargs["pupil_color"] = _hex_to_rgb(pupil_color_hex)
-
-        return _pil_to_photoimage(generate_icon_image(**kwargs).resize((icon_size, icon_size)))
+        self._icon_cache[cache_key] = result
+        return result
 
     def _git_status_color(self, row: SessionRow) -> str | None:
         """Return color for git working tree status (excludes manual flag)."""
@@ -716,7 +723,6 @@ class MainWindow:
         row["cwd_label"].configure(fg=fg, font=self._font_body)
         row["status_label"].configure(font=self._font_emoji)
         row["container_label"].configure(font=self._font_container)
-        # Update flag eye icon
         flag_image = self._flag_icon(row_data)
         row["flag_image"] = flag_image  # prevent GC
         row["flag_label"].configure(image=flag_image, bg=bg)

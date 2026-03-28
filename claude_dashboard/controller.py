@@ -93,12 +93,6 @@ def read_usage_limits() -> dict:
     return {}
 
 
-def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
-    """Convert '#rrggbb' hex string to (r, g, b) tuple."""
-    h = hex_color.lstrip("#")
-    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-
-
 class _AgentEntry:
     """Tracks an agent within a session."""
 
@@ -252,6 +246,7 @@ class AppController:
 
         # Title bar data (refreshed each discovery tick)
         self._daily_cost: float = 0.0
+        self._daily_cost_last_read: float = 0.0
         self._usage_limits: dict = {}
 
         # PID -> _SessionEntry
@@ -394,8 +389,10 @@ class AppController:
                 if elapsed <= 0.5:
                     entry.git_status = new_git_status
 
-            # Read title bar data
-            self._daily_cost = read_daily_cost()
+            now = time.monotonic()
+            if now - self._daily_cost_last_read >= self._settings.poll_interval_seconds * 10:
+                self._daily_cost = read_daily_cost()
+                self._daily_cost_last_read = now
             self._usage_limits = read_usage_limits()
 
             # Refresh UI (state may not have changed, but rows may have been added/removed)
@@ -755,10 +752,7 @@ class AppController:
             self._tray_state = highest
             update_tray_icon(self._tray_icon, color=self._tray_color_for_state(highest))
 
-        # Update title bar with tray state color and cost/limits data
-        tray_hex = self._tray_color_hex_for_state(highest)
         self._main_window.update_title_bar(
-            tray_color_hex=tray_hex,
             daily_cost=self._daily_cost,
             limits=self._usage_limits,
         )
@@ -1126,7 +1120,7 @@ class AppController:
 
     def _tray_color_for_state(self, state: StatusState | None) -> tuple[int, int, int]:
         hex_color = self._tray_color_hex_for_state(state)
-        return _hex_to_rgb(hex_color)
+        return config.hex_to_rgb(hex_color=hex_color)
 
     def _tray_color_hex_for_state(self, state: StatusState | None) -> str:
         color_map = {

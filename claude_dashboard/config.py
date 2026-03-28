@@ -139,3 +139,9 @@ OAUTH_USAGE_CACHE = STATUSLINE_DATA_DIR / "statusline-cache" / "oauth_usage.json
 # Title bar
 TITLE_EMOJI = "\U0001f90c"  # 🤌 (chef's kiss)
 TITLE_TEXT = "Claude Dashboard"
+
+
+def hex_to_rgb(*, hex_color: str) -> tuple[int, int, int]:
+    """Convert '#rrggbb' hex string to (r, g, b) tuple."""
+    h = hex_color.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
