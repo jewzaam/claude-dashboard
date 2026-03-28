@@ -220,7 +220,8 @@ class TestDetectGitStatus:
                 result = detect_git_status(cwd=str(tmp_path))
         assert result == GitStatus.CLEAN
 
-    def test_unstaged_untracked(self, tmp_path):
+    def test_untracked_files_ignored(self, tmp_path):
+        """Untracked files do not affect git status (treated as clean)."""
         (tmp_path / ".git").mkdir()
         responses = {
             ("status", "--porcelain"): _make_run_result(stdout="?? new_file.txt\n"),
@@ -228,8 +229,9 @@ class TestDetectGitStatus:
         with patch(
             "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
         ):
-            result = detect_git_status(cwd=str(tmp_path))
-        assert result == GitStatus.UNSTAGED_CHANGES
+            with patch("claude_dashboard.session.detect_branch", return_value=""):
+                result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.CLEAN
 
     def test_unstaged_modified(self, tmp_path):
         (tmp_path / ".git").mkdir()
@@ -307,13 +309,25 @@ class TestDetectGitStatus:
         """Both staged and unstaged returns UNSTAGED_CHANGES (higher priority)."""
         (tmp_path / ".git").mkdir()
         responses = {
-            ("status", "--porcelain"): _make_run_result(stdout="M  staged.txt\n?? unstaged.txt\n"),
+            ("status", "--porcelain"): _make_run_result(stdout="M  staged.txt\n M modified.txt\n"),
         }
         with patch(
             "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
         ):
             result = detect_git_status(cwd=str(tmp_path))
         assert result == GitStatus.UNSTAGED_CHANGES
+
+    def test_untracked_with_staged(self, tmp_path):
+        """Untracked files are ignored; only staged changes matter."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout="M  staged.txt\n?? unstaged.txt\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.STAGED_UNCOMMITTED
 
     def test_nonexistent_dir(self):
         """Nonexistent directory returns CLEAN."""

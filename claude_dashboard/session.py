@@ -134,7 +134,7 @@ def detect_git_status(*, cwd: str) -> GitStatus:
                 index_col = line[0]
                 work_col = line[1]
                 if line.startswith("??"):
-                    has_unstaged = True
+                    continue  # ignore untracked files
                 else:
                     if work_col != " ":
                         has_unstaged = True
