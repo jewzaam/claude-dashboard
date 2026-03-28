@@ -242,6 +242,7 @@ class AppController:
             on_settings=self._open_settings,
             on_restart=self._restart,
             on_quit=self._quit,
+            on_build_sessions_menu=self._build_sessions_menu,
         )
 
         # Title bar data (refreshed each discovery tick)
@@ -812,12 +813,46 @@ class AppController:
             self._refresh_ui()
 
     def _on_row_right_click(self, session: SessionInfo, x: int, y: int):
-        """Per-row right-click: ghost gets Dismiss/Open, live gets visibility menu."""
+        """Per-row right-click: ghost gets Dismiss/Open, live gets Hide/Clear State."""
         entry = self._sessions.get(session.pid)
         if entry and entry.unattached:
             self._show_ghost_context_menu(session, x, y)
         else:
-            self._on_right_click(x, y)
+            self._show_live_context_menu(session, x, y)
+
+    def _show_live_context_menu(self, session: SessionInfo, x: int, y: int):
+        """Show context menu for live sessions: Hide, Clear State."""
+        if self._context_menu_open:
+            self._context_menu.unpost()
+            self._context_menu_open = False
+            return
+        self._context_menu.unpost()
+        self._context_menu.delete(0, tk.END)
+
+        entry = self._sessions.get(session.pid)
+        if not entry:
+            return
+
+        cwd_display = cwd_relative_to_home(cwd=session.cwd)
+
+        def hide():
+            entry.hidden = True
+            logger.info("pid=%d hidden via context menu", session.pid)
+            self._refresh_ui()
+
+        def clear_state():
+            entry.state = StatusState.IDLE
+            entry.agents.clear()
+            logger.info("pid=%d state cleared via context menu", session.pid)
+            self._refresh_ui()
+
+        self._context_menu.add_command(label=cwd_display, state=tk.DISABLED)
+        self._context_menu.add_separator()
+        self._context_menu.add_command(label="Hide", command=hide)
+        self._context_menu.add_command(label="Clear State", command=clear_state)
+
+        self._context_menu_open = True
+        self._context_menu.tk_popup(x, y)
 
     def _show_ghost_context_menu(self, session: SessionInfo, x: int, y: int):
         """Show context menu for ghost (unattached) sessions."""
@@ -884,22 +919,9 @@ class AppController:
     # Session visibility menu
     # ------------------------------------------------------------------
 
-    def _on_right_click(self, x: int, y: int):
-        # Toggle: if menu is visible, just close it
-        if self._context_menu_open:
-            self._context_menu.unpost()
-            self._context_menu_open = False
-            return
-        self._context_menu.unpost()
-        self._context_menu.delete(0, tk.END)
+    def _build_sessions_menu(self, menu: tk.Menu):
+        """Populate a menu with session visibility checkboxes."""
         self._session_vars.clear()
-
-        # Header (clicking dismisses menu)
-        self._context_menu.add_command(
-            label="Show / Hide Sessions", command=self._context_menu.unpost
-        )
-        self._context_menu.add_separator()
-
         all_entries = self._sorted_entries()
         for entry in all_entries:
             var = tk.BooleanVar(value=not entry.hidden)
@@ -913,11 +935,22 @@ class AppController:
 
                 return toggle
 
-            self._context_menu.add_checkbutton(
+            menu.add_checkbutton(
                 label=display_name,
                 variable=var,
                 command=make_toggle(),
             )
+
+    def _on_right_click(self, x: int, y: int):
+        """Window-level right-click on empty areas — show sessions visibility menu."""
+        if self._context_menu_open:
+            self._context_menu.unpost()
+            self._context_menu_open = False
+            return
+        self._context_menu.unpost()
+        self._context_menu.delete(0, tk.END)
+
+        self._build_sessions_menu(self._context_menu)
 
         self._context_menu_open = True
         self._context_menu.tk_popup(x, y)
