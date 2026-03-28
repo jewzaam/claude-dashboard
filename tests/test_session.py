@@ -175,198 +175,181 @@ class TestValidatePid:
         assert validate_pid(pid=1234) is False
 
 
+def _make_run_result(*, stdout="", returncode=0):
+    """Build a subprocess.CompletedProcess for mocking."""
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+
+def _git_run_router(responses):
+    """Return a side_effect function that routes by git subcommand.
+
+    responses is a dict mapping a git subcommand tuple to a CompletedProcess.
+    Matches the longest key first to avoid prefix collisions.
+    e.g. {("status", "--porcelain"): _make_run_result(stdout="?? x.txt")}
+    """
+
+    def _router(args, **kwargs):
+        # args[0] is "git", rest are subcommand + flags
+        git_args = tuple(args[1:])
+        # Try longest match first
+        best_match = None
+        best_len = 0
+        for key, result in responses.items():
+            if git_args[: len(key)] == key and len(key) > best_len:
+                best_match = result
+                best_len = len(key)
+        if best_match is not None:
+            return best_match
+        # Default: command succeeds with empty output
+        return _make_run_result()
+
+    return _router
+
+
 class TestDetectGitStatus:
     def test_clean_repo(self, tmp_path):
-        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=test",
-                "-c",
-                "user.email=test@test",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "init",
-            ],
-            cwd=tmp_path,
-            capture_output=True,
-        )
-        result = detect_git_status(cwd=str(tmp_path))
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=""),
+            ("log", "--oneline"): _make_run_result(stdout="", returncode=128),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            with patch("claude_dashboard.session.detect_branch", return_value=""):
+                result = detect_git_status(cwd=str(tmp_path))
         assert result == GitStatus.CLEAN
 
-    def test_unstaged_changes(self, tmp_path):
-        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=test",
-                "-c",
-                "user.email=test@test",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "init",
-            ],
-            cwd=tmp_path,
-            capture_output=True,
-        )
-        (tmp_path / "new_file.txt").write_text("hello")
-        result = detect_git_status(cwd=str(tmp_path))
+    def test_unstaged_untracked(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout="?? new_file.txt\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.UNSTAGED_CHANGES
+
+    def test_unstaged_modified(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=" M file.txt\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            result = detect_git_status(cwd=str(tmp_path))
         assert result == GitStatus.UNSTAGED_CHANGES
 
     def test_staged_uncommitted(self, tmp_path):
-        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=test",
-                "-c",
-                "user.email=test@test",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "init",
-            ],
-            cwd=tmp_path,
-            capture_output=True,
-        )
-        (tmp_path / "staged.txt").write_text("hello")
-        subprocess.run(["git", "add", "staged.txt"], cwd=tmp_path, capture_output=True)
-        result = detect_git_status(cwd=str(tmp_path))
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout="A  staged.txt\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            result = detect_git_status(cwd=str(tmp_path))
         assert result == GitStatus.STAGED_UNCOMMITTED
 
-    def test_committed_not_pushed(self, tmp_path):
-        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=test",
-                "-c",
-                "user.email=test@test",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "init",
-            ],
-            cwd=tmp_path,
-            capture_output=True,
-        )
-        subprocess.run(["git", "checkout", "-b", "feature-x"], cwd=tmp_path, capture_output=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=test",
-                "-c",
-                "user.email=test@test",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "feature work",
-            ],
-            cwd=tmp_path,
-            capture_output=True,
-        )
-        result = detect_git_status(cwd=str(tmp_path))
+    def test_committed_not_pushed_upstream(self, tmp_path):
+        """Commits ahead of upstream returns COMMITTED_NOT_PUSHED."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=""),
+            ("log", "--oneline", "@{u}..HEAD"): _make_run_result(stdout="abc123 feat\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            with patch("claude_dashboard.session.detect_branch", return_value="feature-x"):
+                result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.COMMITTED_NOT_PUSHED
+
+    def test_committed_not_pushed_no_upstream(self, tmp_path):
+        """No upstream, commits ahead of default branch returns COMMITTED_NOT_PUSHED."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=""),
+            ("log", "--oneline", "@{u}..HEAD"): _make_run_result(returncode=128),
+            # Both default branches must respond — frozenset iteration order is arbitrary
+            ("log", "--oneline", "main..HEAD"): _make_run_result(stdout="abc123 feat\n"),
+            ("log", "--oneline", "master..HEAD"): _make_run_result(stdout="abc123 feat\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            with patch("claude_dashboard.session.detect_branch", return_value="feature-x"):
+                result = detect_git_status(cwd=str(tmp_path))
         assert result == GitStatus.COMMITTED_NOT_PUSHED
 
     def test_pushed_not_merged(self, tmp_path):
-        bare = tmp_path / "bare.git"
-        clone = tmp_path / "clone"
-        subprocess.run(["git", "init", "--bare", "-b", "main", str(bare)], capture_output=True)
-        subprocess.run(["git", "clone", str(bare), str(clone)], capture_output=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=test",
-                "-c",
-                "user.email=test@test",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "init",
-            ],
-            cwd=clone,
-            capture_output=True,
-        )
-        subprocess.run(["git", "push", "-u", "origin", "main"], cwd=clone, capture_output=True)
-        subprocess.run(["git", "checkout", "-b", "feature-y"], cwd=clone, capture_output=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=test",
-                "-c",
-                "user.email=test@test",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "feat",
-            ],
-            cwd=clone,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "push", "-u", "origin", "feature-y"],
-            cwd=clone,
-            capture_output=True,
-        )
-        result = detect_git_status(cwd=str(clone))
+        """Non-default branch, nothing ahead of upstream returns PUSHED_NOT_MERGED."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=""),
+            ("log", "--oneline", "@{u}..HEAD"): _make_run_result(stdout=""),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            with patch("claude_dashboard.session.detect_branch", return_value="feature-y"):
+                result = detect_git_status(cwd=str(tmp_path))
         assert result == GitStatus.PUSHED_NOT_MERGED
 
     def test_non_git_dir(self, tmp_path):
+        """No .git directory returns CLEAN without subprocess calls."""
         result = detect_git_status(cwd=str(tmp_path))
         assert result == GitStatus.CLEAN
 
     def test_unstaged_trumps_staged(self, tmp_path):
-        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=test",
-                "-c",
-                "user.email=test@test",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "init",
-            ],
-            cwd=tmp_path,
-            capture_output=True,
-        )
-        (tmp_path / "staged.txt").write_text("staged")
-        subprocess.run(["git", "add", "staged.txt"], cwd=tmp_path, capture_output=True)
-        (tmp_path / "unstaged.txt").write_text("unstaged")
-        result = detect_git_status(cwd=str(tmp_path))
+        """Both staged and unstaged returns UNSTAGED_CHANGES (higher priority)."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout="M  staged.txt\n?? unstaged.txt\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            result = detect_git_status(cwd=str(tmp_path))
         assert result == GitStatus.UNSTAGED_CHANGES
 
     def test_nonexistent_dir(self):
+        """Nonexistent directory returns CLEAN."""
         result = detect_git_status(cwd="/nonexistent/path/xyz")
         assert result == GitStatus.CLEAN
 
     def test_default_branch_clean(self, tmp_path):
-        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, capture_output=True)
-        subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=test",
-                "-c",
-                "user.email=test@test",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "init",
-            ],
-            cwd=tmp_path,
-            capture_output=True,
-        )
-        result = detect_git_status(cwd=str(tmp_path))
+        """Default branch with clean tree returns CLEAN."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=""),
+            ("log", "--oneline"): _make_run_result(returncode=128),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            with patch("claude_dashboard.session.detect_branch", return_value=""):
+                result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.CLEAN
+
+    def test_git_status_timeout(self, tmp_path):
+        """Timeout on git status returns CLEAN."""
+        (tmp_path / ".git").mkdir()
+        with patch(
+            "claude_dashboard.session.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="git", timeout=2),
+        ):
+            result = detect_git_status(cwd=str(tmp_path))
+        assert result == GitStatus.CLEAN
+
+    def test_git_status_oserror(self, tmp_path):
+        """OSError on git status returns CLEAN."""
+        (tmp_path / ".git").mkdir()
+        with patch(
+            "claude_dashboard.session.subprocess.run",
+            side_effect=OSError("git not found"),
+        ):
+            result = detect_git_status(cwd=str(tmp_path))
         assert result == GitStatus.CLEAN
