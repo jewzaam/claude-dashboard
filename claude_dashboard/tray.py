@@ -13,7 +13,11 @@ TRAY_ICON_NAME = "Claude Dashboard"
 _DEFAULT_COLOR = (128, 128, 128)  # Gray
 
 
-def generate_icon_image(*, color: tuple[int, int, int] = _DEFAULT_COLOR) -> Image.Image:
+def generate_icon_image(
+    *,
+    color: tuple[int, int, int] = _DEFAULT_COLOR,
+    pupil_color: tuple[int, int, int] = (20, 20, 20),
+) -> Image.Image:
     """Generate a PIL Image for the tray icon — off-center eye.
 
     An asymmetric eye shape looking slightly to the right. Solid state
@@ -39,7 +43,7 @@ def generate_icon_image(*, color: tuple[int, int, int] = _DEFAULT_COLOR) -> Imag
     pupil_cy = cy - 2
     draw.ellipse(
         [pupil_cx - pupil_r, pupil_cy - pupil_r, pupil_cx + pupil_r, pupil_cy + pupil_r],
-        fill=(20, 20, 20),
+        fill=pupil_color,
     )
 
     return image

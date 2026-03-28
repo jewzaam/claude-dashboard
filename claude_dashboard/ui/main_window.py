@@ -173,7 +173,7 @@ class MainWindow:
             bg=bg,
             anchor=tk.CENTER,
         )
-        self._title_icon.pack(side=tk.LEFT, padx=(6, 0))
+        self._title_icon.pack(side=tk.LEFT, padx=(5, 0))
 
         self._title_emoji_label = tk.Label(
             frame,
@@ -518,22 +518,31 @@ class MainWindow:
             display += f"  [{branch}]"
         return display
 
-    def _flag_icon(self, *, color: str | None, bg: str) -> tk.PhotoImage:
-        """Generate an eye icon for the flag, or a transparent placeholder if no flag."""
+    def _flag_icon(self, row: SessionRow) -> tk.PhotoImage:
+        """Generate an eye icon for git status + manual flag, or transparent if clean."""
         icon_size = max(self._settings.row_height - 8, 16)
-        if color is not None:
-            rgb = _hex_to_rgb(color)
-            return _pil_to_photoimage(generate_icon_image(color=rgb).resize((icon_size, icon_size)))
-        # Transparent placeholder — same size, fully invisible
-        from PIL import Image
+        eye_color = self._git_status_color(row)
+        pupil_color_hex = self._settings.color_flag_manual if row.flagged else None
 
-        blank = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
-        return _pil_to_photoimage(blank)
+        if eye_color is None and pupil_color_hex is None:
+            # No git status, no flag — transparent placeholder
+            from PIL import Image
 
-    def _flag_color(self, row: SessionRow) -> str | None:
-        """Return flag dot color based on manual flag and git status priority."""
-        if row.flagged:
-            return self._settings.color_flag_manual
+            blank = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
+            return _pil_to_photoimage(blank)
+
+        # Eye outer = git status, pupil = manual flag
+        # If only flagged (no git status), use neutral gray eye with flag-colored pupil
+        eye_rgb = _hex_to_rgb(eye_color) if eye_color else (90, 90, 90)
+
+        kwargs: dict = {"color": eye_rgb}
+        if pupil_color_hex is not None:
+            kwargs["pupil_color"] = _hex_to_rgb(pupil_color_hex)
+
+        return _pil_to_photoimage(generate_icon_image(**kwargs).resize((icon_size, icon_size)))
+
+    def _git_status_color(self, row: SessionRow) -> str | None:
+        """Return color for git working tree status (excludes manual flag)."""
         if row.git_status == GitStatus.UNSTAGED_CHANGES:
             return self._settings.color_flag_unstaged
         if row.git_status == GitStatus.STAGED_UNCOMMITTED:
@@ -565,8 +574,7 @@ class MainWindow:
         row_frame.pack_propagate(False)
 
         # Pack LEFT: flag eye icon → emoji (visual indicators grouped together)
-        flag_color = self._flag_color(row)
-        flag_image = self._flag_icon(color=flag_color, bg=bg)
+        flag_image = self._flag_icon(row)
         flag_label = tk.Label(
             row_frame,
             image=flag_image,
@@ -709,8 +717,7 @@ class MainWindow:
         row["status_label"].configure(font=self._font_emoji)
         row["container_label"].configure(font=self._font_container)
         # Update flag eye icon
-        flag_color = self._flag_color(row_data)
-        flag_image = self._flag_icon(color=flag_color, bg=bg)
+        flag_image = self._flag_icon(row_data)
         row["flag_image"] = flag_image  # prevent GC
         row["flag_label"].configure(image=flag_image, bg=bg)
 
