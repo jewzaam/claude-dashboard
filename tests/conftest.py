@@ -2,11 +2,29 @@
 """Shared pytest fixtures for Claude Dashboard tests."""
 
 import json
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def _block_subprocess():
+    """Block subprocess.run/Popen globally to prevent real command execution.
+
+    All tests must mock subprocess calls — no real git, no real shell commands.
+    """
+
+    def _blocked(*args, **kwargs):
+        cmd = args[0] if args else kwargs.get("args", "?")
+        raise RuntimeError(f"subprocess blocked by conftest: {cmd!r}. Mock it instead.")
+
+    with patch.object(subprocess, "run", side_effect=_blocked):
+        with patch.object(subprocess, "Popen", side_effect=_blocked):
+            yield
 
 
 @pytest.fixture()
