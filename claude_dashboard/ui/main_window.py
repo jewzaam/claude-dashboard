@@ -85,6 +85,7 @@ class MainWindow:
         on_settings: Callable[[], None] | None = None,
         on_restart: Callable[[], None] | None = None,
         on_quit: Callable[[], None] | None = None,
+        on_build_sessions_menu: Callable[[tk.Menu], None] | None = None,
     ):
         self._root = root
         self._settings = settings
@@ -97,6 +98,7 @@ class MainWindow:
         self._on_settings = on_settings
         self._on_restart = on_restart
         self._on_quit = on_quit
+        self._on_build_sessions_menu = on_build_sessions_menu
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._rows: dict[int, dict[str, Any]] = {}
         self._row_order: list[int] = []
@@ -244,8 +246,16 @@ class MainWindow:
         return frame
 
     def _on_title_bar_right_click(self, event: Any):
-        """Show Settings / Restart / Quit menu on title bar right-click."""
+        """Show Sessions submenu + Settings / Restart / Quit on title bar right-click."""
         self._title_menu.delete(0, tk.END)
+
+        # Sessions submenu with visibility checkboxes
+        sessions_submenu = tk.Menu(self._title_menu, tearoff=0)
+        if self._on_build_sessions_menu:
+            self._on_build_sessions_menu(sessions_submenu)
+        self._title_menu.add_cascade(label="Sessions", menu=sessions_submenu)
+
+        self._title_menu.add_separator()
         self._title_menu.add_command(
             label="Settings",
             command=self._on_settings if self._on_settings else lambda: None,
