@@ -99,7 +99,7 @@ VSCODE_TASKS_JSON_TEMPLATE = json.dumps(
         "version": "2.0.0",
         "tasks": [
             {
-                "label": "Start Claude Code",
+                "label": "claude",
                 "type": "shell",
                 "command": "claude",
                 "isBackground": True,
@@ -112,7 +112,7 @@ VSCODE_TASKS_JSON_TEMPLATE = json.dumps(
                 "runOptions": {"runOn": "folderOpen"},
             },
             {
-                "label": "Terminal",
+                "label": "bash",
                 "type": "shell",
                 "command": "exec bash -li",
                 "isBackground": True,

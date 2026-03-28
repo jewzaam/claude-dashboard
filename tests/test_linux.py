@@ -151,7 +151,7 @@ class TestListWindowsDbus:
     def test_parses_json_window_list(self, mock_run):
         windows = [
             {"id": 111, "pid": 6786, "title": "handbook - Visual Studio Code"},
-            {"id": 222, "pid": 3789, "title": "Terminal"},
+            {"id": 222, "pid": 3789, "title": "bash"},
         ]
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -246,7 +246,7 @@ class TestFindWindowIdForSession:
     def test_matches_by_pid(self, mock_list, mock_process):
         mock_list.return_value = [
             {"id": 111, "pid": 6786, "title": "claude-dashboard - VS Code"},
-            {"id": 222, "pid": 3789, "title": "Terminal"},
+            {"id": 222, "pid": 3789, "title": "bash"},
         ]
         # Mock the parent walk — parent is systemd (pid=1, stops the walk)
         systemd = _make_proc("systemd", 1)
