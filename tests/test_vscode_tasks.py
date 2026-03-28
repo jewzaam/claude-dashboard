@@ -18,10 +18,15 @@ class TestVscodeTasksTemplate:
     def test_template_is_valid_json(self):
         parsed = json.loads(config.VSCODE_TASKS_JSON_TEMPLATE)
         assert parsed["version"] == "2.0.0"
-        assert len(parsed["tasks"]) == 1
-        task = parsed["tasks"][0]
-        assert task["command"] == "claude"
-        assert task["runOptions"]["runOn"] == "folderOpen"
+        assert len(parsed["tasks"]) == 2
+        claude_task = parsed["tasks"][0]
+        assert claude_task["command"] == "claude"
+        assert claude_task["runOptions"]["runOn"] == "folderOpen"
+        assert claude_task["presentation"]["group"] == "claude-dev"
+        terminal_task = parsed["tasks"][1]
+        assert terminal_task["label"] == "Terminal"
+        assert terminal_task["presentation"]["group"] == "claude-dev"
+        assert terminal_task["isBackground"] is True
 
     def test_hash_matches_template(self):
         expected = hashlib.sha256(config.VSCODE_TASKS_JSON_TEMPLATE.encode("utf-8")).hexdigest()
