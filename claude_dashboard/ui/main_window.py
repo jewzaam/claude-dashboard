@@ -5,6 +5,10 @@ import logging
 import tkinter as tk
 from typing import Any, Callable
 
+import io
+
+from claude_dashboard import config
+from claude_dashboard.tray import generate_icon_image
 from claude_dashboard.config import IS_WINDOWS, GitStatus, StatusState
 from claude_dashboard.models import SessionRow
 from claude_dashboard.platform.base import ContainerInfo, ContainerType
@@ -33,13 +37,25 @@ def _build_fonts(size: int) -> tuple[tuple, tuple, tuple]:
 
 _COLOR_EMPTY_FG = "#666666"
 _COLOR_CONTAINER_FG = "#888888"
-_FLAG_DOT_CHAR = "\u2b24"  # ⬤
 _ROW_PAD_X = 1
 _ROW_PAD_Y = 1
 
 # Auto-contrast text colors (W3C contrast ratio + warm two-tone)
 _TEXT_LIGHT = "#f5f0e8"  # warm white for dark backgrounds
 _TEXT_DARK = "#1a1520"  # cool near-black for light backgrounds
+
+
+def _pil_to_photoimage(pil_image: Any) -> tk.PhotoImage:
+    """Convert a PIL Image to a Tkinter PhotoImage via PNG buffer."""
+    buf = io.BytesIO()
+    pil_image.save(buf, format="PNG")
+    return tk.PhotoImage(data=buf.getvalue())
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert '#rrggbb' hex string to (r, g, b) tuple."""
+    h = hex_color.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
 
 def _contrast_text_for_bg(bg_hex: str) -> str:
@@ -70,6 +86,9 @@ class MainWindow:
         on_position_save: Callable[[int, int], None] | None = None,
         on_right_click: Callable[[int, int], None] | None = None,
         on_row_right_click: Callable[[SessionInfo, int, int], None] | None = None,
+        on_settings: Callable[[], None] | None = None,
+        on_restart: Callable[[], None] | None = None,
+        on_quit: Callable[[], None] | None = None,
     ):
         self._root = root
         self._settings = settings
@@ -79,6 +98,9 @@ class MainWindow:
         self._on_position_save = on_position_save
         self._on_right_click = on_right_click
         self._on_row_right_click = on_row_right_click
+        self._on_settings = on_settings
+        self._on_restart = on_restart
+        self._on_quit = on_quit
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._rows: dict[int, dict[str, Any]] = {}
         self._row_order: list[int] = []
@@ -97,6 +119,12 @@ class MainWindow:
         self._frame = tk.Frame(self._window)
         self._frame.pack(fill=tk.BOTH, expand=True)
 
+        # Title bar — always visible at top
+        self._title_bar = self._create_title_bar()
+
+        # Title bar right-click context menu
+        self._title_menu = tk.Menu(self._root, tearoff=0)
+
         self._empty_label = tk.Label(
             self._frame,
             text="No visible Claude sessions",
@@ -112,6 +140,172 @@ class MainWindow:
 
         # Apply all settings (position, size, colors, topmost)
         self.apply_settings(settings, restore_position=True)
+
+    # ------------------------------------------------------------------
+    # Title bar
+    # ------------------------------------------------------------------
+
+    def _create_title_bar(self) -> tk.Frame:
+        """Create the faux title bar row at the top of the dashboard."""
+        bg = config.DEFAULT_COLOR_UNATTACHED
+        fg = _contrast_text_for_bg(bg)
+
+        frame = tk.Frame(
+            self._frame,
+            bg=bg,
+            height=self._settings.row_height,
+            cursor="hand2",
+            highlightbackground="#555555",
+            highlightthickness=1,
+        )
+        frame.pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
+        frame.pack_propagate(False)
+
+        # Left side: eye icon (hardcoded ready green), emoji, title text
+        icon_size = max(self._settings.row_height - 8, 16)
+        icon_rgb = _hex_to_rgb(config.DEFAULT_COLOR_READY)
+        self._title_icon_image = _pil_to_photoimage(
+            generate_icon_image(color=icon_rgb).resize((icon_size, icon_size))
+        )
+        self._title_icon = tk.Label(
+            frame,
+            image=self._title_icon_image,
+            bg=bg,
+            anchor=tk.CENTER,
+        )
+        self._title_icon.pack(side=tk.LEFT, padx=(6, 0))
+
+        self._title_emoji_label = tk.Label(
+            frame,
+            text=config.TITLE_EMOJI,
+            bg=bg,
+            fg=fg,
+            font=self._font_emoji,
+            width=2,
+            anchor=tk.CENTER,
+        )
+        self._title_emoji_label.pack(side=tk.LEFT, padx=(0, 2))
+
+        self._title_text_label = tk.Label(
+            frame,
+            text=config.TITLE_TEXT,
+            bg=bg,
+            fg=fg,
+            font=self._font_body,
+            anchor=tk.W,
+        )
+        self._title_text_label.pack(side=tk.LEFT, padx=(2, 0))
+
+        # Right side (pack order: daily cost first, then 7d, then 5h — rightmost first)
+        self._title_cost_label = tk.Label(
+            frame,
+            text="",
+            bg=bg,
+            fg=fg,
+            font=self._font_body,
+            anchor=tk.E,
+        )
+        self._title_cost_label.pack(side=tk.RIGHT, padx=(0, 6))
+
+        self._title_7d_label = tk.Label(
+            frame,
+            text="",
+            bg=bg,
+            fg=fg,
+            font=self._font_body,
+            anchor=tk.E,
+        )
+        self._title_7d_label.pack(side=tk.RIGHT, padx=(0, 4))
+
+        self._title_5h_label = tk.Label(
+            frame,
+            text="",
+            bg=bg,
+            fg=fg,
+            font=self._font_body,
+            anchor=tk.E,
+        )
+        self._title_5h_label.pack(side=tk.RIGHT, padx=(0, 4))
+
+        # Bind drag on all title bar widgets
+        title_widgets = [
+            frame,
+            self._title_icon,
+            self._title_emoji_label,
+            self._title_text_label,
+            self._title_cost_label,
+            self._title_7d_label,
+            self._title_5h_label,
+        ]
+        for w in title_widgets:
+            w.bind("<Button-1>", self._on_drag_start)
+            w.bind("<B1-Motion>", self._on_drag_motion)
+            w.bind("<Button-3>", self._on_title_bar_right_click)
+
+        return frame
+
+    def _on_title_bar_right_click(self, event: Any):
+        """Show Settings / Restart / Quit menu on title bar right-click."""
+        self._title_menu.delete(0, tk.END)
+        self._title_menu.add_command(
+            label="Settings",
+            command=self._on_settings if self._on_settings else lambda: None,
+        )
+        self._title_menu.add_command(
+            label="Restart",
+            command=self._on_restart if self._on_restart else lambda: None,
+        )
+        self._title_menu.add_command(
+            label="Quit",
+            command=self._on_quit if self._on_quit else lambda: None,
+        )
+        self._title_menu.tk_popup(event.x_root, event.y_root)
+        return "break"
+
+    def update_title_bar(
+        self,
+        *,
+        tray_color_hex: str,
+        daily_cost: float,
+        limits: dict,
+    ):
+        """Update the title bar with current tray color, cost, and limit data."""
+        bg = config.DEFAULT_COLOR_UNATTACHED
+        fg = _contrast_text_for_bg(bg)
+
+        # Update fonts in case settings changed
+        self._title_emoji_label.configure(font=self._font_emoji)
+        self._title_text_label.configure(font=self._font_body)
+        self._title_cost_label.configure(font=self._font_body)
+        self._title_7d_label.configure(font=self._font_body)
+        self._title_5h_label.configure(font=self._font_body)
+
+        # Right-side info
+        cost_text = f"${daily_cost:.2f}" if daily_cost > 0 else ""
+        self._title_cost_label.configure(text=cost_text, fg=fg, bg=bg)
+
+        five_hour = limits.get("five_hour", {})
+        seven_day = limits.get("seven_day", {})
+
+        five_util = five_hour.get("utilization") if isinstance(five_hour, dict) else None
+        seven_util = seven_day.get("utilization") if isinstance(seven_day, dict) else None
+
+        self._title_5h_label.configure(
+            text=f"5h: {five_util:.0f}%" if five_util is not None else "",
+            fg=fg,
+            bg=bg,
+        )
+        self._title_7d_label.configure(
+            text=f"7d: {seven_util:.0f}%" if seven_util is not None else "",
+            fg=fg,
+            bg=bg,
+        )
+
+        # Update title bar height
+        try:
+            self._title_bar.configure(height=self._settings.row_height)
+        except tk.TclError:
+            pass
 
     # ------------------------------------------------------------------
     # Settings — single path for all configuration
@@ -266,10 +460,13 @@ class MainWindow:
         # Resize height, preserve position (or anchor bottom edge if grow_up)
         self._window.update_idletasks()
         old_height = self._window.winfo_height()
+        title_bar_height = self._settings.row_height + _ROW_PAD_Y * 2
         if sessions:
-            new_height = len(sessions) * (self._settings.row_height + _ROW_PAD_Y * 2)
+            new_height = title_bar_height + len(sessions) * (
+                self._settings.row_height + _ROW_PAD_Y * 2
+            )
         else:
-            new_height = self._settings.row_height + _ROW_PAD_Y * 2
+            new_height = title_bar_height + self._settings.row_height + _ROW_PAD_Y * 2
         x = self._window.winfo_x()
         y = self._window.winfo_y()
 
@@ -321,6 +518,18 @@ class MainWindow:
             display += f"  [{branch}]"
         return display
 
+    def _flag_icon(self, *, color: str | None, bg: str) -> tk.PhotoImage:
+        """Generate an eye icon for the flag, or a transparent placeholder if no flag."""
+        icon_size = max(self._settings.row_height - 8, 16)
+        if color is not None:
+            rgb = _hex_to_rgb(color)
+            return _pil_to_photoimage(generate_icon_image(color=rgb).resize((icon_size, icon_size)))
+        # Transparent placeholder — same size, fully invisible
+        from PIL import Image
+
+        blank = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
+        return _pil_to_photoimage(blank)
+
     def _flag_color(self, row: SessionRow) -> str | None:
         """Return flag dot color based on manual flag and git status priority."""
         if row.flagged:
@@ -355,14 +564,13 @@ class MainWindow:
         row_frame.pack(fill=tk.X, padx=1, pady=1)
         row_frame.pack_propagate(False)
 
-        # Pack LEFT: flag dot → emoji (visual indicators grouped together)
+        # Pack LEFT: flag eye icon → emoji (visual indicators grouped together)
         flag_color = self._flag_color(row)
+        flag_image = self._flag_icon(color=flag_color, bg=bg)
         flag_label = tk.Label(
             row_frame,
-            text=_FLAG_DOT_CHAR,
+            image=flag_image,
             bg=bg,
-            fg=flag_color if flag_color is not None else bg,
-            font=self._font_container,
             anchor=tk.CENTER,
         )
         flag_label.pack(side=tk.LEFT, padx=(6, 0))
@@ -475,6 +683,7 @@ class MainWindow:
             "cwd_label": cwd_label,
             "container_label": container_label,
             "flag_label": flag_label,
+            "flag_image": flag_image,
         }
 
     def _update_row(self, row_data: SessionRow):
@@ -499,11 +708,11 @@ class MainWindow:
         row["cwd_label"].configure(fg=fg, font=self._font_body)
         row["status_label"].configure(font=self._font_emoji)
         row["container_label"].configure(font=self._font_container)
-        row["flag_label"].configure(font=self._font_container)
-
-        # Update flag dot color (always packed as placeholder for alignment)
+        # Update flag eye icon
         flag_color = self._flag_color(row_data)
-        row["flag_label"].configure(fg=flag_color if flag_color is not None else bg)
+        flag_image = self._flag_icon(color=flag_color, bg=bg)
+        row["flag_image"] = flag_image  # prevent GC
+        row["flag_label"].configure(image=flag_image, bg=bg)
 
         # Update row height if settings changed
         try:
