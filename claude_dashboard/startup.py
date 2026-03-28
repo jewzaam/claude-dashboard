@@ -20,7 +20,7 @@ _DESKTOP_FILENAME = "claude-dashboard.desktop"
 def _startup_cmd() -> str:
     """Build the command string for auto-start."""
     exe = Path(sys.executable)
-    log_flag = f' --log-file "{config.LOG_FILE}"'
+    log_flag = f' --debug --log-file "{config.LOG_FILE}"'
     if IS_WINDOWS:
         pythonw = exe.parent / "pythonw.exe"
         if not pythonw.exists():
