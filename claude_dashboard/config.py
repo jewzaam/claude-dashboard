@@ -102,6 +102,8 @@ VSCODE_TASKS_JSON_TEMPLATE = json.dumps(
                 "label": "Start Claude Code",
                 "type": "shell",
                 "command": "claude",
+                "isBackground": True,
+                "problemMatcher": [],
                 "presentation": {
                     "reveal": "always",
                     "panel": "new",
