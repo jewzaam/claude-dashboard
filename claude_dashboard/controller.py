@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -456,7 +457,20 @@ class AppController:
             self._trunk_cache[cwd] = trunk_ref.split("/", 1)[-1] if trunk_ref else ""
         return self._trunk_cache[cwd]
 
+    def _is_ignored(self, cwd: str) -> bool:
+        """Check if a CWD matches the ignore regex setting."""
+        regex = self._settings.ignore_regex
+        if not regex:
+            return False
+        try:
+            return bool(re.match(regex, cwd))
+        except re.error:
+            return False
+
     def _add_session(self, session: SessionInfo):
+        if self._is_ignored(session.cwd):
+            logger.debug("pid=%d ignored (cwd=%s matches ignore_regex)", session.pid, session.cwd)
+            return
         entry = _SessionEntry(session)
         # All new sessions start as IDLE until a hook event updates them.
         entry.container = detect_container(session.pid)
@@ -525,6 +539,8 @@ class AppController:
         live_cwds = {e.session.cwd for e in self._sessions.values()}
         for cwd, saved in self._saved_state.items():
             if cwd in live_cwds:
+                continue
+            if self._is_ignored(cwd):
                 continue
             self._next_synthetic_pid -= 1
             synthetic_pid = self._next_synthetic_pid
@@ -1129,6 +1145,8 @@ class AppController:
         state: dict[str, dict] = {}
         for entry in self._sessions.values():
             cwd = entry.session.cwd
+            if self._is_ignored(cwd):
+                continue
             agents = {
                 aid: {"state": a.state.value, "agent_type": a.agent_type}
                 for aid, a in entry.agents.items()
@@ -1154,6 +1172,8 @@ class AppController:
         # Preserve hash-only entries from saved state for CWDs with no active session
         active_cwds = {e.session.cwd for e in self._sessions.values()}
         for cwd, saved_entry in self._saved_state.items():
+            if self._is_ignored(cwd):
+                continue
             if cwd not in active_cwds and "vscode_tasks_json_hash" in saved_entry:
                 if cwd not in state:
                     state[cwd] = {}
@@ -1217,6 +1237,15 @@ class AppController:
         self._settings = new_settings
         self._save_settings_safe()
         set_run_on_startup(enabled=new_settings.run_on_startup)
+        # Remove sessions that now match the ignore regex
+        if new_settings.ignore_regex:
+            ignored_pids = [
+                pid for pid, entry in self._sessions.items() if self._is_ignored(entry.session.cwd)
+            ]
+            for pid in ignored_pids:
+                self._sessions.pop(pid, None)
+            if ignored_pids:
+                self._save_session_state()
         self._main_window.apply_settings(new_settings)
         self._refresh_ui()
         logger.info("settings saved and applied")

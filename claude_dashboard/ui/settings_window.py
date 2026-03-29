@@ -92,6 +92,12 @@ class SettingsWindow:
             frame, "Start on login", "run_on_startup", settings.run_on_startup, row
         )
 
+        self._section_label(frame, "Filtering", row)
+        row += 1
+        row = self._add_text_field(
+            frame, "Ignore CWD (regex)", "ignore_regex", settings.ignore_regex, row
+        )
+
         self._section_label(frame, "Status Colors", row)
         row += 1
         row = self._add_color_field(
@@ -186,6 +192,20 @@ class SettingsWindow:
             font=_CHROME_HEADING_FONT,
             anchor=tk.W,
         ).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(8, 2))
+
+    def _add_text_field(self, parent: tk.Frame, label: str, key: str, value: str, row: int) -> int:
+        tk.Label(
+            parent,
+            text=label,
+            bg=_CHROME_BG,
+            fg=_CHROME_FG,
+            font=_CHROME_FONT,
+            anchor=tk.W,
+        ).grid(row=row, column=0, sticky=tk.W, padx=(0, 8), pady=2)
+        var = tk.StringVar(value=value)
+        self._vars[key] = var
+        tk.Entry(parent, textvariable=var, width=30).grid(row=row, column=1, sticky=tk.W, pady=2)
+        return row + 1
 
     def _add_int_field(self, parent: tk.Frame, label: str, key: str, value: int, row: int) -> int:
         tk.Label(
