@@ -646,6 +646,21 @@ class AppController:
         if prior == new_state:
             return
 
+        # Don't let parallel tool failures overwrite a pending permission.
+        # When Claude fires parallel tool calls, one may need permission while
+        # others fail. PostToolUseFailure should not clear permission_required.
+        # PostToolUse is allowed (permission was auto-resolved or granted).
+        if (
+            prior == StatusState.PERMISSION_REQUIRED
+            and new_state == StatusState.WORKING
+            and event == "PostToolUseFailure"
+        ):
+            logger.debug(
+                "pid=%d ignoring PostToolUseFailure during permission_required",
+                pid,
+            )
+            return
+
         entry.state = new_state
         entry.branch = detect_branch(cwd=entry.session.cwd)
         cwd_short = cwd_basename(cwd=entry.session.cwd)
@@ -883,9 +898,17 @@ class AppController:
         def open_in_vscode():
             self._open_in_vscode(session)
 
+        def hide():
+            entry = self._sessions.get(session.pid)
+            if entry:
+                entry.hidden = True
+                logger.info("pid=%d ghost hidden via context menu", session.pid)
+                self._refresh_ui()
+
         self._context_menu.add_command(label=f"Ghost: {cwd_display}", state=tk.DISABLED)
         self._context_menu.add_separator()
         self._context_menu.add_command(label="Open in VS Code", command=open_in_vscode)
+        self._context_menu.add_command(label="Hide", command=hide)
         self._context_menu.add_command(label="Dismiss", command=dismiss)
 
         self._context_menu_open = True
