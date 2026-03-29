@@ -34,7 +34,7 @@ HTTP hooks are documented by Claude Code but don't work in practice (tested 2026
 | `claude_dashboard/config.py` | Constants, StatusState enum, defaults, LOG_FILE, STATE_FILE |
 | `claude_dashboard/hook_server.py` | HTTP server on port 17384, event→state mapping, SO_REUSEADDR/SO_REUSEPORT |
 | `claude_dashboard/controller.py` | Session lifecycle, hook wiring, UI coordination, session state persistence |
-| `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers, `detect_git_status()` |
+| `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()` |
 | `claude_dashboard/file_utils.py` | Atomic JSON file writes (shared by settings + state persistence) |
 | `claude_dashboard/ui/main_window.py` | Dashboard window with session rows |
 | `claude_dashboard/ui/settings_window.py` | Modal settings editor |
@@ -51,7 +51,7 @@ HTTP hooks are documented by Claude Code but don't work in practice (tested 2026
 
 - Python 3.11+, Tkinter, psutil, pystray, Pillow
 - black (line-length 100), flake8, mypy
-- pytest with 80%+ coverage (currently ~94%)
+- pytest with 80%+ coverage (currently ~91%)
 - Keyword-only args with `*` separator on all public functions
 - Settings flow through a single `apply_settings()` path — no duplicating logic between init and update
 - All colors/fonts in named constants, not magic strings
@@ -132,21 +132,34 @@ The relay script always runs with `--debug` in hooks-settings.json, logging raw 
 - Clean shutdown with `SO_REUSEADDR`/`SO_REUSEPORT` on hook server socket
 
 ### UI Interactions
-- **Right-click menu**: Global show/hide session visibility toggles
-- **Middle-click**: Toggle flag on clicked row
-- **Flag indicator**: Purple dot (⬤) left of container label. Sticky — only middle-click toggles
+- **Left-click (live)**: Foreground the session's VS Code/terminal window; clear Ready→Idle
+- **Left-click (ghost)**: Open in VS Code with tasks.json (auto-launch Claude)
+- **Double-click**: Open PR in browser if branch is pushed-not-merged; falls back to create-PR page if no PR exists
+- **Middle-click**: Toggle manual flag on clicked row
+- **Right-click (row)**: Hide, Clear State, Open PR (when pushed-not-merged); ghosts also get Open in VS Code, Dismiss
+- **Right-click (title bar)**: Sessions visibility toggles, Open... (folder picker → VS Code), Settings, Restart, Quit
+- **Flag eye icon**: Eye shape left of emoji — outer color = git status, pupil = manual flag (middle-click)
 - **Tray menu**: Fully dynamic with "Unhide: <session>" items when sessions are hidden
 
 ### State Persistence
-- Session state (flagged, state) saved to `~/.claude/claude-dashboard/session-state.json`
-- Restored on startup (except hidden — hidden is transient)
+- Session state (flagged, hidden, state) saved to `~/.claude/claude-dashboard/session-state.json`
+- All persisted across dashboard restarts
+- Duplicate-CWD sessions: hidden only persists as true if ALL sessions with that CWD are hidden
 - Flag color determined by git status, configurable via 5 `color_flag_*` settings (manual, unstaged, staged, unpushed, unmerged)
 
 ### Git Status Flags
-- Flag dot automatically reflects git working tree status
+- Eye icon outer color reflects git working tree status
 - 5 states: manual flag > unstaged > staged uncommitted > committed not pushed > pushed not merged
-- Red graduation colors, all configurable via settings
+- Colors configurable via settings
 - Detection runs on each discovery tick via git subprocess calls
+- Upstream remote and trunk branch detected dynamically from `<remote>/HEAD` (no hardcoded branch names)
+
+### Merged Branch Detection
+- Branch text `[branch-name]` turns bright red when branch has been merged into trunk
+- Independent of working tree status — shows red even with staged/unstaged changes
+- Three merge strategies: ancestor check, `git cherry` (rebase), `git diff` (squash)
+- Periodic `git fetch` for pushed-not-merged sessions (~1/min, rate-limited by tick interval)
+- Title bar chef kiss image replaces unicode emoji (falls back if image missing)
 
 ### Agent Awareness (US9)
 - Dashboard tracks agents per session

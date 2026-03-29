@@ -12,10 +12,14 @@ Claude Dashboard solves this with a persistent, low-profile Tkinter window that:
 
 - Discovers all running Claude Code sessions automatically
 - Receives real-time status updates via Claude Code command hooks
-- Shows each session's workspace and current status (working, ready, idle, awaiting input, permission required)
+- Shows each session's workspace, branch, and current status (working, ready, idle, awaiting input, permission required)
+- Tracks git working tree status per session (unstaged, staged, unpushed, pushed-not-merged)
+- Detects merged branches and highlights them in red so you remember to rebase
 - Lets you click a session to bring its containing window (VS Code, terminal) to the foreground
+- Double-click to open the PR (or create one) for pushed branches
+- Ghost sessions (previous sessions no longer running) persist and can be reopened in VS Code
 - Minimizes to the system tray with attention indicators
-- Persists settings and window position across restarts
+- Persists settings, flags, hidden state, and window position across restarts
 
 ## Installation
 
@@ -77,8 +81,39 @@ The dashboard starts a local HTTP server on port 17384 to receive hook events. S
 
 | Option | Description |
 |--------|-------------|
-| `--debug` | Enable debug logging |
+| `--debug` | Enable debug logging to console |
+| `--log-file <path>` | Redirect logs to file (append mode) |
 | `--quiet` / `-q` | Suppress non-essential output |
+
+### Interactions
+
+| Action | Behavior |
+|--------|----------|
+| **Left-click** (live session) | Foreground the VS Code/terminal window |
+| **Left-click** (ghost session) | Open in VS Code with Claude auto-launch |
+| **Double-click** | Open PR in browser (or create-PR page if none exists) — only for pushed branches |
+| **Middle-click** | Toggle manual flag |
+| **Right-click** (row) | Hide, Clear State, Open PR, Open in VS Code, Dismiss |
+| **Right-click** (title bar) | Sessions visibility, Open folder in VS Code, Settings, Restart, Quit |
+
+### Visual Indicators
+
+Each session row shows:
+
+- **Eye icon** (left): outer color = git working tree status, pupil = manual flag
+- **Status emoji**: current session state (working, idle, permission required, etc.)
+- **CWD + branch**: project path and branch name; branch turns **red** when merged into trunk
+- **Container label** (right): VS Code, Terminal, etc.
+
+Git status colors on the eye icon:
+
+| Status | Color | Meaning |
+|--------|-------|---------|
+| Unstaged changes | Green | Modified files not yet staged |
+| Staged uncommitted | Amber | Changes staged but not committed |
+| Committed not pushed | Red | Local commits not on remote |
+| Pushed not merged | Blue | Branch pushed, PR open or pending |
+| Manual flag | Purple pupil | User-toggled via middle-click |
 
 ## License
 
