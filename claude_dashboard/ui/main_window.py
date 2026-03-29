@@ -47,6 +47,26 @@ _TEXT_LIGHT = "#f5f0e8"  # warm white for dark backgrounds
 _TEXT_DARK = "#1a1520"  # cool near-black for light backgrounds
 
 
+def _load_title_emoji(*, row_height: int, bg_hex: str, label_width: int) -> tk.PhotoImage | None:
+    """Load the chef kiss PNG centered in a canvas matching the emoji label width."""
+    try:
+        if config.TITLE_EMOJI_IMAGE.is_file():
+            size = max(row_height - 6, 12)
+            fg = Image.open(config.TITLE_EMOJI_IMAGE).convert("RGBA")
+            fg.thumbnail((size, size), Image.Resampling.LANCZOS)
+            bg_rgb = config.hex_to_rgb(hex_color=bg_hex)
+            canvas = Image.new("RGBA", (label_width, size), bg_rgb + (255,))
+            canvas.paste(
+                fg,
+                ((label_width - fg.width) // 2, (size - fg.height) // 2),
+                fg,
+            )
+            return _pil_to_photoimage(canvas.convert("RGB"))
+    except Exception:
+        pass
+    return None
+
+
 def _pil_to_photoimage(pil_image: Any) -> tk.PhotoImage:
     """Convert a PIL Image to a Tkinter PhotoImage via PNG buffer."""
     buf = io.BytesIO()
@@ -176,17 +196,39 @@ class MainWindow:
             bg=bg,
             anchor=tk.CENTER,
         )
-        self._title_icon.pack(side=tk.LEFT, padx=(5, 0))
+        self._title_icon.pack(side=tk.LEFT, padx=(6, 0))
 
-        self._title_emoji_label = tk.Label(
-            frame,
-            text=config.TITLE_EMOJI,
-            bg=bg,
-            fg=fg,
-            font=self._font_emoji,
-            width=2,
-            anchor=tk.CENTER,
+        # Measure the emoji label width so the image label matches it exactly
+        probe = tk.Label(frame, text="XX", font=self._font_emoji, width=2)
+        frame.update_idletasks()
+        emoji_label_width = probe.winfo_reqwidth()
+        probe.destroy()
+
+        self._emoji_label_width = emoji_label_width
+        self._title_emoji_image = _load_title_emoji(
+            row_height=self._settings.row_height,
+            bg_hex=self._title_bg,
+            label_width=emoji_label_width,
         )
+        if self._title_emoji_image:
+            self._title_emoji_label = tk.Label(
+                frame,
+                image=self._title_emoji_image,
+                bg=bg,
+                borderwidth=0,
+                padx=0,
+                pady=0,
+            )
+        else:
+            self._title_emoji_label = tk.Label(
+                frame,
+                text=config.TITLE_EMOJI,
+                bg=bg,
+                fg=fg,
+                font=self._font_emoji,
+                width=2,
+                anchor=tk.CENTER,
+            )
         self._title_emoji_label.pack(side=tk.LEFT, padx=(0, 2))
 
         self._title_text_label = tk.Label(
@@ -334,8 +376,17 @@ class MainWindow:
         self._force_resize = True
         self._icon_cache.clear()
 
-        # Update title bar fonts
-        self._title_emoji_label.configure(font=self._font_emoji)
+        # Update title bar emoji (image or font)
+        new_emoji_image = _load_title_emoji(
+            row_height=settings.row_height,
+            bg_hex=self._title_bg,
+            label_width=self._emoji_label_width,
+        )
+        if new_emoji_image:
+            self._title_emoji_image = new_emoji_image
+            self._title_emoji_label.configure(image=self._title_emoji_image)
+        else:
+            self._title_emoji_label.configure(font=self._font_emoji)
         self._title_text_label.configure(font=self._font_body)
         self._title_cost_label.configure(font=self._font_body)
         self._title_7d_label.configure(font=self._font_body)
