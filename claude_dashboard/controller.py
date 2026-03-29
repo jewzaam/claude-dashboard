@@ -795,9 +795,9 @@ class AppController:
         logger.info("row clicked pid=%d cwd=%s", session.pid, session.cwd)
         entry = self._sessions.get(session.pid)
 
-        # Unattached sessions ignore left-click (use right-click menu instead)
+        # Unattached sessions open in VS Code on left-click
         if entry and entry.unattached:
-            logger.debug("pid=%d unattached click ignored (use context menu)", session.pid)
+            self._open_in_vscode(cwd=session.cwd)
             return
 
         container = entry.container if entry else None
@@ -820,16 +820,11 @@ class AppController:
                 logger.warning("failed to foreground pid=%d", session.pid)
 
     def _on_row_double_click(self, session: SessionInfo):
-        """Double-click toggles between Idle and Ready."""
+        """Double-click opens PR if branch is pushed-not-merged."""
         entry = self._sessions.get(session.pid)
-        if entry and entry.state == StatusState.READY:
-            entry.state = StatusState.IDLE
-            logger.debug("pid=%d double-clicked while ready, now idle", session.pid)
-            self._refresh_ui()
-        elif entry and entry.state == StatusState.IDLE:
-            entry.state = StatusState.READY
-            logger.debug("pid=%d double-clicked while idle, now ready", session.pid)
-            self._refresh_ui()
+        if entry and entry.git_status == config.GitStatus.PUSHED_NOT_MERGED:
+            self._open_pr(session)
+            return
 
     def _on_row_middle_click(self, session: SessionInfo):
         """Middle-click toggles flagged state."""

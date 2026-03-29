@@ -299,3 +299,71 @@ class TestOpenFolderAction:
         mock_self = MagicMock(spec=AppController)
         AppController._open_folder(mock_self)
         mock_self._open_in_vscode.assert_not_called()
+
+
+class TestLeftClickGhost:
+    """Test that left-click on ghost sessions opens in VS Code."""
+
+    def test_ghost_left_click_opens_in_vscode(self):
+        from claude_dashboard.controller import AppController
+
+        session = _make_session(cwd="/tmp/ghost-project")
+        entry = _SessionEntry(session)
+        entry.unattached = True
+
+        mock_self = MagicMock(spec=AppController)
+        mock_self._sessions = {session.pid: entry}
+        AppController._on_row_left_click(mock_self, session)
+        mock_self._open_in_vscode.assert_called_once_with(cwd="/tmp/ghost-project")
+
+    def test_live_left_click_does_not_open_vscode(self):
+        from claude_dashboard.controller import AppController
+
+        session = _make_session(cwd="/tmp/live-project")
+        entry = _SessionEntry(session)
+        entry.unattached = False
+
+        mock_self = MagicMock(spec=AppController)
+        mock_self._sessions = {session.pid: entry}
+        AppController._on_row_left_click(mock_self, session)
+        mock_self._open_in_vscode.assert_not_called()
+
+
+class TestDoubleClickOpenPr:
+    """Test that double-click opens PR when pushed-not-merged."""
+
+    def test_double_click_pushed_not_merged_opens_pr(self):
+        from claude_dashboard.controller import AppController
+
+        session = _make_session(cwd="/tmp/pr-project")
+        entry = _SessionEntry(session)
+        entry.git_status = GitStatus.PUSHED_NOT_MERGED
+
+        mock_self = MagicMock(spec=AppController)
+        mock_self._sessions = {session.pid: entry}
+        AppController._on_row_double_click(mock_self, session)
+        mock_self._open_pr.assert_called_once_with(session)
+
+    def test_double_click_clean_does_not_open_pr(self):
+        from claude_dashboard.controller import AppController
+
+        session = _make_session(cwd="/tmp/clean-project")
+        entry = _SessionEntry(session)
+        entry.git_status = GitStatus.CLEAN
+
+        mock_self = MagicMock(spec=AppController)
+        mock_self._sessions = {session.pid: entry}
+        AppController._on_row_double_click(mock_self, session)
+        mock_self._open_pr.assert_not_called()
+
+    def test_double_click_unstaged_does_not_open_pr(self):
+        from claude_dashboard.controller import AppController
+
+        session = _make_session(cwd="/tmp/dirty-project")
+        entry = _SessionEntry(session)
+        entry.git_status = GitStatus.UNSTAGED_CHANGES
+
+        mock_self = MagicMock(spec=AppController)
+        mock_self._sessions = {session.pid: entry}
+        AppController._on_row_double_click(mock_self, session)
+        mock_self._open_pr.assert_not_called()
