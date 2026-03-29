@@ -24,6 +24,7 @@ class SessionInfo:
     cwd: str
     started_at: int
     pid_alive: bool = False
+    entrypoint: str = "cli"
 
 
 def discover_sessions(*, sessions_dir: Path | None = None) -> list[SessionInfo]:
@@ -45,6 +46,7 @@ def discover_sessions(*, sessions_dir: Path | None = None) -> list[SessionInfo]:
                 session_id=data.get("sessionId", ""),
                 cwd=data.get("cwd", ""),
                 started_at=data.get("startedAt", 0),
+                entrypoint=data.get("entrypoint", "cli"),
             )
             if session.pid and session.session_id:
                 sessions.append(session)

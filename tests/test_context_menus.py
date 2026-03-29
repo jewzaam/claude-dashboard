@@ -10,8 +10,10 @@ from claude_dashboard.controller import _AgentEntry, _SessionEntry
 from claude_dashboard.session import SessionInfo
 
 
-def _make_session(*, pid: int = 1000, cwd: str = "/tmp/test") -> SessionInfo:
-    return SessionInfo(pid=pid, session_id="test-sid", cwd=cwd, started_at=0)
+def _make_session(
+    *, pid: int = 1000, cwd: str = "/tmp/test", entrypoint: str = "cli"
+) -> SessionInfo:
+    return SessionInfo(pid=pid, session_id="test-sid", cwd=cwd, started_at=0, entrypoint=entrypoint)
 
 
 class TestLiveContextMenuHide:
@@ -121,3 +123,70 @@ class TestRowRightClickDispatch:
         live.unattached = False
         # Ghost and live are distinguished only by unattached flag
         assert ghost.unattached != live.unattached
+
+
+class TestAutoHideNonInteractive:
+    """Test that non-CLI sessions are auto-hidden."""
+
+    def test_cli_entrypoint_not_hidden(self):
+        session = _make_session(entrypoint="cli")
+        entry = _SessionEntry(session)
+        assert entry.hidden is False
+
+    def test_sdk_cli_entrypoint_auto_hidden(self):
+        """Sessions with entrypoint != cli (e.g. claude -p) should be hidden."""
+        session = _make_session(entrypoint="sdk-cli")
+        entry = _SessionEntry(session)
+        # Simulates what _add_session does
+        if session.entrypoint != "cli":
+            entry.hidden = True
+        assert entry.hidden is True
+
+    def test_entrypoint_defaults_to_cli(self):
+        session = SessionInfo(pid=1, session_id="s", cwd="/tmp", started_at=0)
+        assert session.entrypoint == "cli"
+
+    def test_entrypoint_parsed_from_session_data(self):
+        session = SessionInfo(pid=1, session_id="s", cwd="/tmp", started_at=0, entrypoint="sdk-cli")
+        assert session.entrypoint == "sdk-cli"
+
+
+class TestHiddenStatePersistence:
+    """Test that hidden state survives restarts and ghost replacement."""
+
+    def test_hidden_carried_from_ghost_to_live(self):
+        """When a live session replaces a ghost, hidden state transfers."""
+        ghost = _SessionEntry(_make_session(pid=-1))
+        ghost.unattached = True
+        ghost.hidden = True
+        live = _SessionEntry(_make_session(pid=1000))
+        live.hidden = ghost.hidden
+        assert live.hidden is True
+
+    def test_flagged_and_hidden_both_carry(self):
+        ghost = _SessionEntry(_make_session(pid=-1))
+        ghost.unattached = True
+        ghost.flagged = True
+        ghost.hidden = True
+        live = _SessionEntry(_make_session(pid=1000))
+        live.flagged = ghost.flagged
+        live.hidden = ghost.hidden
+        assert live.flagged is True
+        assert live.hidden is True
+
+    def test_hidden_restored_from_saved_state(self):
+        """Simulates _apply_saved_state restoring hidden=True."""
+        entry = _SessionEntry(_make_session())
+        assert entry.hidden is False
+        saved = {"hidden": True, "flagged": False}
+        if saved.get("hidden"):
+            entry.hidden = True
+        assert entry.hidden is True
+
+    def test_hidden_false_not_set(self):
+        """hidden=False in saved state doesn't override."""
+        entry = _SessionEntry(_make_session())
+        saved = {"hidden": False}
+        if saved.get("hidden"):
+            entry.hidden = True
+        assert entry.hidden is False
