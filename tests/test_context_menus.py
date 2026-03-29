@@ -221,31 +221,48 @@ class TestOpenPrMenuVisibility:
 class TestOpenPrAction:
     """Test the _open_pr subprocess invocation."""
 
-    @patch("claude_dashboard.controller.subprocess.Popen")
-    def test_open_pr_calls_gh_pr_view_web(self, mock_popen):
-        """_open_pr launches gh pr view --web in session cwd."""
+    @patch("claude_dashboard.controller.subprocess.run")
+    def test_open_pr_views_existing_pr(self, mock_run):
+        """_open_pr opens existing PR when gh pr view succeeds."""
         from claude_dashboard.controller import AppController
 
+        mock_run.return_value = MagicMock(returncode=0)
         session = _make_session(cwd="/tmp/my-repo")
-        # Call the method directly (it's a simple subprocess wrapper)
         AppController._open_pr(None, session)
-        mock_popen.assert_called_once_with(
+        mock_run.assert_called_once_with(
             ["gh", "pr", "view", "--web"],
             cwd="/tmp/my-repo",
-            stdout=-3,  # subprocess.DEVNULL
+            stdout=-3,
+            stderr=-3,
+            timeout=10,
+        )
+
+    @patch("claude_dashboard.controller.subprocess.Popen")
+    @patch("claude_dashboard.controller.subprocess.run")
+    def test_open_pr_falls_back_to_create(self, mock_run, mock_popen):
+        """_open_pr opens create-PR page when no PR exists."""
+        from claude_dashboard.controller import AppController
+
+        mock_run.return_value = MagicMock(returncode=1)
+        session = _make_session(cwd="/tmp/my-repo")
+        AppController._open_pr(None, session)
+        mock_popen.assert_called_once_with(
+            ["gh", "pr", "create", "--web"],
+            cwd="/tmp/my-repo",
+            stdout=-3,
             stderr=-3,
         )
 
-    @patch("claude_dashboard.controller.subprocess.Popen", side_effect=FileNotFoundError)
-    def test_open_pr_handles_missing_gh(self, mock_popen):
+    @patch("claude_dashboard.controller.subprocess.run", side_effect=FileNotFoundError)
+    def test_open_pr_handles_missing_gh(self, mock_run):
         """_open_pr does not raise when gh CLI is missing."""
         from claude_dashboard.controller import AppController
 
         session = _make_session(cwd="/tmp/my-repo")
         AppController._open_pr(None, session)  # should not raise
 
-    @patch("claude_dashboard.controller.subprocess.Popen", side_effect=OSError("test"))
-    def test_open_pr_handles_os_error(self, mock_popen):
+    @patch("claude_dashboard.controller.subprocess.run", side_effect=OSError("test"))
+    def test_open_pr_handles_os_error(self, mock_run):
         """_open_pr does not raise on generic OSError."""
         from claude_dashboard.controller import AppController
 
