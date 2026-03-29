@@ -86,6 +86,7 @@ class MainWindow:
         on_restart: Callable[[], None] | None = None,
         on_quit: Callable[[], None] | None = None,
         on_build_sessions_menu: Callable[[tk.Menu], None] | None = None,
+        on_open_folder: Callable[[], None] | None = None,
     ):
         self._root = root
         self._settings = settings
@@ -99,6 +100,7 @@ class MainWindow:
         self._on_restart = on_restart
         self._on_quit = on_quit
         self._on_build_sessions_menu = on_build_sessions_menu
+        self._on_open_folder = on_open_folder
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._rows: dict[int, dict[str, Any]] = {}
         self._row_order: list[int] = []
@@ -255,6 +257,11 @@ class MainWindow:
             self._on_build_sessions_menu(sessions_submenu)
         self._title_menu.add_cascade(label="Sessions", menu=sessions_submenu)
 
+        self._title_menu.add_separator()
+        self._title_menu.add_command(
+            label="Open...",
+            command=self._on_open_folder if self._on_open_folder else lambda: None,
+        )
         self._title_menu.add_separator()
         self._title_menu.add_command(
             label="Settings",

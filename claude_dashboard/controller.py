@@ -13,6 +13,7 @@ import time
 import threading
 import tkinter as tk
 from pathlib import Path
+from tkinter import filedialog
 from typing import Callable
 
 from claude_dashboard import config
@@ -243,6 +244,7 @@ class AppController:
             on_restart=self._restart,
             on_quit=self._quit,
             on_build_sessions_menu=self._build_sessions_menu,
+            on_open_folder=self._open_folder,
         )
 
         # Title bar data (refreshed each discovery tick)
@@ -901,7 +903,7 @@ class AppController:
             self._refresh_ui()
 
         def open_in_vscode():
-            self._open_in_vscode(session)
+            self._open_in_vscode(cwd=session.cwd)
 
         def hide():
             entry = self._sessions.get(session.pid)
@@ -925,31 +927,42 @@ class AppController:
         self._context_menu_open = True
         self._context_menu.tk_popup(x, y)
 
-    def _open_in_vscode(self, session: SessionInfo):
-        """Write tasks.json and launch VS Code for a ghost session."""
-        result_hash = write_vscode_tasks_json(cwd=session.cwd)
-        if result_hash:
-            if session.cwd not in self._saved_state:
-                self._saved_state[session.cwd] = {}
-            self._saved_state[session.cwd]["vscode_tasks_json_hash"] = result_hash
-            self._save_session_state()
-        else:
-            logger.debug("opening VS Code without tasks.json auto-launch cwd=%s", session.cwd)
-
+    def _launch_vscode(self, *, folder: str):
+        """Launch VS Code for the given folder."""
         try:
             subprocess.Popen(
-                ["code", session.cwd],
+                ["code", folder],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            logger.info("launched VS Code for cwd=%s", session.cwd)
+            logger.info("launched VS Code for folder=%s", folder)
         except FileNotFoundError:
             logger.warning(
                 "VS Code 'code' command not found — install it via "
                 "Command Palette > Shell Command: Install 'code' command in PATH"
             )
         except OSError as exc:
-            logger.warning("failed to launch VS Code for cwd=%s error=%s", session.cwd, exc)
+            logger.warning("failed to launch VS Code for folder=%s error=%s", folder, exc)
+
+    def _open_in_vscode(self, *, cwd: str):
+        """Write tasks.json and launch VS Code for a directory."""
+        result_hash = write_vscode_tasks_json(cwd=cwd)
+        if result_hash:
+            if cwd not in self._saved_state:
+                self._saved_state[cwd] = {}
+            self._saved_state[cwd]["vscode_tasks_json_hash"] = result_hash
+            self._save_session_state()
+        else:
+            logger.debug("opening VS Code without tasks.json auto-launch cwd=%s", cwd)
+
+        self._launch_vscode(folder=cwd)
+
+    def _open_folder(self):
+        """Show a folder picker and open the selected folder in VS Code."""
+        folder = filedialog.askdirectory(title="Open folder in VS Code")
+        if not folder:
+            return
+        self._open_in_vscode(cwd=folder)
 
     def _open_pr(self, session: SessionInfo):
         """Open the GitHub PR for the session's branch in the default browser."""
