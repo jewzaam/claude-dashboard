@@ -62,6 +62,9 @@ class Settings:
     window_bg: str = config.DEFAULT_WINDOW_BG
     text_color: str = config.DEFAULT_TEXT_COLOR
 
+    # Session filtering
+    ignore_regex: str = config.DEFAULT_IGNORE_REGEX
+
 
 def load_settings(*, path: Path | None = None) -> Settings:
     """Load settings from JSON file. Returns defaults if file missing or invalid."""
