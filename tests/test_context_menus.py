@@ -5,7 +5,7 @@ Tests the state mutations triggered by right-click menu actions:
 live session Hide/Clear State, ghost Dismiss, and row right-click dispatch.
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from claude_dashboard.config import GitStatus, StatusState
 from claude_dashboard.controller import _AgentEntry, _SessionEntry
@@ -251,3 +251,51 @@ class TestOpenPrAction:
 
         session = _make_session(cwd="/tmp/my-repo")
         AppController._open_pr(None, session)  # should not raise
+
+
+class TestLaunchVscode:
+    """Test the shared _launch_vscode subprocess wrapper."""
+
+    @patch("claude_dashboard.controller.subprocess.Popen")
+    def test_launch_vscode_calls_code_with_folder(self, mock_popen):
+        from claude_dashboard.controller import AppController
+
+        AppController._launch_vscode(None, folder="/tmp/my-project")
+        mock_popen.assert_called_once_with(
+            ["code", "/tmp/my-project"],
+            stdout=-3,
+            stderr=-3,
+        )
+
+    @patch("claude_dashboard.controller.subprocess.Popen", side_effect=FileNotFoundError)
+    def test_launch_vscode_handles_missing_code(self, mock_popen):
+        from claude_dashboard.controller import AppController
+
+        AppController._launch_vscode(None, folder="/tmp/x")  # should not raise
+
+    @patch("claude_dashboard.controller.subprocess.Popen", side_effect=OSError("fail"))
+    def test_launch_vscode_handles_os_error(self, mock_popen):
+        from claude_dashboard.controller import AppController
+
+        AppController._launch_vscode(None, folder="/tmp/x")  # should not raise
+
+
+class TestOpenFolderAction:
+    """Test the _open_folder folder picker delegates to _open_in_vscode."""
+
+    @patch("claude_dashboard.controller.filedialog.askdirectory", return_value="/tmp/chosen")
+    def test_open_folder_delegates_to_open_in_vscode(self, mock_dialog):
+        from claude_dashboard.controller import AppController
+
+        mock_self = MagicMock(spec=AppController)
+        AppController._open_folder(mock_self)
+        mock_dialog.assert_called_once_with(title="Open folder in VS Code")
+        mock_self._open_in_vscode.assert_called_once_with(cwd="/tmp/chosen")
+
+    @patch("claude_dashboard.controller.filedialog.askdirectory", return_value="")
+    def test_open_folder_cancelled_does_nothing(self, mock_dialog):
+        from claude_dashboard.controller import AppController
+
+        mock_self = MagicMock(spec=AppController)
+        AppController._open_folder(mock_self)
+        mock_self._open_in_vscode.assert_not_called()
