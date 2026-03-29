@@ -85,14 +85,11 @@ def encode_project_key(*, cwd: str) -> str:
     return normalized
 
 
-_DEFAULT_BRANCHES = frozenset({"main", "master"})
-
-
-def detect_branch(*, cwd: str) -> str:
+def detect_branch(*, cwd: str, trunk_branch: str = "") -> str:
     """Return the active git branch for a directory, or empty string on failure.
 
     Reads .git/HEAD directly — no subprocess or external dependency needed.
-    Returns empty string if the branch is 'main' or 'master', if HEAD is
+    Returns empty string if the branch matches trunk_branch, if HEAD is
     detached, or if the directory is not a git repo.
     """
     try:
@@ -101,7 +98,7 @@ def detect_branch(*, cwd: str) -> str:
         if not head_content.startswith("ref: refs/heads/"):
             return ""
         branch = head_content[len("ref: refs/heads/") :]
-        if branch in _DEFAULT_BRANCHES:
+        if trunk_branch and branch == trunk_branch:
             return ""
         return branch
     except OSError:
@@ -169,26 +166,108 @@ def detect_git_status(*, cwd: str) -> GitStatus:
         pass
 
     if not has_upstream and branch:
-        for default in _DEFAULT_BRANCHES:
+        _, trunk = detect_upstream(cwd=cwd)
+        if trunk:
             try:
                 fallback = subprocess.run(
-                    ["git", "log", "--oneline", f"{default}..HEAD"],
+                    ["git", "log", "--oneline", f"{trunk}..HEAD"],
                     cwd=cwd,
                     capture_output=True,
                     text=True,
                     timeout=2,
                 )
-                if fallback.returncode == 0:
-                    if fallback.stdout.strip():
-                        return GitStatus.COMMITTED_NOT_PUSHED
-                    break
+                if fallback.returncode == 0 and fallback.stdout.strip():
+                    return GitStatus.COMMITTED_NOT_PUSHED
             except (OSError, subprocess.TimeoutExpired):
-                continue
+                pass
 
     if branch:
         return GitStatus.PUSHED_NOT_MERGED
 
     return GitStatus.CLEAN
+
+
+def detect_upstream(*, cwd: str) -> tuple[str, str]:
+    """Detect the upstream remote and trunk ref from <remote>/HEAD.
+
+    Returns (remote, trunk_ref) e.g. ("origin", "origin/main").
+    Returns ("", "") if not detectable.
+    """
+    try:
+        # Find all remotes and check each for a HEAD symref
+        remotes_result = subprocess.run(
+            ["git", "remote"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if remotes_result.returncode != 0:
+            return ("", "")
+        for remote in remotes_result.stdout.strip().splitlines():
+            result = subprocess.run(
+                ["git", "symbolic-ref", f"refs/remotes/{remote}/HEAD"],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if result.returncode == 0:
+                ref = result.stdout.strip()
+                if ref.startswith("refs/remotes/"):
+                    return (remote, ref[len("refs/remotes/") :])
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return ("", "")
+
+
+def detect_merged(*, cwd: str, branch: str) -> bool:
+    """Check if branch has been merged into the trunk ref (origin/main etc).
+
+    Detects trunk from origin/HEAD, then uses three strategies matching
+    Three strategies: ancestor check, git cherry for rebase merges, and git diff
+    for squash merges.
+    """
+    _, trunk = detect_upstream(cwd=cwd)
+    if not trunk:
+        return False
+
+    try:
+        # Strategy 1: regular merge (branch is ancestor of trunk)
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", branch, trunk],
+            cwd=cwd,
+            capture_output=True,
+            timeout=2,
+        )
+        if ancestor.returncode == 0:
+            return True
+
+        # Strategy 2: rebase merge (all commits have patch-equivalent in trunk)
+        cherry = subprocess.run(
+            ["git", "cherry", trunk, branch],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if cherry.returncode == 0:
+            unmerged = sum(1 for line in cherry.stdout.splitlines() if line.startswith("+"))
+            if unmerged == 0:
+                return True
+
+        # Strategy 3: squash merge (branch tree identical to trunk)
+        diff = subprocess.run(
+            ["git", "diff", "--quiet", trunk, branch, "--"],
+            cwd=cwd,
+            capture_output=True,
+            timeout=2,
+        )
+        if diff.returncode == 0:
+            return True
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return False
 
 
 def cwd_basename(*, cwd: str) -> str:

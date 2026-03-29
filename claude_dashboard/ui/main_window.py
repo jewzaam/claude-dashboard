@@ -585,13 +585,21 @@ class MainWindow:
             ContainerType.SCREEN: "screen",
         }.get(container.container_type, container.container_type.value)
 
-    def _cwd_display(self, cwd: str, branch: str, agent_count: int = 0) -> str:
+    def _cwd_display(self, cwd: str, agent_count: int = 0) -> str:
         display = cwd_relative_to_home(cwd=cwd)
         if agent_count > 0:
             display += f" (+{agent_count})"
-        if branch:
-            display += f"  [{branch}]"
         return display
+
+    @staticmethod
+    def _branch_display(branch: str) -> str:
+        return f"[{branch}]" if branch else ""
+
+    @staticmethod
+    def _branch_color(*, merged: bool, fg: str) -> str:
+        if merged:
+            return config.DEFAULT_COLOR_BRANCH_MERGED
+        return fg
 
     def _flag_icon(self, row: SessionRow) -> tk.PhotoImage:
         """Generate an eye icon for git status + manual flag, or transparent if clean."""
@@ -690,7 +698,7 @@ class MainWindow:
         )
         container_label.pack(side=tk.RIGHT, padx=(0, 6))
 
-        cwd_var = tk.StringVar(value=self._cwd_display(session.cwd, row.branch, row.agent_count))
+        cwd_var = tk.StringVar(value=self._cwd_display(session.cwd, row.agent_count))
         cwd_label = tk.Label(
             row_frame,
             textvariable=cwd_var,
@@ -699,10 +707,22 @@ class MainWindow:
             font=self._font_body,
             anchor=tk.W,
         )
-        cwd_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+        cwd_label.pack(side=tk.LEFT, padx=(2, 0))
+
+        branch_var = tk.StringVar(value=self._branch_display(row.branch))
+        branch_fg = self._branch_color(merged=row.merged, fg=fg)
+        branch_label = tk.Label(
+            row_frame,
+            textvariable=branch_var,
+            bg=bg,
+            fg=branch_fg,
+            font=self._font_body,
+            anchor=tk.W,
+        )
+        branch_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
 
         # Click and right-click bindings on all widgets
-        widgets = [row_frame, status_label, cwd_label, container_label, flag_label]
+        widgets = [row_frame, status_label, cwd_label, branch_label, container_label, flag_label]
 
         def make_click(s: SessionInfo = session):
             def handler(event: Any):
@@ -769,9 +789,11 @@ class MainWindow:
             "frame": row_frame,
             "status_var": status_var,
             "cwd_var": cwd_var,
+            "branch_var": branch_var,
             "container_var": container_var,
             "status_label": status_label,
             "cwd_label": cwd_label,
+            "branch_label": branch_label,
             "container_label": container_label,
             "flag_label": flag_label,
             "flag_image": flag_image,
@@ -792,11 +814,13 @@ class MainWindow:
             container_text = self._container_label(row_data.container)
 
         row["status_var"].set(emoji)
-        row["cwd_var"].set(
-            self._cwd_display(row_data.session.cwd, row_data.branch, row_data.agent_count)
-        )
+        row["cwd_var"].set(self._cwd_display(row_data.session.cwd, row_data.agent_count))
+        row["branch_var"].set(self._branch_display(row_data.branch))
         row["container_var"].set(container_text)
         row["cwd_label"].configure(fg=fg, font=self._font_body)
+        row["branch_label"].configure(
+            fg=self._branch_color(merged=row_data.merged, fg=fg), font=self._font_body
+        )
         row["status_label"].configure(font=self._font_emoji)
         row["container_label"].configure(font=self._font_container)
         flag_image = self._flag_icon(row_data)
@@ -809,7 +833,14 @@ class MainWindow:
         except tk.TclError:
             pass
 
-        for key in ("frame", "status_label", "cwd_label", "container_label", "flag_label"):
+        for key in (
+            "frame",
+            "status_label",
+            "cwd_label",
+            "branch_label",
+            "container_label",
+            "flag_label",
+        ):
             try:
                 row[key].configure(bg=bg)
             except tk.TclError:

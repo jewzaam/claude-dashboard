@@ -10,6 +10,7 @@ from claude_dashboard.session import (
     cwd_relative_to_home,
     detect_branch,
     detect_git_status,
+    detect_merged,
     discover_sessions,
     encode_project_key,
     validate_pid,
@@ -111,17 +112,24 @@ class TestDetectBranch:
         (git_dir / "HEAD").write_text("ref: refs/heads/feature-xyz\n", encoding="utf-8")
         assert detect_branch(cwd=str(tmp_path)) == "feature-xyz"
 
-    def test_returns_empty_for_main(self, tmp_path):
+    def test_returns_empty_for_trunk(self, tmp_path):
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
         (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
-        assert detect_branch(cwd=str(tmp_path)) == ""
+        assert detect_branch(cwd=str(tmp_path), trunk_branch="main") == ""
 
-    def test_returns_empty_for_master(self, tmp_path):
+    def test_returns_branch_when_trunk_differs(self, tmp_path):
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
-        (git_dir / "HEAD").write_text("ref: refs/heads/master\n", encoding="utf-8")
-        assert detect_branch(cwd=str(tmp_path)) == ""
+        (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        assert detect_branch(cwd=str(tmp_path), trunk_branch="develop") == "main"
+
+    def test_returns_branch_without_trunk(self, tmp_path):
+        """Without trunk_branch, all branches are returned including main."""
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        assert detect_branch(cwd=str(tmp_path)) == "main"
 
     def test_returns_empty_for_detached_head(self, tmp_path):
         git_dir = tmp_path / ".git"
@@ -270,14 +278,14 @@ class TestDetectGitStatus:
         assert result == GitStatus.COMMITTED_NOT_PUSHED
 
     def test_committed_not_pushed_no_upstream(self, tmp_path):
-        """No upstream, commits ahead of default branch returns COMMITTED_NOT_PUSHED."""
+        """No upstream, commits ahead of trunk returns COMMITTED_NOT_PUSHED."""
         (tmp_path / ".git").mkdir()
         responses = {
             ("status", "--porcelain"): _make_run_result(stdout=""),
             ("log", "--oneline", "@{u}..HEAD"): _make_run_result(returncode=128),
-            # Both default branches must respond — frozenset iteration order is arbitrary
-            ("log", "--oneline", "main..HEAD"): _make_run_result(stdout="abc123 feat\n"),
-            ("log", "--oneline", "master..HEAD"): _make_run_result(stdout="abc123 feat\n"),
+            ("remote",): _make_run_result(stdout="origin\n"),
+            ("symbolic-ref",): _make_run_result(stdout="refs/remotes/origin/main\n"),
+            ("log", "--oneline", "origin/main..HEAD"): _make_run_result(stdout="abc123 feat\n"),
         }
         with patch(
             "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
@@ -367,3 +375,76 @@ class TestDetectGitStatus:
         ):
             result = detect_git_status(cwd=str(tmp_path))
         assert result == GitStatus.CLEAN
+
+
+class TestDetectMerged:
+    """Tests for detect_merged — independent of git working tree status."""
+
+    def test_merged_ancestor(self, tmp_path):
+        """Branch merged via regular merge."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("remote",): _make_run_result(stdout="origin\n"),
+            ("symbolic-ref",): _make_run_result(stdout="refs/remotes/origin/main\n"),
+            ("merge-base", "--is-ancestor"): _make_run_result(returncode=0),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            assert detect_merged(cwd=str(tmp_path), branch="feature-y") is True
+
+    def test_merged_rebase(self, tmp_path):
+        """Branch merged via rebase (all cherry-picked)."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("remote",): _make_run_result(stdout="origin\n"),
+            ("symbolic-ref",): _make_run_result(stdout="refs/remotes/origin/main\n"),
+            ("merge-base", "--is-ancestor"): _make_run_result(returncode=1),
+            ("cherry",): _make_run_result(stdout="- abc123\n- def456\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            assert detect_merged(cwd=str(tmp_path), branch="feature-y") is True
+
+    def test_merged_squash(self, tmp_path):
+        """Branch merged via squash (diff quiet)."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("remote",): _make_run_result(stdout="origin\n"),
+            ("symbolic-ref",): _make_run_result(stdout="refs/remotes/origin/main\n"),
+            ("merge-base", "--is-ancestor"): _make_run_result(returncode=1),
+            ("cherry",): _make_run_result(stdout="+ abc123\n"),
+            ("diff", "--quiet"): _make_run_result(returncode=0),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            assert detect_merged(cwd=str(tmp_path), branch="feature-y") is True
+
+    def test_not_merged(self, tmp_path):
+        """Branch not merged returns False."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("remote",): _make_run_result(stdout="origin\n"),
+            ("symbolic-ref",): _make_run_result(stdout="refs/remotes/origin/main\n"),
+            ("merge-base", "--is-ancestor"): _make_run_result(returncode=1),
+            ("cherry",): _make_run_result(stdout="+ abc123\n"),
+            ("diff", "--quiet"): _make_run_result(returncode=1),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            assert detect_merged(cwd=str(tmp_path), branch="feature-y") is False
+
+    def test_no_trunk_returns_false(self, tmp_path):
+        """No origin/HEAD detected returns False."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("remote",): _make_run_result(stdout="origin\n"),
+            ("symbolic-ref",): _make_run_result(returncode=1),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            assert detect_merged(cwd=str(tmp_path), branch="feature-y") is False
