@@ -5,7 +5,9 @@ Tests the state mutations triggered by right-click menu actions:
 live session Hide/Clear State, ghost Dismiss, and row right-click dispatch.
 """
 
-from claude_dashboard.config import StatusState
+from unittest.mock import patch
+
+from claude_dashboard.config import GitStatus, StatusState
 from claude_dashboard.controller import _AgentEntry, _SessionEntry
 from claude_dashboard.session import SessionInfo
 
@@ -190,3 +192,62 @@ class TestHiddenStatePersistence:
         if saved.get("hidden"):
             entry.hidden = True
         assert entry.hidden is False
+
+
+class TestOpenPrMenuVisibility:
+    """Test that Open PR menu item appears only for PUSHED_NOT_MERGED status."""
+
+    def test_open_pr_available_when_pushed_not_merged(self):
+        entry = _SessionEntry(_make_session())
+        entry.git_status = GitStatus.PUSHED_NOT_MERGED
+        assert entry.git_status == GitStatus.PUSHED_NOT_MERGED
+
+    def test_open_pr_not_available_when_clean(self):
+        entry = _SessionEntry(_make_session())
+        entry.git_status = GitStatus.CLEAN
+        assert entry.git_status != GitStatus.PUSHED_NOT_MERGED
+
+    def test_open_pr_not_available_when_unstaged(self):
+        entry = _SessionEntry(_make_session())
+        entry.git_status = GitStatus.UNSTAGED_CHANGES
+        assert entry.git_status != GitStatus.PUSHED_NOT_MERGED
+
+    def test_open_pr_not_available_when_committed_not_pushed(self):
+        entry = _SessionEntry(_make_session())
+        entry.git_status = GitStatus.COMMITTED_NOT_PUSHED
+        assert entry.git_status != GitStatus.PUSHED_NOT_MERGED
+
+
+class TestOpenPrAction:
+    """Test the _open_pr subprocess invocation."""
+
+    @patch("claude_dashboard.controller.subprocess.Popen")
+    def test_open_pr_calls_gh_pr_view_web(self, mock_popen):
+        """_open_pr launches gh pr view --web in session cwd."""
+        from claude_dashboard.controller import AppController
+
+        session = _make_session(cwd="/tmp/my-repo")
+        # Call the method directly (it's a simple subprocess wrapper)
+        AppController._open_pr(None, session)
+        mock_popen.assert_called_once_with(
+            ["gh", "pr", "view", "--web"],
+            cwd="/tmp/my-repo",
+            stdout=-3,  # subprocess.DEVNULL
+            stderr=-3,
+        )
+
+    @patch("claude_dashboard.controller.subprocess.Popen", side_effect=FileNotFoundError)
+    def test_open_pr_handles_missing_gh(self, mock_popen):
+        """_open_pr does not raise when gh CLI is missing."""
+        from claude_dashboard.controller import AppController
+
+        session = _make_session(cwd="/tmp/my-repo")
+        AppController._open_pr(None, session)  # should not raise
+
+    @patch("claude_dashboard.controller.subprocess.Popen", side_effect=OSError("test"))
+    def test_open_pr_handles_os_error(self, mock_popen):
+        """_open_pr does not raise on generic OSError."""
+        from claude_dashboard.controller import AppController
+
+        session = _make_session(cwd="/tmp/my-repo")
+        AppController._open_pr(None, session)  # should not raise

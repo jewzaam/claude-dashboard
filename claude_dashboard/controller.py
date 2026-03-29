@@ -873,6 +873,11 @@ class AppController:
 
         self._context_menu.add_command(label=cwd_display, state=tk.DISABLED)
         self._context_menu.add_separator()
+        if entry.git_status == config.GitStatus.PUSHED_NOT_MERGED:
+            self._context_menu.add_command(
+                label="Open PR",
+                command=lambda: self._open_pr(session),
+            )
         self._context_menu.add_command(label="Hide", command=hide)
         self._context_menu.add_command(label="Clear State", command=clear_state)
 
@@ -907,6 +912,12 @@ class AppController:
 
         self._context_menu.add_command(label=f"Ghost: {cwd_display}", state=tk.DISABLED)
         self._context_menu.add_separator()
+        entry = self._sessions.get(session.pid)
+        if entry and entry.git_status == config.GitStatus.PUSHED_NOT_MERGED:
+            self._context_menu.add_command(
+                label="Open PR",
+                command=lambda: self._open_pr(session),
+            )
         self._context_menu.add_command(label="Open in VS Code", command=open_in_vscode)
         self._context_menu.add_command(label="Hide", command=hide)
         self._context_menu.add_command(label="Dismiss", command=dismiss)
@@ -939,6 +950,21 @@ class AppController:
             )
         except OSError as exc:
             logger.warning("failed to launch VS Code for cwd=%s error=%s", session.cwd, exc)
+
+    def _open_pr(self, session: SessionInfo):
+        """Open the GitHub PR for the session's branch in the default browser."""
+        try:
+            subprocess.Popen(
+                ["gh", "pr", "view", "--web"],
+                cwd=session.cwd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("opened PR in browser for cwd=%s", session.cwd)
+        except FileNotFoundError:
+            logger.warning("gh CLI not found — install from https://cli.github.com/")
+        except OSError as exc:
+            logger.warning("failed to open PR for cwd=%s error=%s", session.cwd, exc)
 
     def _clear_agents(self, session: SessionInfo):
         """Clear all agents from a session (manual reset for stale agent state)."""
