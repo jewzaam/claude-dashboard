@@ -960,17 +960,29 @@ class AppController:
         self._open_in_vscode(cwd=folder)
 
     def _open_pr(self, session: SessionInfo):
-        """Open the GitHub PR for the session's branch in the default browser."""
+        """Open the GitHub PR for the session's branch, or create-PR page if none exists."""
         try:
-            subprocess.Popen(
+            result = subprocess.run(
                 ["gh", "pr", "view", "--web"],
                 cwd=session.cwd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                timeout=10,
             )
-            logger.info("opened PR in browser for cwd=%s", session.cwd)
+            if result.returncode == 0:
+                logger.info("opened PR in browser for cwd=%s", session.cwd)
+            else:
+                subprocess.Popen(
+                    ["gh", "pr", "create", "--web"],
+                    cwd=session.cwd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                logger.info("no PR found, opened create-PR page for cwd=%s", session.cwd)
         except FileNotFoundError:
             logger.warning("gh CLI not found — install from https://cli.github.com/")
+        except subprocess.TimeoutExpired:
+            logger.warning("gh pr view timed out for cwd=%s", session.cwd)
         except OSError as exc:
             logger.warning("failed to open PR for cwd=%s error=%s", session.cwd, exc)
 
