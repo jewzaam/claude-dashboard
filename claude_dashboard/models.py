@@ -17,5 +17,6 @@ class SessionRow(NamedTuple):
     branch: str
     flagged: bool
     git_status: GitStatus
+    merged: bool
     agent_count: int
     unattached: bool

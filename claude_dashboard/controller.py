@@ -31,6 +31,8 @@ from claude_dashboard.session import (
     cwd_relative_to_home,
     detect_branch,
     detect_git_status,
+    detect_merged,
+    detect_upstream,
     discover_sessions,
     validate_pid,
 )
@@ -126,6 +128,7 @@ class _SessionEntry:
         "branch",
         "flagged",
         "git_status",
+        "merged",
         "agents",
         "unattached",
     )
@@ -138,6 +141,7 @@ class _SessionEntry:
         self.branch: str = ""
         self.flagged: bool = False
         self.git_status: GitStatus = GitStatus.CLEAN
+        self.merged: bool = False
         self.agents: dict[str, _AgentEntry] = {}
         self.unattached: bool = False
 
@@ -259,6 +263,13 @@ class AppController:
         # Buffer for hook events arriving before session discovery
         self._pending_hook_states: dict[str, StatusState] = {}
         self._first_tick_done = False
+
+        # Cached trunk branch name per CWD (e.g. "main"), populated from detect_upstream
+        self._trunk_cache: dict[str, str] = {}
+
+        # Git fetch rate limiting: fetch every N ticks for pushed-not-merged sessions
+        self._fetch_tick_counter = 0
+        self._fetch_tick_interval = max(60 // max(self._settings.poll_interval_seconds, 1), 1)
 
         # Debounce state (FR-043)
         self._debounce_id: str | None = None
@@ -383,14 +394,40 @@ class AppController:
                 self._sessions.pop(pid, None)
                 logger.info("pruned ghost for deleted directory %s", cwd)
 
-            # 5. Update branch and git status for all sessions
+            # 5. Periodic git fetch for pushed-not-merged sessions
+            self._fetch_tick_counter += 1
+            if self._fetch_tick_counter >= self._fetch_tick_interval:
+                self._fetch_tick_counter = 0
+                fetched_cwds: set[str] = set()
+                for entry in self._sessions.values():
+                    if (
+                        entry.git_status == config.GitStatus.PUSHED_NOT_MERGED
+                        and entry.session.cwd not in fetched_cwds
+                    ):
+                        fetched_cwds.add(entry.session.cwd)
+                        remote, _ = detect_upstream(cwd=entry.session.cwd)
+                        if remote:
+                            try:
+                                subprocess.run(
+                                    ["git", "fetch", remote],
+                                    cwd=entry.session.cwd,
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL,
+                                    timeout=10,
+                                )
+                            except (OSError, subprocess.TimeoutExpired):
+                                pass
+
+            # 6. Update branch, git status, and merge status for all sessions
             for entry in self._sessions.values():
-                entry.branch = detect_branch(cwd=entry.session.cwd)
+                cwd = entry.session.cwd
+                entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
                 start = time.monotonic()
-                new_git_status = detect_git_status(cwd=entry.session.cwd)
+                new_git_status = detect_git_status(cwd=cwd)
                 elapsed = time.monotonic() - start
                 if elapsed <= 0.5:
                     entry.git_status = new_git_status
+                entry.merged = bool(entry.branch and detect_merged(cwd=cwd, branch=entry.branch))
 
             now = time.monotonic()
             if now - self._daily_cost_last_read >= self._settings.poll_interval_seconds * 10:
@@ -412,12 +449,19 @@ class AppController:
     # Session lifecycle
     # ------------------------------------------------------------------
 
+    def _trunk_branch(self, cwd: str) -> str:
+        """Return cached trunk branch name for a CWD, populating on first access."""
+        if cwd not in self._trunk_cache:
+            _, trunk_ref = detect_upstream(cwd=cwd)
+            self._trunk_cache[cwd] = trunk_ref.split("/", 1)[-1] if trunk_ref else ""
+        return self._trunk_cache[cwd]
+
     def _add_session(self, session: SessionInfo):
         entry = _SessionEntry(session)
         # All new sessions start as IDLE until a hook event updates them.
         entry.container = detect_container(session.pid)
         entry.container = find_window_for_session(session.cwd, entry.container)
-        entry.branch = detect_branch(cwd=session.cwd)
+        entry.branch = detect_branch(cwd=session.cwd, trunk_branch=self._trunk_branch(session.cwd))
         start = time.monotonic()
         entry.git_status = detect_git_status(cwd=session.cwd)
         elapsed = time.monotonic() - start
@@ -497,7 +541,7 @@ class AppController:
                 entry.flagged = True
             if saved.get("hidden"):
                 entry.hidden = True
-            entry.branch = detect_branch(cwd=cwd)
+            entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
             entry.git_status = detect_git_status(cwd=cwd)
             self._sessions[synthetic_pid] = entry
             logger.debug("created unattached placeholder for %s pid=%d", cwd, synthetic_pid)
@@ -521,7 +565,7 @@ class AppController:
         entry = _SessionEntry(session)
         entry.unattached = True
         entry.flagged = flagged
-        entry.branch = detect_branch(cwd=cwd)
+        entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
         entry.git_status = detect_git_status(cwd=cwd)
         self._sessions[synthetic_pid] = entry
         logger.info("created ghost for %s pid=%d", cwd, synthetic_pid)
@@ -664,7 +708,9 @@ class AppController:
             return
 
         entry.state = new_state
-        entry.branch = detect_branch(cwd=entry.session.cwd)
+        entry.branch = detect_branch(
+            cwd=entry.session.cwd, trunk_branch=self._trunk_branch(entry.session.cwd)
+        )
         cwd_short = cwd_basename(cwd=entry.session.cwd)
         logger.debug(
             "pid=%d project=%s new_state=%s prior_state=%s event=%s",
@@ -765,6 +811,7 @@ class AppController:
                 branch=entry.branch,
                 flagged=entry.flagged,
                 git_status=entry.git_status,
+                merged=entry.merged,
                 agent_count=len(entry.agents),
                 unattached=entry.unattached,
             )
