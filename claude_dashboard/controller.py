@@ -432,11 +432,17 @@ class AppController:
             old = self._sessions.pop(unattached_pid, None)
             if old:
                 entry.flagged = old.flagged
+                entry.hidden = old.hidden
                 logger.debug(
                     "pid=%d replaced unattached placeholder for %s", session.pid, session.cwd
                 )
         else:
             self._apply_saved_state(entry)
+
+        # Auto-hide non-interactive sessions (e.g. claude -p)
+        if session.entrypoint != "cli":
+            entry.hidden = True
+            logger.info("pid=%d auto-hidden (entrypoint=%s)", session.pid, session.entrypoint)
 
         self._sessions[session.pid] = entry
         self._session_id_to_pid[session.session_id] = session.pid
@@ -487,6 +493,8 @@ class AppController:
             entry.unattached = True
             if saved.get("flagged"):
                 entry.flagged = True
+            if saved.get("hidden"):
+                entry.hidden = True
             entry.branch = detect_branch(cwd=cwd)
             entry.git_status = detect_git_status(cwd=cwd)
             self._sessions[synthetic_pid] = entry
@@ -756,6 +764,8 @@ class AppController:
         self._main_window.update_title_bar(
             daily_cost=self._daily_cost,
             limits=self._usage_limits,
+            visible_count=len(visible_states),
+            total_count=len(all_entries),
         )
 
         self._save_session_state()
@@ -1033,6 +1043,8 @@ class AppController:
             return
         if saved.get("flagged"):
             entry.flagged = True
+        if saved.get("hidden"):
+            entry.hidden = True
         state_val = saved.get("state")
         if state_val:
             try:

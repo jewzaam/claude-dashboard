@@ -276,10 +276,18 @@ class MainWindow:
         *,
         daily_cost: float,
         limits: dict,
+        visible_count: int = 0,
+        total_count: int = 0,
     ):
         """Update the title bar with current cost and limit data."""
         bg = self._title_bg
         fg = self._title_fg
+
+        hidden_count = total_count - visible_count
+        if hidden_count > 0:
+            self._title_text_label.configure(text=f"{config.TITLE_TEXT} (+{hidden_count})")
+        else:
+            self._title_text_label.configure(text=config.TITLE_TEXT)
 
         # Right-side info
         cost_text = f"${daily_cost:.2f}" if daily_cost > 0 else ""
