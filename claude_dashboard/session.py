@@ -147,7 +147,9 @@ def detect_git_status(*, cwd: str) -> GitStatus:
     if has_staged:
         return GitStatus.STAGED_UNCOMMITTED
 
-    branch = detect_branch(cwd=cwd)
+    _, trunk_ref = detect_upstream(cwd=cwd)
+    trunk_branch = trunk_ref.split("/", 1)[-1] if trunk_ref else ""
+    branch = detect_branch(cwd=cwd, trunk_branch=trunk_branch)
 
     has_upstream = False
     try:
