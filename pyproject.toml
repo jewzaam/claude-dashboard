@@ -27,6 +27,9 @@ dev = [
 [project.scripts]
 claude-dashboard = "claude_dashboard.__main__:main"
 
+[tool.setuptools.package-data]
+claude_dashboard = ["assets/*.png"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["claude_dashboard*"]

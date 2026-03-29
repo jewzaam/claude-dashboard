@@ -137,7 +137,8 @@ SESSION_TRACKER_DIR = STATUSLINE_DATA_DIR / "session-tracker"
 OAUTH_USAGE_CACHE = STATUSLINE_DATA_DIR / "statusline-cache" / "oauth_usage.json"
 
 # Title bar
-TITLE_EMOJI = "\U0001f90c"  # 🤌 (chef's kiss)
+TITLE_EMOJI = "\U0001f90c"  # 🤌 (chef's kiss) — fallback if image missing
+TITLE_EMOJI_IMAGE = Path(__file__).parent / "assets" / "chef_kiss.png"
 TITLE_TEXT = "Claude Dashboard"
 
 
