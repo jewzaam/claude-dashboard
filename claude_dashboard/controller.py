@@ -907,6 +907,7 @@ class AppController:
         def hide():
             entry.hidden = True
             logger.info("pid=%d hidden via context menu", session.pid)
+            self._save_session_state()
             self._refresh_ui()
 
         def clear_state():
@@ -952,6 +953,7 @@ class AppController:
             if entry:
                 entry.hidden = True
                 logger.info("pid=%d ghost hidden via context menu", session.pid)
+                self._save_session_state()
                 self._refresh_ui()
 
         self._context_menu.add_command(label=f"Ghost: {cwd_display}", state=tk.DISABLED)
@@ -1057,6 +1059,7 @@ class AppController:
             def make_toggle(e=entry, v=var):
                 def toggle():
                     e.hidden = not v.get()
+                    self._save_session_state()
                     self._refresh_ui()
 
                 return toggle
@@ -1090,6 +1093,7 @@ class AppController:
         if entry:
             entry.hidden = False
             logger.info("pid=%d unhidden via tray menu", pid)
+            self._save_session_state()
             self._root.after(0, self._refresh_ui)
 
     def _get_hidden_sessions(self) -> list[tuple[str, Callable]]:
@@ -1122,22 +1126,30 @@ class AppController:
 
     def _save_session_state(self):
         """Snapshot mutable session state to disk."""
-        state = {}
+        state: dict[str, dict] = {}
         for entry in self._sessions.values():
+            cwd = entry.session.cwd
             agents = {
                 aid: {"state": a.state.value, "agent_type": a.agent_type}
                 for aid, a in entry.agents.items()
             }
-            session_state: dict = {
-                "state": entry.state.value,
-                "hidden": entry.hidden,
-                "flagged": entry.flagged,
-                "agents": agents,
-            }
-            saved = self._saved_state.get(entry.session.cwd, {})
-            if "vscode_tasks_json_hash" in saved:
-                session_state["vscode_tasks_json_hash"] = saved["vscode_tasks_json_hash"]
-            state[entry.session.cwd] = session_state
+            if cwd in state:
+                # Multiple sessions share this CWD — only hide if ALL are hidden
+                if not entry.hidden:
+                    state[cwd]["hidden"] = False
+                # Merge agents and prefer highest-priority state
+                state[cwd]["agents"].update(agents)
+            else:
+                session_state: dict = {
+                    "state": entry.state.value,
+                    "hidden": entry.hidden,
+                    "flagged": entry.flagged,
+                    "agents": agents,
+                }
+                saved = self._saved_state.get(cwd, {})
+                if "vscode_tasks_json_hash" in saved:
+                    session_state["vscode_tasks_json_hash"] = saved["vscode_tasks_json_hash"]
+                state[cwd] = session_state
 
         # Preserve hash-only entries from saved state for CWDs with no active session
         active_cwds = {e.session.cwd for e in self._sessions.values()}
