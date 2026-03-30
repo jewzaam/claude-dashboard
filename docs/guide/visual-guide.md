@@ -35,7 +35,7 @@ Colors and emojis shown below are defaults. All are customizable via [Settings](
 
 ## Git Status Eye Icon
 
-The eye icon to the left of each row shows git working tree status. The outer ring color indicates the git state; the pupil color indicates a manual flag. Colors are customizable via [Configuration](configuration.md#git-flag-colors).
+The eye icon to the left of each row shows git working tree status. The outer ring color indicates the git state; the pupil color indicates a manual flag. Colors are customizable via [Settings](settings.md#status-colors).
 
 | Status | Color | Meaning |
 |--------|-------|---------|

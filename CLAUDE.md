@@ -120,18 +120,21 @@ The relay script always runs with `--debug` in hooks-settings.json, logging raw 
 - Add `platform.system()` / `sys.platform` checks outside config.py
 
 ## Active Technologies
+
 - Python 3.11+ + Tkinter, psutil, pystray, Pillow (003-agent-awareness)
 - JSON settings file (no new storage for this feature) (003-agent-awareness)
 
 ## Recent Enhancements (v0.2+)
 
 ### Logging & Startup
+
 - `--log-file <path>` CLI arg redirects logging to file (append mode)
 - `sys.excepthook` captures uncaught stack traces in log files
 - Makefile `run` target logs to `~/.claude/claude-dashboard/dashboard.log`
 - Clean shutdown with `SO_REUSEADDR`/`SO_REUSEPORT` on hook server socket
 
 ### UI Interactions
+
 - **Left-click (live)**: Foreground the session's VS Code/terminal window; clear Ready→Idle
 - **Left-click (ghost)**: Open in VS Code with tasks.json (auto-launch Claude)
 - **Double-click**: Open PR in browser if branch is pushed-not-merged; falls back to create-PR page if no PR exists
@@ -139,15 +142,17 @@ The relay script always runs with `--debug` in hooks-settings.json, logging raw 
 - **Right-click (row)**: Hide, Clear State, Open PR (when pushed-not-merged); ghosts also get Open in VS Code, Dismiss
 - **Right-click (title bar)**: Sessions visibility toggles, Open... (folder picker → VS Code), Settings, Restart, Quit
 - **Flag eye icon**: Eye shape left of emoji — outer color = git status, pupil = manual flag (middle-click)
-- **Tray menu**: Fully dynamic with "Unhide: <session>" items when sessions are hidden
+- **Tray menu**: Fully dynamic with "Unhide: (session)" items when sessions are hidden
 
 ### State Persistence
+
 - Session state (flagged, hidden, state) saved to `~/.claude/claude-dashboard/session-state.json`
 - All persisted across dashboard restarts
 - Duplicate-CWD sessions: hidden only persists as true if ALL sessions with that CWD are hidden
 - Flag color determined by git status, configurable via 5 `color_flag_*` settings (manual, unstaged, staged, unpushed, unmerged)
 
 ### Git Status Flags
+
 - Eye icon outer color reflects git working tree status
 - 5 states: manual flag > unstaged > staged uncommitted > committed not pushed > pushed not merged
 - Colors configurable via settings
@@ -155,6 +160,7 @@ The relay script always runs with `--debug` in hooks-settings.json, logging raw 
 - Upstream remote and trunk branch detected dynamically from `<remote>/HEAD` (no hardcoded branch names)
 
 ### Merged Branch Detection
+
 - Branch text `[branch-name]` turns bright red when branch has been merged into trunk
 - Independent of working tree status — shows red even with staged/unstaged changes
 - Three merge strategies: ancestor check, `git cherry` (rebase), `git diff` (squash)
@@ -162,6 +168,7 @@ The relay script always runs with `--debug` in hooks-settings.json, logging raw 
 - Title bar chef kiss image replaces unicode emoji (falls back if image missing)
 
 ### Agent Awareness (US9)
+
 - Dashboard tracks agents per session
 - Effective state is highest priority across main + all agents
 - Agent count indicator `(+N)` shown when agents active

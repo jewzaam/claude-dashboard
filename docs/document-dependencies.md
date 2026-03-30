@@ -4,7 +4,7 @@ Changes to higher-order documents require reviewing and updating all lower-order
 
 ## Dependency Order (highest to lowest)
 
-```
+```text
 .specify/memory/constitution.md                  ← Project principles and constraints
     ↓
 specs/NNN-feature/spec.md             ← What we're building (user stories, requirements, success criteria)

@@ -23,6 +23,7 @@ dev = [
     "flake8>=7.3",
     "mypy>=1.11",
     "mutmut>=2.0,<3.0",
+    "pymarkdownlnt>=0.9.36,<1.0",
 ]
 
 [project.scripts]

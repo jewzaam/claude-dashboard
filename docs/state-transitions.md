@@ -73,7 +73,7 @@ flowchart LR
 
 The session row shows the **highest priority state** across the main process and all active agents:
 
-```
+```text
 effective_state = max_priority(main_state, agent_1_state, agent_2_state, ...)
 ```
 
@@ -87,6 +87,7 @@ effective_state = max_priority(main_state, agent_1_state, agent_2_state, ...)
 | 6 (lowest) | Unknown | No hook events received yet |
 
 Examples:
+
 - Main=Idle, 1 agent=Working → display **Working**
 - Main=Idle, 1 agent=PermissionRequired → display **PermissionRequired**
 - Main=Working, 1 agent=PermissionRequired → display **PermissionRequired**
@@ -193,7 +194,7 @@ Flag state persists across dashboard restarts via `~/.claude/claude-dashboard/se
 
 The tray icon right-click menu is fully dynamic:
 - **Show** / **Hide** — toggles dashboard visibility
-- **Unhide: <session>** — one item per hidden session (flat list, no submenus due to pystray limitations on Linux)
+- **Unhide: (session)** — one item per hidden session (flat list, no submenus due to pystray limitations on Linux)
 - **Settings** — opens settings dialog
 - **Quit** — exits the dashboard
 
