@@ -42,6 +42,7 @@ from claude_dashboard.startup import set_run_on_startup
 from claude_dashboard.config import GitStatus, StatusState
 from claude_dashboard.models import SessionRow
 from claude_dashboard.tray import create_tray_icon, update_tray_icon
+from claude_dashboard.ui.cost_popup import CostPopup
 from claude_dashboard.ui.main_window import MainWindow
 from claude_dashboard.ui.settings_window import SettingsWindow
 
@@ -250,6 +251,7 @@ class AppController:
             on_quit=self._quit,
             on_build_sessions_menu=self._build_sessions_menu,
             on_open_folder=self._open_folder,
+            on_cost_click=self._on_cost_click,
         )
 
         # Title bar data (refreshed each discovery tick)
@@ -419,7 +421,10 @@ class AppController:
                             except (OSError, subprocess.TimeoutExpired):
                                 pass
 
-            # 6. Update branch, git status, and merge status for all sessions
+            # 6. Clear trunk cache so newly-added remotes are detected
+            self._trunk_cache.clear()
+
+            # 7. Update branch, git status, and merge status for all sessions
             for entry in self._sessions.values():
                 cwd = entry.session.cwd
                 entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
@@ -1050,6 +1055,11 @@ class AppController:
             logger.warning("gh pr view timed out for cwd=%s", session.cwd)
         except OSError as exc:
             logger.warning("failed to open PR for cwd=%s error=%s", session.cwd, exc)
+
+    def _on_cost_click(self, x: int, y: int):
+        """Left-click on cost/usage labels — show cost history popup."""
+        popup = CostPopup(self._root, anchor_x=x, anchor_y=y)
+        self._main_window._cost_popup = popup
 
     def _clear_agents(self, session: SessionInfo):
         """Clear all agents from a session (manual reset for stale agent state)."""
