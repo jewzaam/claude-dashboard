@@ -151,7 +151,7 @@ class MainWindow:
         self._frame = tk.Frame(self._window)
         self._frame.pack(fill=tk.BOTH, expand=True)
 
-        # Title bar — always visible at top
+        # Title bar — at bottom when grow_up (anchor point), at top otherwise
         self._title_bar = self._create_title_bar()
 
         # Title bar right-click context menu
@@ -192,7 +192,10 @@ class MainWindow:
             highlightbackground="#555555",
             highlightthickness=1,
         )
-        frame.pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
+        if self._settings.grow_up:
+            frame.pack(side=tk.BOTTOM, fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
+        else:
+            frame.pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
         frame.pack_propagate(False)
 
         # Left side: eye icon (hardcoded ready green), emoji, title text
