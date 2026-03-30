@@ -135,6 +135,7 @@ class MainWindow:
         self._pending_click_pid: int | None = None  # PID associated with pending click
         self._force_resize = False
         self._shaded = False
+        self._last_highest_state_color: str = ""
         self._icon_cache: dict[tuple, tk.PhotoImage] = {}
 
         # Create the window shell — apply_settings handles all configuration
@@ -315,6 +316,7 @@ class MainWindow:
         if self._dragged:
             return
         self._shaded = not self._shaded
+        self._apply_title_bar_style()
         if self._shaded:
             # Hide all rows and empty label
             for row_data in self._rows.values():
@@ -333,6 +335,59 @@ class MainWindow:
                 if pid in self._rows:
                     self._rows[pid]["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
             self._force_resize_now()
+
+    def _apply_title_bar_style(self):
+        """Apply title bar bg/fg/icon based on current shade state and last known priority."""
+        color = self._last_highest_state_color
+        if self._shaded and color:
+            self._title_bg = color
+        else:
+            self._title_bg = config.DEFAULT_COLOR_UNATTACHED
+        self._title_fg = _contrast_text_for_bg(self._title_bg)
+        bg = self._title_bg
+        fg = self._title_fg
+
+        for w in [
+            self._title_bar,
+            self._title_icon,
+            self._title_emoji_label,
+            self._title_text_label,
+            self._title_cost_label,
+            self._title_7d_label,
+            self._title_5h_label,
+        ]:
+            try:
+                w["background"] = bg
+            except tk.TclError:
+                pass
+
+        self._title_text_label.configure(fg=fg)
+        self._title_cost_label.configure(fg=fg)
+        self._title_5h_label.configure(fg=fg)
+        self._title_7d_label.configure(fg=fg)
+
+        # Eye icon: hidden when shaded, always green when expanded
+        icon_size = max(self._settings.row_height - 8, 16)
+        if self._shaded:
+            blank = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
+            self._title_icon_image = _pil_to_photoimage(blank)
+        else:
+            icon_rgb = config.hex_to_rgb(hex_color=config.DEFAULT_COLOR_READY)
+            self._title_icon_image = _pil_to_photoimage(
+                generate_icon_image(color=icon_rgb).resize((icon_size, icon_size))
+            )
+        self._title_icon.configure(image=self._title_icon_image)
+
+        # Update emoji image bg if using PNG
+        if self._title_emoji_image:
+            new_emoji_image = _load_title_emoji(
+                row_height=self._settings.row_height,
+                bg_hex=bg,
+                label_width=self._emoji_label_width,
+            )
+            if new_emoji_image:
+                self._title_emoji_image = new_emoji_image
+                self._title_emoji_label.configure(image=self._title_emoji_image)
 
     def _force_resize_now(self):
         """Recalculate geometry after unshade."""
@@ -400,9 +455,11 @@ class MainWindow:
         limits: dict,
         visible_count: int = 0,
         total_count: int = 0,
+        highest_state_color: str = "",
     ):
-        """Update the title bar with current cost and limit data."""
-        bg = self._title_bg
+        """Update the title bar with current cost, limit data, and state icon."""
+        self._last_highest_state_color = highest_state_color
+        self._apply_title_bar_style()
         fg = self._title_fg
 
         hidden_count = total_count - visible_count
@@ -413,7 +470,7 @@ class MainWindow:
 
         # Right-side info
         cost_text = f"${daily_cost:.2f}" if daily_cost > 0 else ""
-        self._title_cost_label.configure(text=cost_text, fg=fg, bg=bg)
+        self._title_cost_label.configure(text=cost_text, fg=fg)
 
         five_hour = limits.get("five_hour", {})
         seven_day = limits.get("seven_day", {})
@@ -424,12 +481,10 @@ class MainWindow:
         self._title_5h_label.configure(
             text=f"5h: {five_util:.0f}%" if five_util is not None else "",
             fg=fg,
-            bg=bg,
         )
         self._title_7d_label.configure(
             text=f"7d: {seven_util:.0f}%" if seven_util is not None else "",
             fg=fg,
-            bg=bg,
         )
 
         # Update title bar height
