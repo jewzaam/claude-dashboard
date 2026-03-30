@@ -107,6 +107,7 @@ class MainWindow:
         on_quit: Callable[[], None] | None = None,
         on_build_sessions_menu: Callable[[tk.Menu], None] | None = None,
         on_open_folder: Callable[[], None] | None = None,
+        on_cost_click: Callable[[int, int], None] | None = None,
     ):
         self._root = root
         self._settings = settings
@@ -121,6 +122,8 @@ class MainWindow:
         self._on_quit = on_quit
         self._on_build_sessions_menu = on_build_sessions_menu
         self._on_open_folder = on_open_folder
+        self._on_cost_click = on_cost_click
+        self._cost_popup: Any = None
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._rows: dict[int, dict[str, Any]] = {}
         self._row_order: list[int] = []
@@ -293,7 +296,24 @@ class MainWindow:
             w.bind("<B1-Motion>", self._on_drag_motion)
             w.bind("<Button-3>", self._on_title_bar_right_click)
 
+        # Cost/usage labels: left-click opens cost popup, leave dismisses
+        cost_widgets = [self._title_cost_label, self._title_7d_label, self._title_5h_label]
+        for w in cost_widgets:
+            w.bind("<ButtonRelease-1>", self._on_cost_label_click)
+            w.bind("<Leave>", self._on_cost_label_leave)
+
         return frame
+
+    def _on_cost_label_click(self, event: Any):
+        """Left-click on cost/usage labels — open cost popup if not dragging."""
+        if not self._dragged and self._on_cost_click:
+            self._on_cost_click(event.x_root, event.y_root)
+
+    def _on_cost_label_leave(self, event: Any):
+        """Mouse left the cost label area — dismiss any open cost popup."""
+        if self._cost_popup is not None:
+            self._cost_popup.dismiss()
+            self._cost_popup = None
 
     def _on_title_bar_right_click(self, event: Any):
         """Show Sessions submenu + Settings / Restart / Quit on title bar right-click."""
