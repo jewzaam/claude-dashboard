@@ -22,6 +22,7 @@ dev = [
     "black>=26.1",
     "flake8>=7.3",
     "mypy>=1.11",
+    "mutmut>=2.0,<3.0",
 ]
 
 [project.scripts]
@@ -36,6 +37,7 @@ include = ["claude_dashboard*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-v"
 
 [tool.coverage.run]
