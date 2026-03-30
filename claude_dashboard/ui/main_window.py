@@ -134,6 +134,7 @@ class MainWindow:
         self._pending_click_id: str | None = None  # Pending after() id for delayed single-click
         self._pending_click_pid: int | None = None  # PID associated with pending click
         self._force_resize = False
+        self._shaded = False
         self._icon_cache: dict[tuple, tk.PhotoImage] = {}
 
         # Create the window shell — apply_settings handles all configuration
@@ -296,6 +297,11 @@ class MainWindow:
             w.bind("<B1-Motion>", self._on_drag_motion)
             w.bind("<Button-3>", self._on_title_bar_right_click)
 
+        # Title text/icon/frame: left-click toggles window shade
+        shade_widgets = [frame, self._title_icon, self._title_emoji_label, self._title_text_label]
+        for w in shade_widgets:
+            w.bind("<ButtonRelease-1>", self._on_shade_toggle)
+
         # Cost/usage labels: left-click opens cost popup, leave dismisses
         cost_widgets = [self._title_cost_label, self._title_7d_label, self._title_5h_label]
         for w in cost_widgets:
@@ -303,6 +309,47 @@ class MainWindow:
             w.bind("<Leave>", self._on_cost_label_leave)
 
         return frame
+
+    def _on_shade_toggle(self, event: Any):
+        """Left-click on title text — toggle window shade (collapse/expand rows)."""
+        if self._dragged:
+            return
+        self._shaded = not self._shaded
+        if self._shaded:
+            # Hide all rows and empty label
+            for row_data in self._rows.values():
+                row_data["frame"].pack_forget()
+            self._empty_label.pack_forget()
+            # Resize to title bar only
+            title_bar_height = self._settings.row_height + _ROW_PAD_Y * 2
+            x = self._window.winfo_x()
+            y = self._window.winfo_y()
+            if self._settings.grow_up:
+                y = y + self._window.winfo_height() - title_bar_height
+            self._window.geometry(f"{self._settings.row_width}x{title_bar_height}+{x}+{y}")
+        else:
+            # Re-show rows in order
+            for pid in self._row_order:
+                if pid in self._rows:
+                    self._rows[pid]["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
+            self._force_resize_now()
+
+    def _force_resize_now(self):
+        """Recalculate geometry after unshade."""
+        self._window.update_idletasks()
+        old_height = self._window.winfo_height()
+        title_bar_height = self._settings.row_height + _ROW_PAD_Y * 2
+        n = len(self._rows)
+        if n > 0:
+            new_height = title_bar_height + n * (self._settings.row_height + _ROW_PAD_Y * 2)
+        else:
+            self._empty_label.pack(pady=10)
+            new_height = title_bar_height + self._settings.row_height + _ROW_PAD_Y * 2
+        x = self._window.winfo_x()
+        y = self._window.winfo_y()
+        if self._settings.grow_up and old_height > 0:
+            y = y + old_height - new_height
+        self._window.geometry(f"{self._settings.row_width}x{new_height}+{x}+{y}")
 
     def _on_cost_label_click(self, event: Any):
         """Left-click on cost/usage labels — open cost popup if not dragging."""
@@ -529,6 +576,20 @@ class MainWindow:
     # ------------------------------------------------------------------
 
     def update_sessions(self, sessions: list[SessionRow]):
+        # When shaded, track rows silently but don't touch geometry or visibility
+        if self._shaded:
+            current_pids = {row.session.pid for row in sessions}
+            for pid in set(self._rows.keys()) - current_pids:
+                self._remove_row(pid)
+            for row in sessions:
+                if row.session.pid in self._rows:
+                    self._update_row(row)
+                else:
+                    self._add_row(row)
+                    self._rows[row.session.pid]["frame"].pack_forget()
+            self._row_order = [row.session.pid for row in sessions]
+            return
+
         current_pids = {row.session.pid for row in sessions}
         changed = False
 
