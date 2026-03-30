@@ -26,3 +26,7 @@ settings.local.json
 .obsidian
 
 *.log
+
+# mutmut
+mutants/
+.mutmut-cache

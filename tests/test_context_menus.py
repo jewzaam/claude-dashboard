@@ -228,7 +228,8 @@ class TestOpenPrAction:
 
         mock_run.return_value = MagicMock(returncode=0)
         session = _make_session(cwd="/tmp/my-repo")
-        AppController._open_pr(None, session)
+        stub = object.__new__(AppController)
+        AppController._open_pr(stub, session)
         mock_run.assert_called_once_with(
             ["gh", "pr", "view", "--web"],
             cwd="/tmp/my-repo",
@@ -245,7 +246,8 @@ class TestOpenPrAction:
 
         mock_run.return_value = MagicMock(returncode=1)
         session = _make_session(cwd="/tmp/my-repo")
-        AppController._open_pr(None, session)
+        stub = object.__new__(AppController)
+        AppController._open_pr(stub, session)
         mock_popen.assert_called_once_with(
             ["gh", "pr", "create", "--web"],
             cwd="/tmp/my-repo",
@@ -259,7 +261,8 @@ class TestOpenPrAction:
         from claude_dashboard.controller import AppController
 
         session = _make_session(cwd="/tmp/my-repo")
-        AppController._open_pr(None, session)  # should not raise
+        stub = object.__new__(AppController)
+        AppController._open_pr(stub, session)  # should not raise
 
     @patch("claude_dashboard.controller.subprocess.run", side_effect=OSError("test"))
     def test_open_pr_handles_os_error(self, mock_run):
@@ -267,7 +270,8 @@ class TestOpenPrAction:
         from claude_dashboard.controller import AppController
 
         session = _make_session(cwd="/tmp/my-repo")
-        AppController._open_pr(None, session)  # should not raise
+        stub = object.__new__(AppController)
+        AppController._open_pr(stub, session)  # should not raise
 
 
 class TestLaunchVscode:
@@ -277,7 +281,8 @@ class TestLaunchVscode:
     def test_launch_vscode_calls_code_with_folder(self, mock_popen):
         from claude_dashboard.controller import AppController
 
-        AppController._launch_vscode(None, folder="/tmp/my-project")
+        stub = object.__new__(AppController)
+        AppController._launch_vscode(stub, folder="/tmp/my-project")
         mock_popen.assert_called_once_with(
             ["code", "/tmp/my-project"],
             stdout=-3,
@@ -288,13 +293,15 @@ class TestLaunchVscode:
     def test_launch_vscode_handles_missing_code(self, mock_popen):
         from claude_dashboard.controller import AppController
 
-        AppController._launch_vscode(None, folder="/tmp/x")  # should not raise
+        stub = object.__new__(AppController)
+        AppController._launch_vscode(stub, folder="/tmp/x")  # should not raise
 
     @patch("claude_dashboard.controller.subprocess.Popen", side_effect=OSError("fail"))
     def test_launch_vscode_handles_os_error(self, mock_popen):
         from claude_dashboard.controller import AppController
 
-        AppController._launch_vscode(None, folder="/tmp/x")  # should not raise
+        stub = object.__new__(AppController)
+        AppController._launch_vscode(stub, folder="/tmp/x")  # should not raise
 
 
 class TestOpenFolderAction:
@@ -304,18 +311,20 @@ class TestOpenFolderAction:
     def test_open_folder_delegates_to_open_in_vscode(self, mock_dialog):
         from claude_dashboard.controller import AppController
 
-        mock_self = MagicMock(spec=AppController)
-        AppController._open_folder(mock_self)
-        mock_dialog.assert_called_once_with(title="Open folder in VS Code")
-        mock_self._open_in_vscode.assert_called_once_with(cwd="/tmp/chosen")
+        stub = object.__new__(AppController)
+        with patch.object(stub, "_open_in_vscode") as mock_open:
+            stub._open_folder()
+            mock_dialog.assert_called_once_with(title="Open folder in VS Code")
+            mock_open.assert_called_once_with(cwd="/tmp/chosen")
 
     @patch("claude_dashboard.controller.filedialog.askdirectory", return_value="")
     def test_open_folder_cancelled_does_nothing(self, mock_dialog):
         from claude_dashboard.controller import AppController
 
-        mock_self = MagicMock(spec=AppController)
-        AppController._open_folder(mock_self)
-        mock_self._open_in_vscode.assert_not_called()
+        stub = object.__new__(AppController)
+        with patch.object(stub, "_open_in_vscode") as mock_open:
+            stub._open_folder()
+            mock_open.assert_not_called()
 
 
 class TestLeftClickGhost:
@@ -328,10 +337,11 @@ class TestLeftClickGhost:
         entry = _SessionEntry(session)
         entry.unattached = True
 
-        mock_self = MagicMock(spec=AppController)
-        mock_self._sessions = {session.pid: entry}
-        AppController._on_row_left_click(mock_self, session)
-        mock_self._open_in_vscode.assert_called_once_with(cwd="/tmp/ghost-project")
+        stub = object.__new__(AppController)
+        stub._sessions = {session.pid: entry}
+        with patch.object(stub, "_open_in_vscode") as mock_open:
+            stub._on_row_left_click(session)
+            mock_open.assert_called_once_with(cwd="/tmp/ghost-project")
 
     def test_live_left_click_does_not_open_vscode(self):
         from claude_dashboard.controller import AppController
@@ -340,10 +350,11 @@ class TestLeftClickGhost:
         entry = _SessionEntry(session)
         entry.unattached = False
 
-        mock_self = MagicMock(spec=AppController)
-        mock_self._sessions = {session.pid: entry}
-        AppController._on_row_left_click(mock_self, session)
-        mock_self._open_in_vscode.assert_not_called()
+        stub = object.__new__(AppController)
+        stub._sessions = {session.pid: entry}
+        with patch.object(stub, "_open_in_vscode") as mock_open:
+            stub._on_row_left_click(session)
+            mock_open.assert_not_called()
 
 
 class TestDoubleClickOpenPr:
@@ -356,10 +367,11 @@ class TestDoubleClickOpenPr:
         entry = _SessionEntry(session)
         entry.git_status = GitStatus.PUSHED_NOT_MERGED
 
-        mock_self = MagicMock(spec=AppController)
-        mock_self._sessions = {session.pid: entry}
-        AppController._on_row_double_click(mock_self, session)
-        mock_self._open_pr.assert_called_once_with(session)
+        stub = object.__new__(AppController)
+        stub._sessions = {session.pid: entry}
+        with patch.object(stub, "_open_pr") as mock_pr:
+            stub._on_row_double_click(session)
+            mock_pr.assert_called_once_with(session)
 
     def test_double_click_clean_does_not_open_pr(self):
         from claude_dashboard.controller import AppController
@@ -368,10 +380,11 @@ class TestDoubleClickOpenPr:
         entry = _SessionEntry(session)
         entry.git_status = GitStatus.CLEAN
 
-        mock_self = MagicMock(spec=AppController)
-        mock_self._sessions = {session.pid: entry}
-        AppController._on_row_double_click(mock_self, session)
-        mock_self._open_pr.assert_not_called()
+        stub = object.__new__(AppController)
+        stub._sessions = {session.pid: entry}
+        with patch.object(stub, "_open_pr") as mock_pr:
+            stub._on_row_double_click(session)
+            mock_pr.assert_not_called()
 
     def test_double_click_unstaged_does_not_open_pr(self):
         from claude_dashboard.controller import AppController
@@ -380,7 +393,8 @@ class TestDoubleClickOpenPr:
         entry = _SessionEntry(session)
         entry.git_status = GitStatus.UNSTAGED_CHANGES
 
-        mock_self = MagicMock(spec=AppController)
-        mock_self._sessions = {session.pid: entry}
-        AppController._on_row_double_click(mock_self, session)
-        mock_self._open_pr.assert_not_called()
+        stub = object.__new__(AppController)
+        stub._sessions = {session.pid: entry}
+        with patch.object(stub, "_open_pr") as mock_pr:
+            stub._on_row_double_click(session)
+            mock_pr.assert_not_called()
