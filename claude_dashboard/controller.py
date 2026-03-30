@@ -851,6 +851,7 @@ class AppController:
             limits=self._usage_limits,
             visible_count=len(visible_states),
             total_count=len(all_entries),
+            highest_state_color=self._tray_color_hex_for_state(highest),
         )
 
         self._save_session_state()
