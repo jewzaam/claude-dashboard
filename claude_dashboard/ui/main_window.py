@@ -135,7 +135,13 @@ class MainWindow:
 
         # Create the window shell — apply_settings handles all configuration
         self._window = tk.Toplevel(root)
-        self._window.overrideredirect(True)
+        if config.IS_LINUX:
+            # Wayland compositors (Mutter/GNOME 46+) don't render
+            # overrideredirect X windows.  'dock' type removes decorations
+            # and keeps the window visible on all workspaces.
+            self._window.wm_attributes("-type", "dock")
+        else:
+            self._window.overrideredirect(True)
 
         self._frame = tk.Frame(self._window)
         self._frame.pack(fill=tk.BOTH, expand=True)
@@ -439,12 +445,21 @@ class MainWindow:
         When grow_up is enabled, saves the bottom edge y-coordinate
         so the bottom stays anchored across restarts with different
         session counts.
+
+        Returns (None, None) if the window reports nonsensical values
+        (e.g. Wayland returning 0,0 for overrideredirect windows) to
+        avoid corrupting the saved position.
         """
         try:
             x = self._window.winfo_x()
             y = self._window.winfo_y()
+            h = self._window.winfo_height()
+            # Reject bogus geometry: a 1px-tall window at origin means the
+            # compositor isn't reporting real values (common on Wayland).
+            if x == 0 and y == 0 and h <= 1:
+                return None, None
             if self._settings.grow_up:
-                y = y + self._window.winfo_height()
+                y = y + h
             return x, y
         except tk.TclError:
             return None, None
@@ -554,6 +569,19 @@ class MainWindow:
             elif old_height > 0:
                 # Subsequent renders: keep bottom edge fixed
                 y = y + old_height - new_height
+
+        # Clamp to keep window on-screen (grow_up can compute negative y;
+        # Wayland can report bogus positions that drift off-screen)
+        screen_w = self._root.winfo_screenwidth()
+        screen_h = self._root.winfo_screenheight()
+        if x < 0:
+            x = 0
+        elif x > screen_w - 50:
+            x = max(screen_w - self._settings.row_width, 0)
+        if y < 0:
+            y = 0
+        elif y > screen_h - 50:
+            y = max(screen_h - new_height, 0)
 
         self._window.geometry(f"{self._settings.row_width}x{new_height}+{x}+{y}")
 
