@@ -1,6 +1,6 @@
 # claude-dashboard
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/) [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/) [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black) [![Mutation Testing](https://github.com/jewzaam/claude-dashboard/actions/workflows/mutation.yml/badge.svg?branch=main)](https://github.com/jewzaam/claude-dashboard/actions/workflows/mutation.yml)
 
 A cross-platform dashboard for monitoring and navigating multiple Claude Code sessions.
 
