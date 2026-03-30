@@ -1219,7 +1219,15 @@ class AppController:
     # ------------------------------------------------------------------
 
     def _toggle_window(self):
-        if self._main_window.toplevel.winfo_viewable():
+        viewable = self._main_window.toplevel.winfo_viewable()
+        logger.debug(
+            "toggle_window viewable=%s x=%s y=%s h=%s",
+            viewable,
+            self._main_window.toplevel.winfo_x(),
+            self._main_window.toplevel.winfo_y(),
+            self._main_window.toplevel.winfo_height(),
+        )
+        if viewable:
             self._main_window.hide()
         else:
             self._main_window.show()
