@@ -32,7 +32,9 @@ def _read_daily_costs(*, days: int = _DAYS) -> list[tuple[str, float]]:
             for path in day_dir.glob("*.json"):
                 try:
                     data = json.loads(path.read_text(encoding="utf-8"))
-                    total += data.get("cost", {}).get("total_cost_usd", 0) or 0
+                    cost = data.get("cost", {}).get("total_cost_usd", 0) or 0
+                    prior = data.get("_prior_cost", 0) or 0
+                    total += cost - prior
                 except (json.JSONDecodeError, OSError):
                     continue
         results.append((date_str, total))

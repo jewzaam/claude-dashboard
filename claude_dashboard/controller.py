@@ -69,7 +69,11 @@ _DEBOUNCE_MS = 300  # Debounce window for state display updates (FR-043)
 
 
 def read_daily_cost() -> float:
-    """Sum today's session costs from the session tracker."""
+    """Sum today's session costs from the session tracker.
+
+    Subtracts _prior_cost (cost from previous days) for sessions that
+    span the day boundary, so only today's spend is counted.
+    """
     today = datetime.date.today().isoformat()
     today_dir = config.SESSION_TRACKER_DIR / today
     if not today_dir.is_dir():
@@ -78,7 +82,9 @@ def read_daily_cost() -> float:
     for path in today_dir.glob("*.json"):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            total += data.get("cost", {}).get("total_cost_usd", 0) or 0
+            cost = data.get("cost", {}).get("total_cost_usd", 0) or 0
+            prior = data.get("_prior_cost", 0) or 0
+            total += cost - prior
         except (json.JSONDecodeError, OSError):
             continue
     return total
