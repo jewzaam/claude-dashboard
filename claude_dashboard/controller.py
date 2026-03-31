@@ -460,7 +460,8 @@ class AppController:
             old = self._sessions.pop(unattached_pid, None)
             if old:
                 entry.flagged = old.flagged
-                entry.hidden = old.hidden
+                # Live session replaces ghost — always unhide so it's visible
+                entry.hidden = False
                 logger.debug(
                     "pid=%d replaced unattached placeholder for %s", session.pid, session.cwd
                 )
