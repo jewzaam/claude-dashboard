@@ -53,6 +53,10 @@ Toggle window shade — collapse to title bar only, or expand to show all rows. 
 
 Open a popup showing daily cost for the last 14 days with proportional bars. The popup dismisses when the mouse leaves the cost label area.
 
+### Middle-Click
+
+Toggle ghost (unattached) session visibility. Middle-click to hide all ghosts, middle-click again to show them. Live hidden sessions are not affected.
+
 ### Right-Click
 
 | Item | Action |
