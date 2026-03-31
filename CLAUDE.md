@@ -141,6 +141,9 @@ The relay script always runs with `--debug` in hooks-settings.json, logging raw 
 - **Middle-click**: Toggle manual flag on clicked row
 - **Right-click (row)**: Hide, Clear State, Open PR (when pushed-not-merged); ghosts also get Open in VS Code, Dismiss
 - **Right-click (title bar)**: Sessions visibility toggles, Open... (folder picker → VS Code), Settings, Restart, Quit
+- **Left-click (title bar)**: Window shade toggle — collapse to title bar only; shaded bar uses highest-priority state color
+- **Middle-click (title bar)**: Toggle ghost session visibility (hide/show all ghosts)
+- **Left-click (cost labels)**: 14-day cost history popup; dismisses on mouse leave
 - **Flag eye icon**: Eye shape left of emoji — outer color = git status, pupil = manual flag (middle-click)
 - **Tray menu**: Fully dynamic with "Unhide: (session)" items when sessions are hidden
 
