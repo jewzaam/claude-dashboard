@@ -41,6 +41,18 @@ This does two things:
 
 The hooks configure Claude Code to POST events (tool use, permission requests, session end, etc.) to `http://localhost:17384/hook`. If the dashboard isn't running, the POST silently fails and Claude continues normally.
 
+## Global Gitignore
+
+When you open a ghost session in VS Code, the dashboard writes a `.vscode/tasks.json` file to auto-launch Claude. If a `tasks.json` already exists (yours or a previous write), it is not modified. The file is kept permanently so that reopening the folder manually (`code <dir>`) has the same behavior.
+
+To prevent it from appearing in `git status` across all your repos, add it to your global gitignore at `~/.config/git/ignore` (the default location git checks without any configuration):
+
+```text
+.vscode/tasks.json
+```
+
+If this file doesn't exist yet, create it. No `core.excludesFile` setting is needed — git reads `~/.config/git/ignore` by default.
+
 ## Launch
 
 ```bash

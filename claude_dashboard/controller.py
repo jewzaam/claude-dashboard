@@ -2,7 +2,6 @@
 """Main application controller — session discovery + hook-based state detection."""
 
 import datetime
-import hashlib
 import json
 import logging
 import os
@@ -160,69 +159,25 @@ class _SessionEntry:
         return best
 
 
-def write_vscode_tasks_json(*, cwd: str) -> str | None:
+def write_vscode_tasks_json(*, cwd: str) -> None:
     """Write the VS Code tasks.json template to <cwd>/.vscode/tasks.json.
 
-    Returns the hash if written or if existing file matches template.
-    Returns None if existing file has different content or CWD doesn't exist.
+    Skips if the file already exists (whether ours or user-modified).
+    The file is kept permanently and globally gitignored.
     """
     cwd_path = Path(cwd)
     if not cwd_path.is_dir():
         logger.warning("cwd does not exist, skipping tasks.json write cwd=%s", cwd)
-        return None
+        return
 
     tasks_path = cwd_path / ".vscode" / "tasks.json"
     if tasks_path.exists():
-        existing_hash = hashlib.sha256(tasks_path.read_bytes()).hexdigest()
-        if existing_hash == config.VSCODE_TASKS_JSON_HASH:
-            logger.debug("tasks.json already matches template cwd=%s", cwd)
-            return config.VSCODE_TASKS_JSON_HASH
-        logger.info("tasks.json exists with different content, skipping write cwd=%s", cwd)
-        return None
+        logger.debug("tasks.json already exists cwd=%s", cwd)
+        return
 
     tasks_path.parent.mkdir(parents=True, exist_ok=True)
     tasks_path.write_text(config.VSCODE_TASKS_JSON_TEMPLATE, encoding="utf-8")
     logger.info("wrote tasks.json cwd=%s", cwd)
-    return config.VSCODE_TASKS_JSON_HASH
-
-
-def cleanup_vscode_tasks_json(*, cwd: str, expected_hash: str) -> bool:
-    """Delete <cwd>/.vscode/tasks.json if its hash matches expected_hash.
-
-    Returns True if file no longer exists (deleted or already absent).
-    Returns False if file remains (hash mismatch — not ours to delete).
-    Also removes .vscode/ directory if empty after deletion.
-    """
-    if not cwd or not Path(cwd).is_dir():
-        return True
-    tasks_path = Path(cwd) / ".vscode" / "tasks.json"
-    if not tasks_path.exists():
-        return True
-
-    current_hash = hashlib.sha256(tasks_path.read_bytes()).hexdigest()
-    if current_hash != expected_hash:
-        logger.info("tasks.json hash mismatch, keeping file cwd=%s", cwd)
-        return False
-
-    tasks_path.unlink()
-    logger.info("cleaned up tasks.json cwd=%s", cwd)
-
-    vscode_dir = tasks_path.parent
-    try:
-        vscode_dir.rmdir()
-        logger.debug("removed empty .vscode/ dir cwd=%s", cwd)
-    except OSError:
-        pass
-
-    return True
-
-
-def prune_orphaned_vscode_hashes(state: dict[str, dict]) -> None:
-    """Remove vscode_tasks_json_hash entries where the CWD no longer exists."""
-    for cwd, entry in state.items():
-        if "vscode_tasks_json_hash" in entry and not Path(cwd).is_dir():
-            del entry["vscode_tasks_json_hash"]
-            logger.debug("pruned orphaned vscode hash cwd=%s", cwd)
 
 
 class AppController:
@@ -511,13 +466,6 @@ class AppController:
 
         self._sessions[session.pid] = entry
         self._session_id_to_pid[session.session_id] = session.pid
-
-        # Clean up VS Code tasks.json if we wrote one for this CWD
-        vscode_hash = self._saved_state.get(session.cwd, {}).get("vscode_tasks_json_hash")
-        if vscode_hash:
-            cleanup_vscode_tasks_json(cwd=session.cwd, expected_hash=vscode_hash)
-            self._saved_state.get(session.cwd, {}).pop("vscode_tasks_json_hash", None)
-            self._save_session_state()
 
         # Replay any buffered hook state (overrides saved state)
         buffered = self._pending_hook_states.pop(session.session_id, None)
@@ -1012,15 +960,7 @@ class AppController:
 
     def _open_in_vscode(self, *, cwd: str):
         """Write tasks.json and launch VS Code for a directory."""
-        result_hash = write_vscode_tasks_json(cwd=cwd)
-        if result_hash:
-            if cwd not in self._saved_state:
-                self._saved_state[cwd] = {}
-            self._saved_state[cwd]["vscode_tasks_json_hash"] = result_hash
-            self._save_session_state()
-        else:
-            logger.debug("opening VS Code without tasks.json auto-launch cwd=%s", cwd)
-
+        write_vscode_tasks_json(cwd=cwd)
         self._launch_vscode(folder=cwd)
 
     def _open_folder(self):
@@ -1145,7 +1085,6 @@ class AppController:
         try:
             data = json.loads(config.STATE_FILE.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                prune_orphaned_vscode_hashes(data)
                 return data
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             pass
@@ -1169,26 +1108,12 @@ class AppController:
                 # Merge agents and prefer highest-priority state
                 state[cwd]["agents"].update(agents)
             else:
-                session_state: dict = {
+                state[cwd] = {
                     "state": entry.state.value,
                     "hidden": entry.hidden,
                     "flagged": entry.flagged,
                     "agents": agents,
                 }
-                saved = self._saved_state.get(cwd, {})
-                if "vscode_tasks_json_hash" in saved:
-                    session_state["vscode_tasks_json_hash"] = saved["vscode_tasks_json_hash"]
-                state[cwd] = session_state
-
-        # Preserve hash-only entries from saved state for CWDs with no active session
-        active_cwds = {e.session.cwd for e in self._sessions.values()}
-        for cwd, saved_entry in self._saved_state.items():
-            if self._is_ignored(cwd):
-                continue
-            if cwd not in active_cwds and "vscode_tasks_json_hash" in saved_entry:
-                if cwd not in state:
-                    state[cwd] = {}
-                state[cwd]["vscode_tasks_json_hash"] = saved_entry["vscode_tasks_json_hash"]
 
         try:
             atomic_write_json(data=state, path=config.STATE_FILE)
