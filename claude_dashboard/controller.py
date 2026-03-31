@@ -207,6 +207,7 @@ class AppController:
             on_build_sessions_menu=self._build_sessions_menu,
             on_open_folder=self._open_folder,
             on_cost_click=self._on_cost_click,
+            on_ghost_toggle=self._on_ghost_toggle,
         )
 
         # Title bar data (refreshed each discovery tick)
@@ -263,6 +264,7 @@ class AppController:
 
         # Incremental counter for synthetic PIDs (unattached placeholders)
         self._next_synthetic_pid: int = -1
+        self._ghosts_hidden: bool = False
 
         # Load saved session state for restart continuity
         self._saved_state = self._load_session_state()
@@ -996,6 +998,16 @@ class AppController:
             logger.warning("gh pr view timed out for cwd=%s", session.cwd)
         except OSError as exc:
             logger.warning("failed to open PR for cwd=%s error=%s", session.cwd, exc)
+
+    def _on_ghost_toggle(self):
+        """Middle-click on title bar — toggle ghost session visibility."""
+        self._ghosts_hidden = not self._ghosts_hidden
+        for entry in self._sessions.values():
+            if entry.unattached:
+                entry.hidden = self._ghosts_hidden
+        logger.info("ghosts %s via title bar", "hidden" if self._ghosts_hidden else "shown")
+        self._save_session_state()
+        self._refresh_ui()
 
     def _on_cost_click(self, x: int, y: int):
         """Left-click on cost/usage labels — show cost history popup."""
