@@ -108,6 +108,7 @@ class MainWindow:
         on_build_sessions_menu: Callable[[tk.Menu], None] | None = None,
         on_open_folder: Callable[[], None] | None = None,
         on_cost_click: Callable[[int, int], None] | None = None,
+        on_ghost_toggle: Callable[[], None] | None = None,
     ):
         self._root = root
         self._settings = settings
@@ -123,6 +124,7 @@ class MainWindow:
         self._on_build_sessions_menu = on_build_sessions_menu
         self._on_open_folder = on_open_folder
         self._on_cost_click = on_cost_click
+        self._on_ghost_toggle = on_ghost_toggle
         self._cost_popup: Any = None
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._rows: dict[int, dict[str, Any]] = {}
@@ -301,10 +303,11 @@ class MainWindow:
             w.bind("<B1-Motion>", self._on_drag_motion)
             w.bind("<Button-3>", self._on_title_bar_right_click)
 
-        # Title text/icon/frame: left-click toggles window shade
+        # Title text/icon/frame: left-click toggles shade, middle-click toggles ghosts
         shade_widgets = [frame, self._title_icon, self._title_emoji_label, self._title_text_label]
         for w in shade_widgets:
             w.bind("<ButtonRelease-1>", self._on_shade_toggle)
+            w.bind("<Button-2>", self._on_ghost_toggle_click)
 
         # Cost/usage labels: left-click opens cost popup, leave dismisses
         cost_widgets = [self._title_cost_label, self._title_7d_label, self._title_5h_label]
@@ -408,6 +411,11 @@ class MainWindow:
         if self._settings.grow_up and old_height > 0:
             y = y + old_height - new_height
         self._window.geometry(f"{self._settings.row_width}x{new_height}+{x}+{y}")
+
+    def _on_ghost_toggle_click(self, event: Any):
+        """Middle-click on title bar — toggle ghost session visibility."""
+        if self._on_ghost_toggle:
+            self._on_ghost_toggle()
 
     def _on_cost_label_click(self, event: Any):
         """Left-click on cost/usage labels — open cost popup if not dragging."""
