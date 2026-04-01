@@ -73,7 +73,6 @@ class SettingsWindow:
         self._section_label(frame, "Rows", row)
         row += 1
         row = self._add_int_field(frame, "Row height (px)", "row_height", settings.row_height, row)
-        row = self._add_int_field(frame, "Row width (px)", "row_width", settings.row_width, row)
         row = self._add_int_field(frame, "Font size (pt)", "font_size", settings.font_size, row)
 
         self._section_label(frame, "Polling", row)
