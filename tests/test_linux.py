@@ -340,24 +340,8 @@ class TestForegroundCodeCli:
 
 
 class TestForegroundWindowLinux:
-    @patch("claude_dashboard.platform.linux._activate_window_dbus")
-    @patch("claude_dashboard.platform.linux._find_window_id_for_session")
-    def test_uses_dbus_when_available(self, mock_find, mock_activate):
-        mock_find.return_value = 12345
-        mock_activate.return_value = True
-
-        container = ContainerInfo(
-            container_type=ContainerType.VSCODE,
-            process_pid=6786,
-        )
-        assert foreground_window_linux(container, cwd="/home/user/project") is True
-        mock_activate.assert_called_once_with(12345)
-
     @patch("claude_dashboard.platform.linux._foreground_code_cli")
-    @patch("claude_dashboard.platform.linux._activate_window_dbus")
-    @patch("claude_dashboard.platform.linux._find_window_id_for_session")
-    def test_falls_back_to_code_cli(self, mock_find, mock_activate, mock_code):
-        mock_find.return_value = 0  # No window found via D-Bus
+    def test_vscode_uses_code_cli_directly(self, mock_code):
         mock_code.return_value = True
 
         container = ContainerInfo(
@@ -367,8 +351,31 @@ class TestForegroundWindowLinux:
         assert foreground_window_linux(container, cwd="/home/user/project") is True
         mock_code.assert_called_once_with("/home/user/project")
 
+    @patch("claude_dashboard.platform.linux._find_window_id_for_session", return_value=0)
+    @patch("claude_dashboard.platform.linux._foreground_code_cli")
+    def test_vscode_no_cwd_returns_false(self, mock_code, mock_find):
+        container = ContainerInfo(
+            container_type=ContainerType.VSCODE,
+            process_pid=6786,
+        )
+        assert foreground_window_linux(container) is False
+        mock_code.assert_not_called()
+
+    @patch("claude_dashboard.platform.linux._activate_window_dbus")
     @patch("claude_dashboard.platform.linux._find_window_id_for_session")
-    def test_returns_false_for_terminal_without_dbus(self, mock_find):
+    def test_terminal_uses_dbus(self, mock_find, mock_activate):
+        mock_find.return_value = 12345
+        mock_activate.return_value = True
+
+        container = ContainerInfo(
+            container_type=ContainerType.TERMINAL,
+            process_pid=3789,
+        )
+        assert foreground_window_linux(container, cwd="/home/user/project") is True
+        mock_activate.assert_called_once_with(12345)
+
+    @patch("claude_dashboard.platform.linux._find_window_id_for_session")
+    def test_terminal_no_dbus_returns_false(self, mock_find):
         mock_find.return_value = 0
 
         container = ContainerInfo(
@@ -376,30 +383,3 @@ class TestForegroundWindowLinux:
             process_pid=3789,
         )
         assert foreground_window_linux(container, cwd="/home/user/project") is False
-
-    @patch("claude_dashboard.platform.linux._foreground_code_cli")
-    @patch("claude_dashboard.platform.linux._activate_window_dbus")
-    @patch("claude_dashboard.platform.linux._find_window_id_for_session")
-    def test_dbus_activate_fails_falls_back(self, mock_find, mock_activate, mock_code):
-        mock_find.return_value = 12345
-        mock_activate.return_value = False  # D-Bus activation fails
-        mock_code.return_value = True
-
-        container = ContainerInfo(
-            container_type=ContainerType.VSCODE,
-            process_pid=6786,
-        )
-        assert foreground_window_linux(container, cwd="/home/user/project") is True
-        mock_activate.assert_called_once_with(12345)
-        mock_code.assert_called_once_with("/home/user/project")
-
-    @patch("claude_dashboard.platform.linux._find_window_id_for_session")
-    def test_no_cwd_no_fallback(self, mock_find):
-        mock_find.return_value = 0
-
-        container = ContainerInfo(
-            container_type=ContainerType.VSCODE,
-            process_pid=6786,
-        )
-        # No cwd means no code CLI fallback
-        assert foreground_window_linux(container) is False

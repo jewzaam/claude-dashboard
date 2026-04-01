@@ -263,20 +263,18 @@ def _foreground_code_cli(cwd: str) -> bool:
 def foreground_window_linux(container: ContainerInfo, *, cwd: str = "") -> bool:
     """Bring a container's window to the foreground on Linux.
 
-    Strategy (in order):
-    1. window-calls GNOME extension via D-Bus (Wayland-native, preferred)
-    2. `code /path` CLI (VS Code-specific fallback)
+    VS Code: `code /path` CLI — reliable, no ambiguity with multiple windows.
+    Terminal: window-calls GNOME extension via D-Bus (Wayland-native).
     """
-    # Strategy 1: window-calls D-Bus extension
+    if container.container_type == ContainerType.VSCODE and cwd:
+        return _foreground_code_cli(cwd)
+
+    # Terminal windows: D-Bus window activation
     window_id = _find_window_id_for_session(container, cwd=cwd)
     if window_id:
         if _activate_window_dbus(window_id):
             return True
         logger.debug("window-calls Activate failed for id=%d", window_id)
-
-    # Strategy 2: VS Code CLI fallback
-    if container.container_type == ContainerType.VSCODE and cwd:
-        return _foreground_code_cli(cwd)
 
     logger.debug(
         "no foreground method succeeded for %s pid=%d",
