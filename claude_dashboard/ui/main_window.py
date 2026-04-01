@@ -631,6 +631,7 @@ class MainWindow:
         self._resize_start_x_root = event.x_root
         self._resize_start_width = self._settings.row_width
         self._dragged = False
+        return "break"
 
     def _on_resize_motion(self, event: Any):
         dx = event.x_root - self._resize_start_x_root
@@ -643,6 +644,7 @@ class MainWindow:
             y = self._window.winfo_y()
             h = self._window.winfo_height()
             self._window.geometry(f"{new_width}x{h}+{x}+{y}")
+        return "break"
 
     def _on_resize_end(self, event: Any):
         if self._dragged:
@@ -651,6 +653,7 @@ class MainWindow:
         else:
             if self._on_cost_click:
                 self._on_cost_click(event.x_root, event.y_root)
+        return "break"
 
     # ------------------------------------------------------------------
     # Right-click context menu
