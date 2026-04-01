@@ -214,6 +214,7 @@ class AppController:
             on_open_folder=self._open_folder,
             on_cost_click=self._on_cost_click,
             on_ghost_toggle=self._on_ghost_toggle,
+            on_width_save=self._on_width_save,
         )
 
         # Title bar data (refreshed each discovery tick)
@@ -1240,6 +1241,10 @@ class AppController:
     def _on_position_save(self, x: int, y: int):
         self._settings.window_x = x
         self._settings.window_y = y
+        self._save_settings_safe()
+
+    def _on_width_save(self, width: int):
+        self._settings.row_width = width
         self._save_settings_safe()
 
     def _save_settings_safe(self):

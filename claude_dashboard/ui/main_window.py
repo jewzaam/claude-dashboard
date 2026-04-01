@@ -109,6 +109,7 @@ class MainWindow:
         on_open_folder: Callable[[], None] | None = None,
         on_cost_click: Callable[[int, int], None] | None = None,
         on_ghost_toggle: Callable[[], None] | None = None,
+        on_width_save: Callable[[int], None] | None = None,
     ):
         self._root = root
         self._settings = settings
@@ -125,6 +126,7 @@ class MainWindow:
         self._on_open_folder = on_open_folder
         self._on_cost_click = on_cost_click
         self._on_ghost_toggle = on_ghost_toggle
+        self._on_width_save = on_width_save
         self._cost_popup: Any = None
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._rows: dict[int, dict[str, Any]] = {}
@@ -132,6 +134,8 @@ class MainWindow:
         self._drag_start_x = 0
         self._drag_start_y = 0
         self._dragged = False  # True if mouse moved significantly since button-down
+        self._resize_start_x_root = 0
+        self._resize_start_width = 0
         self._double_clicked_pid: int | None = None  # PID of row being double-clicked
         self._pending_click_id: str | None = None  # Pending after() id for delayed single-click
         self._pending_click_pid: int | None = None  # PID associated with pending click
@@ -288,17 +292,14 @@ class MainWindow:
         )
         self._title_5h_label.pack(side=tk.RIGHT, padx=(0, 4))
 
-        # Bind drag on all title bar widgets
-        title_widgets = [
+        # Bind drag (window move) on non-cost title bar widgets
+        move_widgets = [
             frame,
             self._title_icon,
             self._title_emoji_label,
             self._title_text_label,
-            self._title_cost_label,
-            self._title_7d_label,
-            self._title_5h_label,
         ]
-        for w in title_widgets:
+        for w in move_widgets:
             w.bind("<Button-1>", self._on_drag_start)
             w.bind("<B1-Motion>", self._on_drag_motion)
             w.bind("<Button-3>", self._on_title_bar_right_click)
@@ -309,10 +310,14 @@ class MainWindow:
             w.bind("<ButtonRelease-1>", self._on_shade_toggle)
             w.bind("<Button-2>", self._on_ghost_toggle_click)
 
-        # Cost/usage labels: left-click opens cost popup, leave dismisses
+        # Cost/usage labels: drag to resize width, click for cost popup
         cost_widgets = [self._title_cost_label, self._title_7d_label, self._title_5h_label]
         for w in cost_widgets:
-            w.bind("<ButtonRelease-1>", self._on_cost_label_click)
+            w.configure(cursor="sb_h_double_arrow")
+            w.bind("<Button-1>", self._on_resize_start)
+            w.bind("<B1-Motion>", self._on_resize_motion)
+            w.bind("<ButtonRelease-1>", self._on_resize_end)
+            w.bind("<Button-3>", self._on_title_bar_right_click)
             w.bind("<Leave>", self._on_cost_label_leave)
 
         return frame
@@ -345,6 +350,9 @@ class MainWindow:
     def _apply_title_bar_style(self):
         """Apply title bar bg/fg/icon based on current shade state and last known priority."""
         color = self._last_highest_state_color
+        # When shaded, suppress "ready" — only show states requiring user action
+        if color and color.lower() == self._settings.color_ready.lower():
+            color = ""
         if self._shaded and color:
             self._title_bg = color
         else:
@@ -416,11 +424,6 @@ class MainWindow:
         """Middle-click on title bar — toggle ghost session visibility."""
         if self._on_ghost_toggle:
             self._on_ghost_toggle()
-
-    def _on_cost_label_click(self, event: Any):
-        """Left-click on cost/usage labels — open cost popup if not dragging."""
-        if not self._dragged and self._on_cost_click:
-            self._on_cost_click(event.x_root, event.y_root)
 
     def _on_cost_label_leave(self, event: Any):
         """Mouse left the cost label area — dismiss any open cost popup."""
@@ -617,6 +620,37 @@ class MainWindow:
             x = self._window.winfo_x() + event.x - self._drag_start_x
             y = self._window.winfo_y() + event.y - self._drag_start_y
             self._window.geometry(f"+{x}+{y}")
+
+    # ------------------------------------------------------------------
+    # Horizontal resize via cost labels
+    # ------------------------------------------------------------------
+
+    _MIN_WIDTH = 150
+
+    def _on_resize_start(self, event: Any):
+        self._resize_start_x_root = event.x_root
+        self._resize_start_width = self._settings.row_width
+        self._dragged = False
+
+    def _on_resize_motion(self, event: Any):
+        dx = event.x_root - self._resize_start_x_root
+        if abs(dx) > self._DRAG_THRESHOLD:
+            self._dragged = True
+        if self._dragged:
+            new_width = max(self._MIN_WIDTH, self._resize_start_width + dx)
+            self._settings.row_width = new_width
+            x = self._window.winfo_x()
+            y = self._window.winfo_y()
+            h = self._window.winfo_height()
+            self._window.geometry(f"{new_width}x{h}+{x}+{y}")
+
+    def _on_resize_end(self, event: Any):
+        if self._dragged:
+            if self._on_width_save:
+                self._on_width_save(self._settings.row_width)
+        else:
+            if self._on_cost_click:
+                self._on_cost_click(event.x_root, event.y_root)
 
     # ------------------------------------------------------------------
     # Right-click context menu
