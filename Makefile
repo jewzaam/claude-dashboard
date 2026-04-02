@@ -22,7 +22,7 @@ check: format lint typecheck markdown-lint links test coverage ## Run all checks
 help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-install: ## Install package
+install: $(PYTHON) ## Install package
 	$(PYTHON) -m pip install .
 
 install-no-deps: $(PYTHON) ## Install editable without dependencies
@@ -31,10 +31,10 @@ install-no-deps: $(PYTHON) ## Install editable without dependencies
 install-dev: $(PYTHON) ## Install package and dev dependencies (editable)
 	$(PYTHON) -m pip install -e ".[dev]"
 
-install-hooks: ## Merge hook config into ~/.claude/settings.json
+install-hooks: $(PYTHON) ## Merge hook config into ~/.claude/settings.json
 	$(PYTHON) scripts/install_hooks.py
 
-uninstall: ## Uninstall package
+uninstall: $(PYTHON) ## Uninstall package
 	$(PYTHON) -m pip uninstall -y claude-dashboard
 
 clean: ## Remove build artifacts and caches
@@ -67,15 +67,15 @@ coverage: install-dev ## Run tests with coverage report
 markdown-lint: install-dev ## Lint markdown files
 	$(PYTHON) -m pymarkdown --disable-rules MD013,MD024,MD031,MD036 scan README.md CLAUDE.md docs/ specs/
 
-links: ## Validate local markdown links and anchors
+links: $(PYTHON) ## Validate local markdown links and anchors
 	$(PYTHON) scripts/check-links.py
 
 mutation: install-dev ## Run mutation testing (not part of check — run in CI or on-demand)
 	$(PYTHON) -m mutmut run --CI --paths-to-mutate "$(PACKAGE_NAME)/"
 
-mutation-report: ## Show results of last mutation run
+mutation-report: $(PYTHON) ## Show results of last mutation run
 	$(PYTHON) -m mutmut results
 
-run: ## Start the app (always debug to file, rotated at 2 MB)
+run: $(PYTHON) ## Start the app (always debug to file, rotated at 2 MB)
 	@echo "Logging to $(LOG_FILE)"
 	$(PYTHON) -m claude_dashboard --debug --log-file $(LOG_FILE)
