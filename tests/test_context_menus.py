@@ -398,3 +398,71 @@ class TestDoubleClickOpenPr:
         with patch.object(stub, "_open_pr") as mock_pr:
             stub._on_row_double_click(session)
             mock_pr.assert_not_called()
+
+
+class TestGhostToggle:
+    """Test middle-click ghost toggle: hide visible ghosts first, show only when all hidden."""
+
+    def _make_controller_stub(self, sessions: dict[int, _SessionEntry]):
+        from claude_dashboard.controller import AppController
+
+        stub = object.__new__(AppController)
+        stub._sessions = sessions
+        stub._ghosts_hidden = False
+        return stub
+
+    def test_hides_visible_ghosts_when_any_visible(self):
+        from claude_dashboard.controller import AppController
+
+        ghost1 = _SessionEntry(_make_session(pid=-1, cwd="/tmp/g1"))
+        ghost1.unattached = True
+        ghost1.hidden = False
+        ghost2 = _SessionEntry(_make_session(pid=-2, cwd="/tmp/g2"))
+        ghost2.unattached = True
+        ghost2.hidden = True
+
+        stub = self._make_controller_stub({-1: ghost1, -2: ghost2})
+        with patch.object(AppController, "_save_session_state"), \
+             patch.object(AppController, "_refresh_ui"):
+            stub._on_ghost_toggle()
+
+        assert ghost1.hidden is True
+        assert ghost2.hidden is True
+        assert stub._ghosts_hidden is True
+
+    def test_shows_all_ghosts_when_none_visible(self):
+        from claude_dashboard.controller import AppController
+
+        ghost1 = _SessionEntry(_make_session(pid=-1, cwd="/tmp/g1"))
+        ghost1.unattached = True
+        ghost1.hidden = True
+        ghost2 = _SessionEntry(_make_session(pid=-2, cwd="/tmp/g2"))
+        ghost2.unattached = True
+        ghost2.hidden = True
+
+        stub = self._make_controller_stub({-1: ghost1, -2: ghost2})
+        with patch.object(AppController, "_save_session_state"), \
+             patch.object(AppController, "_refresh_ui"):
+            stub._on_ghost_toggle()
+
+        assert ghost1.hidden is False
+        assert ghost2.hidden is False
+        assert stub._ghosts_hidden is False
+
+    def test_does_not_affect_live_sessions(self):
+        from claude_dashboard.controller import AppController
+
+        live = _SessionEntry(_make_session(pid=1000, cwd="/tmp/live"))
+        live.unattached = False
+        live.hidden = False
+        ghost = _SessionEntry(_make_session(pid=-1, cwd="/tmp/g1"))
+        ghost.unattached = True
+        ghost.hidden = False
+
+        stub = self._make_controller_stub({1000: live, -1: ghost})
+        with patch.object(AppController, "_save_session_state"), \
+             patch.object(AppController, "_refresh_ui"):
+            stub._on_ghost_toggle()
+
+        assert live.hidden is False
+        assert ghost.hidden is True

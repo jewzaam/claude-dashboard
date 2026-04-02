@@ -1008,12 +1008,20 @@ class AppController:
             logger.warning("failed to open PR for cwd=%s error=%s", session.cwd, exc)
 
     def _on_ghost_toggle(self):
-        """Middle-click on title bar — toggle ghost session visibility."""
-        self._ghosts_hidden = not self._ghosts_hidden
+        """Middle-click on title bar — toggle ghost session visibility.
+
+        If any ghosts are currently visible, hide them all.
+        Only show all ghosts when none are currently visible.
+        """
+        any_visible = any(
+            entry.unattached and not entry.hidden for entry in self._sessions.values()
+        )
+        hide = any_visible
         for entry in self._sessions.values():
             if entry.unattached:
-                entry.hidden = self._ghosts_hidden
-        logger.info("ghosts %s via title bar", "hidden" if self._ghosts_hidden else "shown")
+                entry.hidden = hide
+        self._ghosts_hidden = hide
+        logger.info("ghosts %s via title bar", "hidden" if hide else "shown")
         self._save_session_state()
         self._refresh_ui()
 
