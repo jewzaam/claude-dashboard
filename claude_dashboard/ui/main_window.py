@@ -3,6 +3,7 @@
 
 import logging
 import tkinter as tk
+from dataclasses import dataclass
 from typing import Any, Callable
 
 import io
@@ -42,16 +43,48 @@ _COLOR_CONTAINER_FG = "#888888"
 _ROW_PAD_X = 1
 _ROW_PAD_Y = 1
 
+# Layout constants (pixel values for padding, margins, and sizing)
+_ICON_PADDING = 8  # subtracted from row_height for icon sizing
+_ICON_MIN_SIZE = 16  # minimum icon dimension in pixels
+_EMOJI_PADDING = 6  # subtracted from row_height for emoji sizing
+_EMOJI_MIN_SIZE = 12  # minimum emoji dimension in pixels
+_MARGIN_LEFT = 6  # left margin for first element in a row
+_MARGIN_RIGHT = 6  # right margin for last element in a row
+_ELEMENT_GAP = 2  # horizontal gap between adjacent elements
+_USAGE_LABEL_GAP = 4  # gap between usage labels (5h, 7d)
+_HIGHLIGHT_THICKNESS = 1  # title bar border thickness
+_CLICK_DELAY_MS = 200  # delay before single-click fires (allows double-click)
+
 # Auto-contrast text colors (W3C contrast ratio + warm two-tone)
 _TEXT_LIGHT = "#f5f0e8"  # warm white for dark backgrounds
 _TEXT_DARK = "#1a1520"  # cool near-black for light backgrounds
+
+
+@dataclass
+class MainWindowCallbacks:
+    """Callbacks from the UI to the controller."""
+
+    on_row_left_click: Callable[[SessionInfo], None] | None = None
+    on_row_double_click: Callable[[SessionInfo], None] | None = None
+    on_row_middle_click: Callable[[SessionInfo], None] | None = None
+    on_position_save: Callable[[int, int], None] | None = None
+    on_right_click: Callable[[int, int], None] | None = None
+    on_row_right_click: Callable[[SessionInfo, int, int], None] | None = None
+    on_settings: Callable[[], None] | None = None
+    on_restart: Callable[[], None] | None = None
+    on_quit: Callable[[], None] | None = None
+    on_build_sessions_menu: Callable[[tk.Menu], None] | None = None
+    on_open_folder: Callable[[], None] | None = None
+    on_cost_click: Callable[[int, int], None] | None = None
+    on_ghost_toggle: Callable[[], None] | None = None
+    on_width_save: Callable[[int], None] | None = None
 
 
 def _load_title_emoji(*, row_height: int, bg_hex: str, label_width: int) -> tk.PhotoImage | None:
     """Load the chef kiss PNG centered in a canvas matching the emoji label width."""
     try:
         if config.TITLE_EMOJI_IMAGE.is_file():
-            size = max(row_height - 6, 12)
+            size = max(row_height - _EMOJI_PADDING, _EMOJI_MIN_SIZE)
             fg = Image.open(config.TITLE_EMOJI_IMAGE).convert("RGBA")
             fg.thumbnail((size, size), Image.Resampling.LANCZOS)
             bg_rgb = config.hex_to_rgb(hex_color=bg_hex)
@@ -96,37 +129,25 @@ class MainWindow:
         root: tk.Tk,
         settings: Settings,
         *,
-        on_row_left_click: Callable[[SessionInfo], None] | None = None,
-        on_row_double_click: Callable[[SessionInfo], None] | None = None,
-        on_row_middle_click: Callable[[SessionInfo], None] | None = None,
-        on_position_save: Callable[[int, int], None] | None = None,
-        on_right_click: Callable[[int, int], None] | None = None,
-        on_row_right_click: Callable[[SessionInfo, int, int], None] | None = None,
-        on_settings: Callable[[], None] | None = None,
-        on_restart: Callable[[], None] | None = None,
-        on_quit: Callable[[], None] | None = None,
-        on_build_sessions_menu: Callable[[tk.Menu], None] | None = None,
-        on_open_folder: Callable[[], None] | None = None,
-        on_cost_click: Callable[[int, int], None] | None = None,
-        on_ghost_toggle: Callable[[], None] | None = None,
-        on_width_save: Callable[[int], None] | None = None,
+        callbacks: MainWindowCallbacks | None = None,
     ):
+        cb = callbacks or MainWindowCallbacks()
         self._root = root
         self._settings = settings
-        self._on_row_left_click = on_row_left_click
-        self._on_row_double_click = on_row_double_click
-        self._on_row_middle_click = on_row_middle_click
-        self._on_position_save = on_position_save
-        self._on_right_click = on_right_click
-        self._on_row_right_click = on_row_right_click
-        self._on_settings = on_settings
-        self._on_restart = on_restart
-        self._on_quit = on_quit
-        self._on_build_sessions_menu = on_build_sessions_menu
-        self._on_open_folder = on_open_folder
-        self._on_cost_click = on_cost_click
-        self._on_ghost_toggle = on_ghost_toggle
-        self._on_width_save = on_width_save
+        self._on_row_left_click = cb.on_row_left_click
+        self._on_row_double_click = cb.on_row_double_click
+        self._on_row_middle_click = cb.on_row_middle_click
+        self._on_position_save = cb.on_position_save
+        self._on_right_click = cb.on_right_click
+        self._on_row_right_click = cb.on_row_right_click
+        self._on_settings = cb.on_settings
+        self._on_restart = cb.on_restart
+        self._on_quit = cb.on_quit
+        self._on_build_sessions_menu = cb.on_build_sessions_menu
+        self._on_open_folder = cb.on_open_folder
+        self._on_cost_click = cb.on_cost_click
+        self._on_ghost_toggle = cb.on_ghost_toggle
+        self._on_width_save = cb.on_width_save
         self._cost_popup: Any = None
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._rows: dict[int, dict[str, Any]] = {}
@@ -196,7 +217,7 @@ class MainWindow:
             height=self._settings.row_height,
             cursor="hand2",
             highlightbackground="#555555",
-            highlightthickness=1,
+            highlightthickness=_HIGHLIGHT_THICKNESS,
         )
         if self._settings.grow_up:
             frame.pack(side=tk.BOTTOM, fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
@@ -205,7 +226,7 @@ class MainWindow:
         frame.pack_propagate(False)
 
         # Left side: eye icon (hardcoded ready green), emoji, title text
-        icon_size = max(self._settings.row_height - 8, 16)
+        icon_size = max(self._settings.row_height - _ICON_PADDING, _ICON_MIN_SIZE)
         icon_rgb = config.hex_to_rgb(hex_color=config.DEFAULT_COLOR_READY)
         self._title_icon_image = _pil_to_photoimage(
             generate_icon_image(color=icon_rgb).resize((icon_size, icon_size))
@@ -216,7 +237,7 @@ class MainWindow:
             bg=bg,
             anchor=tk.CENTER,
         )
-        self._title_icon.pack(side=tk.LEFT, padx=(6, 0))
+        self._title_icon.pack(side=tk.LEFT, padx=(_MARGIN_LEFT, 0))
 
         # Measure the emoji label width so the image label matches it exactly
         probe = tk.Label(frame, text="XX", font=self._font_emoji, width=2)
@@ -249,7 +270,7 @@ class MainWindow:
                 width=2,
                 anchor=tk.CENTER,
             )
-        self._title_emoji_label.pack(side=tk.LEFT, padx=(0, 2))
+        self._title_emoji_label.pack(side=tk.LEFT, padx=(0, _ELEMENT_GAP))
 
         self._title_text_label = tk.Label(
             frame,
@@ -259,7 +280,7 @@ class MainWindow:
             font=self._font_body,
             anchor=tk.W,
         )
-        self._title_text_label.pack(side=tk.LEFT, padx=(2, 0))
+        self._title_text_label.pack(side=tk.LEFT, padx=(_ELEMENT_GAP, 0))
 
         # Right side (pack order: daily cost first, then 7d, then 5h — rightmost first)
         self._title_cost_label = tk.Label(
@@ -270,7 +291,7 @@ class MainWindow:
             font=self._font_body,
             anchor=tk.E,
         )
-        self._title_cost_label.pack(side=tk.RIGHT, padx=(0, 6))
+        self._title_cost_label.pack(side=tk.RIGHT, padx=(0, _MARGIN_RIGHT))
 
         self._title_7d_label = tk.Label(
             frame,
@@ -280,7 +301,7 @@ class MainWindow:
             font=self._font_body,
             anchor=tk.E,
         )
-        self._title_7d_label.pack(side=tk.RIGHT, padx=(0, 4))
+        self._title_7d_label.pack(side=tk.RIGHT, padx=(0, _USAGE_LABEL_GAP))
 
         self._title_5h_label = tk.Label(
             frame,
@@ -290,7 +311,7 @@ class MainWindow:
             font=self._font_body,
             anchor=tk.E,
         )
-        self._title_5h_label.pack(side=tk.RIGHT, padx=(0, 4))
+        self._title_5h_label.pack(side=tk.RIGHT, padx=(0, _USAGE_LABEL_GAP))
 
         # Bind drag (window move) on non-cost title bar widgets
         move_widgets = [
@@ -381,7 +402,7 @@ class MainWindow:
         self._title_7d_label.configure(fg=fg)
 
         # Eye icon: hidden when shaded, always green when expanded
-        icon_size = max(self._settings.row_height - 8, 16)
+        icon_size = max(self._settings.row_height - _ICON_PADDING, _ICON_MIN_SIZE)
         if self._shaded:
             blank = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
             self._title_icon_image = _pil_to_photoimage(blank)
@@ -797,7 +818,7 @@ class MainWindow:
             ContainerType.SCREEN: "screen",
         }.get(container.container_type, container.container_type.value)
 
-    def _cwd_display(self, cwd: str, agent_count: int = 0) -> str:
+    def _cwd_display(self, cwd: str, *, agent_count: int = 0) -> str:
         display = cwd_relative_to_home(cwd=cwd)
         if agent_count > 0:
             display += f" (+{agent_count})"
@@ -815,7 +836,7 @@ class MainWindow:
 
     def _flag_icon(self, row: SessionRow) -> tk.PhotoImage:
         """Generate an eye icon for git status + manual flag, or transparent if clean."""
-        icon_size = max(self._settings.row_height - 8, 16)
+        icon_size = max(self._settings.row_height - _ICON_PADDING, _ICON_MIN_SIZE)
         eye_color = self._git_status_color(row)
         pupil_color_hex = self._settings.color_flag_manual if row.flagged else None
 
@@ -873,7 +894,7 @@ class MainWindow:
             container_text = self._container_label(container)
 
         row_frame = tk.Frame(self._frame, bg=bg, height=self._settings.row_height, cursor="hand2")
-        row_frame.pack(fill=tk.X, padx=1, pady=1)
+        row_frame.pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
         row_frame.pack_propagate(False)
 
         # Pack LEFT: flag eye icon → emoji (visual indicators grouped together)
@@ -884,7 +905,7 @@ class MainWindow:
             bg=bg,
             anchor=tk.CENTER,
         )
-        flag_label.pack(side=tk.LEFT, padx=(6, 0))
+        flag_label.pack(side=tk.LEFT, padx=(_MARGIN_LEFT, 0))
 
         status_var = tk.StringVar(value=emoji)
         status_label = tk.Label(
@@ -896,7 +917,7 @@ class MainWindow:
             width=2,
             anchor=tk.CENTER,
         )
-        status_label.pack(side=tk.LEFT, padx=(0, 2))
+        status_label.pack(side=tk.LEFT, padx=(0, _ELEMENT_GAP))
 
         # Pack RIGHT: container label
         container_var = tk.StringVar(value=container_text)
@@ -908,9 +929,9 @@ class MainWindow:
             font=self._font_container,
             anchor=tk.E,
         )
-        container_label.pack(side=tk.RIGHT, padx=(0, 6))
+        container_label.pack(side=tk.RIGHT, padx=(0, _MARGIN_RIGHT))
 
-        cwd_var = tk.StringVar(value=self._cwd_display(session.cwd, row.agent_count))
+        cwd_var = tk.StringVar(value=self._cwd_display(session.cwd, agent_count=row.agent_count))
         cwd_label = tk.Label(
             row_frame,
             textvariable=cwd_var,
@@ -919,7 +940,7 @@ class MainWindow:
             font=self._font_body,
             anchor=tk.W,
         )
-        cwd_label.pack(side=tk.LEFT, padx=(2, 0))
+        cwd_label.pack(side=tk.LEFT, padx=(_ELEMENT_GAP, 0))
 
         branch_var = tk.StringVar(value=self._branch_display(row.branch))
         branch_fg = self._branch_color(merged=row.merged, fg=fg)
@@ -931,7 +952,7 @@ class MainWindow:
             font=self._font_body,
             anchor=tk.W,
         )
-        branch_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+        branch_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(_ELEMENT_GAP, 0))
 
         # Click and right-click bindings on all widgets
         widgets = [row_frame, status_label, cwd_label, branch_label, container_label, flag_label]
@@ -952,7 +973,7 @@ class MainWindow:
                             self._on_row_left_click(session)
                         self._double_clicked_pid = None
 
-                    self._pending_click_id = self._window.after(200, deferred_click)
+                    self._pending_click_id = self._window.after(_CLICK_DELAY_MS, deferred_click)
                     self._pending_click_pid = s.pid
 
             return handler
@@ -1026,7 +1047,9 @@ class MainWindow:
             container_text = self._container_label(row_data.container)
 
         row["status_var"].set(emoji)
-        row["cwd_var"].set(self._cwd_display(row_data.session.cwd, row_data.agent_count))
+        row["cwd_var"].set(
+            self._cwd_display(row_data.session.cwd, agent_count=row_data.agent_count)
+        )
         row["branch_var"].set(self._branch_display(row_data.branch))
         row["container_var"].set(container_text)
         row["cwd_label"].configure(fg=fg, font=self._font_body)

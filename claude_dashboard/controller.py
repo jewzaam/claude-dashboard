@@ -42,7 +42,7 @@ from claude_dashboard.config import GitStatus, StatusState
 from claude_dashboard.models import SessionRow
 from claude_dashboard.tray import create_tray_icon, update_tray_icon
 from claude_dashboard.ui.cost_popup import CostPopup
-from claude_dashboard.ui.main_window import MainWindow
+from claude_dashboard.ui.main_window import MainWindow, MainWindowCallbacks
 from claude_dashboard.ui.settings_window import SettingsWindow
 
 logger = logging.getLogger(__name__)
@@ -201,20 +201,22 @@ class AppController:
         self._main_window = MainWindow(
             self._root,
             self._settings,
-            on_row_left_click=self._on_row_left_click,
-            on_row_double_click=self._on_row_double_click,
-            on_row_middle_click=self._on_row_middle_click,
-            on_position_save=self._on_position_save,
-            on_right_click=self._on_right_click,
-            on_row_right_click=self._on_row_right_click,
-            on_settings=self._open_settings,
-            on_restart=self._restart,
-            on_quit=self._quit,
-            on_build_sessions_menu=self._build_sessions_menu,
-            on_open_folder=self._open_folder,
-            on_cost_click=self._on_cost_click,
-            on_ghost_toggle=self._on_ghost_toggle,
-            on_width_save=self._on_width_save,
+            callbacks=MainWindowCallbacks(
+                on_row_left_click=self._on_row_left_click,
+                on_row_double_click=self._on_row_double_click,
+                on_row_middle_click=self._on_row_middle_click,
+                on_position_save=self._on_position_save,
+                on_right_click=self._on_right_click,
+                on_row_right_click=self._on_row_right_click,
+                on_settings=self._open_settings,
+                on_restart=self._restart,
+                on_quit=self._quit,
+                on_build_sessions_menu=self._build_sessions_menu,
+                on_open_folder=self._open_folder,
+                on_cost_click=self._on_cost_click,
+                on_ghost_toggle=self._on_ghost_toggle,
+                on_width_save=self._on_width_save,
+            ),
         )
 
         # Title bar data (refreshed each discovery tick)
@@ -768,17 +770,15 @@ class AppController:
         else:
             if self._debounce_id is not None:
                 self._root.after_cancel(self._debounce_id)
-            # Capture entries now — don't re-read at execution time (race condition)
             self._debounce_id = self._root.after(
                 _DEBOUNCE_MS,
                 self._do_refresh_ui_deferred,
-                all_entries,
             )
 
-    def _do_refresh_ui_deferred(self, all_entries: list["_SessionEntry"]):
-        """Called by debounce timer with pre-captured entries."""
+    def _do_refresh_ui_deferred(self):
+        """Called by debounce timer — re-reads current state to avoid staleness."""
         self._debounce_id = None
-        self._do_refresh_ui(all_entries)
+        self._do_refresh_ui(self._sorted_entries())
 
     def _do_refresh_ui(self, all_entries: list["_SessionEntry"]):
         """Actual UI refresh logic."""
