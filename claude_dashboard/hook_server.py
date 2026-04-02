@@ -149,25 +149,33 @@ class HookServer:
         on_agent_stop: Callable[[str, str], None] = lambda sid, aid: None,
         port: int = 17384,
     ):
-        self._server = _ReusableHTTPServer(("127.0.0.1", port), _HookHandler)
-        self._server.on_hook_event = on_hook_event  # type: ignore[attr-defined]
-        self._server.on_session_end = on_session_end  # type: ignore[attr-defined]
-        self._server.on_agent_stop = on_agent_stop  # type: ignore[attr-defined]
-        self._port = self._server.server_address[1]
+        self._requested_port = port
+        self._on_hook_event = on_hook_event
+        self._on_session_end = on_session_end
+        self._on_agent_stop = on_agent_stop
+        self._server: _ReusableHTTPServer | None = None
         self._thread: Thread | None = None
 
     @property
     def port(self) -> int:
-        return self._port
+        if self._server is not None:
+            return self._server.server_address[1]
+        return self._requested_port
 
     def start(self):
         """Start serving on a daemon thread."""
+        self._server = _ReusableHTTPServer(("127.0.0.1", self._requested_port), _HookHandler)
+        self._server.on_hook_event = self._on_hook_event  # type: ignore[attr-defined]
+        self._server.on_session_end = self._on_session_end  # type: ignore[attr-defined]
+        self._server.on_agent_stop = self._on_agent_stop  # type: ignore[attr-defined]
         self._thread = Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
-        logger.info("hook server listening on port=%d", self._port)
+        logger.info("hook server listening on port=%d", self.port)
 
     def stop(self):
         """Shut down the server (safe to call multiple times)."""
+        if self._server is None:
+            return
         if self._thread and self._thread.is_alive():
             self._server.shutdown()
             self._thread.join(timeout=1.0)

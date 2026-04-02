@@ -82,7 +82,8 @@ def main():
         )
         urllib.request.urlopen(req, timeout=2)
     except Exception:
-        pass  # Non-blocking — dashboard may not be running
+        if debug:
+            logger.debug("relay failed", exc_info=True)
 
 
 if __name__ == "__main__":

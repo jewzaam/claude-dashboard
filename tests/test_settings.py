@@ -130,3 +130,74 @@ class TestRunOnStartup:
         save_settings(original, path=tmp_settings_path)
         loaded = load_settings(path=tmp_settings_path)
         assert loaded.run_on_startup is True
+
+
+class TestSettingsBoundaryValues:
+    """Document current behavior for boundary/edge-case inputs — no validation added."""
+
+    def test_negative_row_height(self, tmp_settings_path):
+        """Negative row_height is accepted (no validation in load path)."""
+        data = {"row_height": -10}
+        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
+        settings = load_settings(path=tmp_settings_path)
+        assert settings.row_height == -10
+
+    def test_negative_row_width(self, tmp_settings_path):
+        """Negative row_width is accepted (no validation in load path)."""
+        data = {"row_width": -500}
+        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
+        settings = load_settings(path=tmp_settings_path)
+        assert settings.row_width == -500
+
+    def test_zero_poll_interval(self, tmp_settings_path):
+        """Zero poll_interval_seconds is accepted (no validation in load path)."""
+        data = {"poll_interval_seconds": 0}
+        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
+        settings = load_settings(path=tmp_settings_path)
+        assert settings.poll_interval_seconds == 0
+
+    def test_invalid_hex_color_string(self, tmp_settings_path):
+        """Non-hex color strings are accepted as-is (no color validation)."""
+        data = {"color_working": "not-a-hex-color"}
+        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
+        settings = load_settings(path=tmp_settings_path)
+        assert settings.color_working == "not-a-hex-color"
+
+    def test_empty_hex_color_string(self, tmp_settings_path):
+        """Empty string is accepted for color fields (no validation)."""
+        data = {"color_working": ""}
+        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
+        settings = load_settings(path=tmp_settings_path)
+        assert settings.color_working == ""
+
+    def test_extremely_large_row_height(self, tmp_settings_path):
+        """Very large row_height is accepted (no upper bound validation)."""
+        data = {"row_height": 999999}
+        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
+        settings = load_settings(path=tmp_settings_path)
+        assert settings.row_height == 999999
+
+    def test_extremely_large_row_width(self, tmp_settings_path):
+        """Very large row_width is accepted (no upper bound validation)."""
+        data = {"row_width": 999999}
+        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
+        settings = load_settings(path=tmp_settings_path)
+        assert settings.row_width == 999999
+
+    def test_negative_font_size(self, tmp_settings_path):
+        """Negative font_size is accepted (no validation in load path)."""
+        data = {"font_size": -1}
+        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
+        settings = load_settings(path=tmp_settings_path)
+        assert settings.font_size == -1
+
+    def test_boolean_for_int_field_rejected(self, tmp_settings_path):
+        """Boolean value for int field is rejected — falls back to default.
+
+        Python's bool is a subclass of int, but load_settings explicitly
+        rejects booleans for int-typed fields.
+        """
+        data = {"row_height": True}
+        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
+        settings = load_settings(path=tmp_settings_path)
+        assert settings.row_height == Settings().row_height
