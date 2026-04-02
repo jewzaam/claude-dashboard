@@ -422,8 +422,10 @@ class TestGhostToggle:
         ghost2.hidden = True
 
         stub = self._make_controller_stub({-1: ghost1, -2: ghost2})
-        with patch.object(AppController, "_save_session_state"), \
-             patch.object(AppController, "_refresh_ui"):
+        with (
+            patch.object(AppController, "_save_session_state"),
+            patch.object(AppController, "_refresh_ui"),
+        ):
             stub._on_ghost_toggle()
 
         assert ghost1.hidden is True
@@ -441,8 +443,10 @@ class TestGhostToggle:
         ghost2.hidden = True
 
         stub = self._make_controller_stub({-1: ghost1, -2: ghost2})
-        with patch.object(AppController, "_save_session_state"), \
-             patch.object(AppController, "_refresh_ui"):
+        with (
+            patch.object(AppController, "_save_session_state"),
+            patch.object(AppController, "_refresh_ui"),
+        ):
             stub._on_ghost_toggle()
 
         assert ghost1.hidden is False
@@ -460,8 +464,10 @@ class TestGhostToggle:
         ghost.hidden = False
 
         stub = self._make_controller_stub({1000: live, -1: ghost})
-        with patch.object(AppController, "_save_session_state"), \
-             patch.object(AppController, "_refresh_ui"):
+        with (
+            patch.object(AppController, "_save_session_state"),
+            patch.object(AppController, "_refresh_ui"),
+        ):
             stub._on_ghost_toggle()
 
         assert live.hidden is False
