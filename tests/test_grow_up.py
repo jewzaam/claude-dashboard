@@ -9,7 +9,7 @@ from claude_dashboard.settings import Settings
 class TestGrowUpPositionSave:
     """Verify get_position returns bottom edge when grow_up=True."""
 
-    def _make_window(self, *, grow_up, x=100, y=200, height=240):
+    def _make_window(self, *, grow_up, x=100, y=200, height=240, bottom_y=None):
         """Create a MainWindow with mocked Tk internals."""
         with patch("claude_dashboard.ui.main_window.tk"):
             from claude_dashboard.ui.main_window import MainWindow
@@ -21,17 +21,25 @@ class TestGrowUpPositionSave:
                 win = MainWindow.__new__(MainWindow)
                 win._window = toplevel
                 win._settings = settings
+                win._grow_up_bottom_y = bottom_y
 
             toplevel.winfo_x.return_value = x
             toplevel.winfo_y.return_value = y
             toplevel.winfo_height.return_value = height
             return win
 
-    def test_grow_up_saves_bottom_edge(self):
-        win = self._make_window(grow_up=True, x=100, y=200, height=240)
+    def test_grow_up_saves_tracked_bottom_edge(self):
+        win = self._make_window(grow_up=True, x=100, y=200, height=240, bottom_y=440)
         x, y = win.get_position()
         assert x == 100
-        assert y == 200 + 240  # bottom edge = top + height
+        assert y == 440  # tracked bottom edge
+
+    def test_grow_up_saves_bottom_edge_winfo_fallback(self):
+        """When tracked bottom is not set, falls back to winfo_y + winfo_height."""
+        win = self._make_window(grow_up=True, x=100, y=200, height=240, bottom_y=None)
+        x, y = win.get_position()
+        assert x == 100
+        assert y == 200 + 240  # winfo fallback
 
     def test_grow_down_saves_top_left(self):
         win = self._make_window(grow_up=False, x=100, y=200, height=240)
@@ -70,3 +78,150 @@ class TestGrowUpRestore:
         old_y = 200
         # grow_down: y is unchanged regardless of session count
         assert old_y == 200
+
+
+class TestTrackedBottomEdge:
+    """Verify shade/unshade uses tracked bottom edge instead of winfo.
+
+    On Wayland, winfo_y/winfo_height may return stale values after
+    geometry() calls during rapid operations.  Shade/unshade uses the
+    tracked _grow_up_bottom_y to avoid stale reads.
+    """
+
+    def test_shade_uses_tracked_bottom_not_winfo(self):
+        """Shading should use _grow_up_bottom_y to compute y position,
+        not winfo_y() + winfo_height() which may be stale."""
+        with patch("claude_dashboard.ui.main_window.tk"):
+            from claude_dashboard.ui.main_window import MainWindow
+
+            row_height = 32
+            pad_y = 1
+            settings = Settings(grow_up=True, window_x=100, window_y=200, row_height=row_height)
+            title_bar_height = row_height + pad_y * 2
+
+            with patch.object(MainWindow, "__init__", lambda self, *a, **kw: None):
+                win = MainWindow.__new__(MainWindow)
+
+            toplevel = MagicMock()
+            win._window = toplevel
+            win._settings = settings
+            win._shaded = False
+            win._dragged = False
+            win._rows = {"fake": {"frame": MagicMock()}}
+            win._empty_label = MagicMock()
+            win._last_highest_state_color = ""
+            win._title_bg = "#333333"
+            win._title_fg = "#ffffff"
+            win._title_bar = MagicMock()
+            win._title_icon = MagicMock()
+            win._title_icon_image = MagicMock()
+            win._title_emoji_label = MagicMock()
+            win._title_emoji_image = None
+            win._title_text_label = MagicMock()
+            win._title_cost_label = MagicMock()
+            win._title_5h_label = MagicMock()
+            win._title_7d_label = MagicMock()
+
+            # Tracked bottom at 636, but winfo reports stale values
+            win._grow_up_bottom_y = 636
+            toplevel.winfo_x.return_value = 100
+            # Stale winfo values (would compute wrong y)
+            toplevel.winfo_y.return_value = 999
+            toplevel.winfo_height.return_value = 999
+
+            win._on_shade_toggle(MagicMock())
+
+            assert win._shaded is True
+            # y should be 636 - title_bar_height, NOT based on stale winfo
+            expected_y = 636 - title_bar_height
+            geometry_call = toplevel.geometry.call_args[0][0]
+            assert f"+{expected_y}" in geometry_call
+            # Bottom edge should be preserved
+            assert win._grow_up_bottom_y == 636
+
+    def test_unshade_uses_tracked_bottom_not_winfo(self):
+        """Unshading should use _grow_up_bottom_y to compute y position."""
+        with patch("claude_dashboard.ui.main_window.tk"):
+            from claude_dashboard.ui.main_window import MainWindow
+
+            row_height = 32
+            pad_y = 1
+            settings = Settings(grow_up=True, window_x=100, window_y=200, row_height=row_height)
+            title_bar_height = row_height + pad_y * 2
+            full_height = title_bar_height + 3 * (row_height + pad_y * 2)  # 3 rows
+
+            with patch.object(MainWindow, "__init__", lambda self, *a, **kw: None):
+                win = MainWindow.__new__(MainWindow)
+
+            toplevel = MagicMock()
+            win._window = toplevel
+            win._settings = settings
+            win._shaded = True
+            win._dragged = False
+            win._rows = {
+                1: {"frame": MagicMock()},
+                2: {"frame": MagicMock()},
+                3: {"frame": MagicMock()},
+            }
+            win._row_order = [1, 2, 3]
+            win._empty_label = MagicMock()
+            win._last_highest_state_color = ""
+            win._title_bg = "#333333"
+            win._title_fg = "#ffffff"
+            win._title_bar = MagicMock()
+            win._title_icon = MagicMock()
+            win._title_icon_image = MagicMock()
+            win._title_emoji_label = MagicMock()
+            win._title_emoji_image = None
+            win._title_text_label = MagicMock()
+            win._title_cost_label = MagicMock()
+            win._title_5h_label = MagicMock()
+            win._title_7d_label = MagicMock()
+
+            # Tracked bottom at 636
+            win._grow_up_bottom_y = 636
+            toplevel.winfo_x.return_value = 100
+            # Stale winfo values
+            toplevel.winfo_y.return_value = 999
+            toplevel.winfo_height.return_value = 999
+
+            win._on_shade_toggle(MagicMock())
+
+            assert win._shaded is False
+            expected_y = 636 - full_height
+            geometry_call = toplevel.geometry.call_args[0][0]
+            assert f"+{expected_y}" in geometry_call
+            # Bottom edge should be preserved after unshade
+            assert win._grow_up_bottom_y == 636
+
+    def test_drag_updates_tracked_bottom(self):
+        """Dragging the window should update _grow_up_bottom_y."""
+        with patch("claude_dashboard.ui.main_window.tk"):
+            from claude_dashboard.ui.main_window import MainWindow
+
+            settings = Settings(grow_up=True)
+
+            with patch.object(MainWindow, "__init__", lambda self, *a, **kw: None):
+                win = MainWindow.__new__(MainWindow)
+
+            toplevel = MagicMock()
+            win._window = toplevel
+            win._settings = settings
+            win._drag_start_x = 0
+            win._drag_start_y = 0
+            win._dragged = True
+            win._grow_up_bottom_y = 636
+            win._drag_start_height = 136
+
+            toplevel.winfo_x.return_value = 100
+            toplevel.winfo_y.return_value = 510
+            toplevel.winfo_height.return_value = 136
+
+            event = MagicMock()
+            event.x = 0
+            event.y = 10  # dragging down by 10
+
+            win._on_drag_motion(event)
+
+            # bottom_y = new_y + height = 520 + 136 = 656
+            assert win._grow_up_bottom_y == 520 + 136

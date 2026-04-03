@@ -164,6 +164,10 @@ class MainWindow:
         self._shaded = False
         self._last_highest_state_color: str = ""
         self._icon_cache: dict[tuple, tk.PhotoImage] = {}
+        # Tracked bottom edge for grow_up mode.  Wayland compositors may
+        # not update winfo_y/winfo_height synchronously after geometry(),
+        # so we maintain this ourselves instead of computing from winfo.
+        self._grow_up_bottom_y: int | None = None
 
         # Create the window shell — apply_settings handles all configuration
         self._window = tk.Toplevel(root)
@@ -357,10 +361,26 @@ class MainWindow:
             # Resize to title bar only
             title_bar_height = self._settings.row_height + _ROW_PAD_Y * 2
             x = self._window.winfo_x()
-            y = self._window.winfo_y()
+            if self._settings.grow_up and self._grow_up_bottom_y is not None:
+                y = self._grow_up_bottom_y - title_bar_height
+            else:
+                y = self._window.winfo_y()
+            geom = f"{self._settings.row_width}x{title_bar_height}+{x}+{y}"
+            # Guard: winfo_y/winfo_height are X11 round-trips, skip when not debugging
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "grow_up: shade tracked_bottom=%s winfo_y=%d winfo_h=%d"
+                    " computed_y=%d geometry=%s",
+                    self._grow_up_bottom_y,
+                    self._window.winfo_y(),
+                    self._window.winfo_height(),
+                    y,
+                    geom,
+                )
+            self._window.geometry(geom)
             if self._settings.grow_up:
-                y = y + self._window.winfo_height() - title_bar_height
-            self._window.geometry(f"{self._settings.row_width}x{title_bar_height}+{x}+{y}")
+                self._window.update_idletasks()
+                self._grow_up_bottom_y = y + title_bar_height
         else:
             # Re-show rows in order
             for pid in self._row_order:
@@ -427,7 +447,6 @@ class MainWindow:
     def _force_resize_now(self):
         """Recalculate geometry after unshade."""
         self._window.update_idletasks()
-        old_height = self._window.winfo_height()
         title_bar_height = self._settings.row_height + _ROW_PAD_Y * 2
         n = len(self._rows)
         if n > 0:
@@ -436,10 +455,30 @@ class MainWindow:
             self._empty_label.pack(pady=10)
             new_height = title_bar_height + self._settings.row_height + _ROW_PAD_Y * 2
         x = self._window.winfo_x()
-        y = self._window.winfo_y()
-        if self._settings.grow_up and old_height > 0:
-            y = y + old_height - new_height
-        self._window.geometry(f"{self._settings.row_width}x{new_height}+{x}+{y}")
+        if self._settings.grow_up and self._grow_up_bottom_y is not None:
+            y = self._grow_up_bottom_y - new_height
+        else:
+            old_height = self._window.winfo_height()
+            y = self._window.winfo_y()
+            if self._settings.grow_up and old_height > 0:
+                y = y + old_height - new_height
+        geom = f"{self._settings.row_width}x{new_height}+{x}+{y}"
+        # Guard: winfo_y/winfo_height are X11 round-trips, skip when not debugging
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "grow_up: unshade tracked_bottom=%s winfo_y=%d winfo_h=%d"
+                " new_h=%d computed_y=%d geometry=%s",
+                self._grow_up_bottom_y,
+                self._window.winfo_y(),
+                self._window.winfo_height(),
+                new_height,
+                y,
+                geom,
+            )
+        self._window.geometry(geom)
+        if self._settings.grow_up:
+            self._window.update_idletasks()
+            self._grow_up_bottom_y = y + new_height
 
     def _on_ghost_toggle_click(self, event: Any):
         """Middle-click on title bar — toggle ghost session visibility."""
@@ -577,6 +616,12 @@ class MainWindow:
                     # y is the saved bottom edge — will be adjusted in
                     # update_sessions once we know the actual height
                     self._grow_up_bottom_y = y
+                    logger.debug(
+                        "grow_up: apply_settings tracked_bottom=%d x=%d y=%d",
+                        y,
+                        x,
+                        y,
+                    )
                 self._window.geometry(f"{settings.row_width}x1+{x}+{y}")
             else:
                 self._window.geometry(f"{settings.row_width}x1")
@@ -616,7 +661,11 @@ class MainWindow:
             if x == 0 and y == 0 and h <= 1:
                 return None, None
             if self._settings.grow_up:
-                y = y + h
+                # Prefer tracked bottom edge over winfo (Wayland may be stale)
+                if self._grow_up_bottom_y is not None:
+                    y = self._grow_up_bottom_y
+                else:
+                    y = y + h
             return x, y
         except tk.TclError:
             return None, None
@@ -631,6 +680,8 @@ class MainWindow:
         self._drag_start_x = event.x
         self._drag_start_y = event.y
         self._dragged = False
+        if self._settings.grow_up:
+            self._drag_start_height = self._window.winfo_height()
 
     def _on_drag_motion(self, event: Any):
         dx = abs(event.x - self._drag_start_x)
@@ -641,6 +692,16 @@ class MainWindow:
             x = self._window.winfo_x() + event.x - self._drag_start_x
             y = self._window.winfo_y() + event.y - self._drag_start_y
             self._window.geometry(f"+{x}+{y}")
+            if self._settings.grow_up:
+                self._grow_up_bottom_y = y + self._drag_start_height
+                # Guard: fires on every drag pixel
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "grow_up: drag tracked_bottom=%d y=%d h=%d",
+                        self._grow_up_bottom_y,
+                        y,
+                        self._drag_start_height,
+                    )
 
     # ------------------------------------------------------------------
     # Horizontal resize via cost labels
@@ -754,7 +815,6 @@ class MainWindow:
 
         # Resize height, preserve position (or anchor bottom edge if grow_up)
         self._window.update_idletasks()
-        old_height = self._window.winfo_height()
         title_bar_height = self._settings.row_height + _ROW_PAD_Y * 2
         if sessions:
             new_height = title_bar_height + len(sessions) * (
@@ -763,16 +823,13 @@ class MainWindow:
         else:
             new_height = title_bar_height + self._settings.row_height + _ROW_PAD_Y * 2
         x = self._window.winfo_x()
-        y = self._window.winfo_y()
 
-        if self._settings.grow_up:
-            # First render after startup: use saved bottom edge
-            bottom_y = getattr(self, "_grow_up_bottom_y", None)
-            if bottom_y is not None:
-                y = bottom_y - new_height
-                del self._grow_up_bottom_y
-            elif old_height > 0:
-                # Subsequent renders: keep bottom edge fixed
+        if self._settings.grow_up and self._grow_up_bottom_y is not None:
+            y = self._grow_up_bottom_y - new_height
+        else:
+            old_height = self._window.winfo_height()
+            y = self._window.winfo_y()
+            if self._settings.grow_up and old_height > 0:
                 y = y + old_height - new_height
 
         # Clamp to keep window on-screen (grow_up can compute negative y;
@@ -788,7 +845,28 @@ class MainWindow:
         elif y > screen_h - 50:
             y = max(screen_h - new_height, 0)
 
-        self._window.geometry(f"{self._settings.row_width}x{new_height}+{x}+{y}")
+        geom = f"{self._settings.row_width}x{new_height}+{x}+{y}"
+        # Guard: winfo_y/winfo_height are X11 round-trips, skip when not debugging
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "grow_up: update_sessions tracked_bottom=%s winfo_y=%d winfo_h=%d"
+                " rows=%d new_h=%d computed_y=%d geometry=%s",
+                self._grow_up_bottom_y,
+                self._window.winfo_y(),
+                self._window.winfo_height(),
+                len(sessions),
+                new_height,
+                y,
+                geom,
+            )
+        self._window.geometry(geom)
+        if self._settings.grow_up:
+            # Force the compositor to process the geometry change.
+            # Wayland compositors (Mutter/XWayland) may apply height
+            # changes but silently drop position changes unless the
+            # X event round-trip is flushed before the next request.
+            self._window.update_idletasks()
+            self._grow_up_bottom_y = y + new_height
 
     def _color_for_state(self, state: StatusState) -> str:
         return {

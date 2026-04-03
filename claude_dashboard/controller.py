@@ -766,13 +766,20 @@ class AppController:
             if self._debounce_id is not None:
                 self._root.after_cancel(self._debounce_id)
                 self._debounce_id = None
+            logger.debug("refresh_ui: bypass (immediate)")
             self._do_refresh_ui(all_entries)
         else:
-            if self._debounce_id is not None:
+            had_pending = self._debounce_id is not None
+            if had_pending:
                 self._root.after_cancel(self._debounce_id)
             self._debounce_id = self._root.after(
                 _DEBOUNCE_MS,
                 self._do_refresh_ui_deferred,
+            )
+            logger.debug(
+                "refresh_ui: debounce %dms (cancelled_pending=%s)",
+                _DEBOUNCE_MS,
+                had_pending,
             )
 
     def _do_refresh_ui_deferred(self):
