@@ -8,7 +8,8 @@ Cross-platform Tkinter dashboard that monitors running Claude Code sessions. Sho
 make install-dev    # Install package + dev deps
 make install-hooks  # Merge hook config into ~/.claude/settings.json
 make check          # format-check, lint, typecheck, test, coverage
-make run            # Run with debug logging (rotated at 2 MB, 1 backup)
+make run            # Run the app (logging to file)
+make run DEBUG=1    # Run with debug logging (rotated at 2 MB, 1 backup)
 python -m claude_dashboard                     # Run with console output
 python -m claude_dashboard --debug             # Run with debug logging to console
 python -m claude_dashboard --log-file <path>   # Redirect logs to file (append mode)
