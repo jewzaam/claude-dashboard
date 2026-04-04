@@ -3,6 +3,7 @@
 
 import logging
 import tkinter as tk
+import tkinter.font as tkfont
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -80,11 +81,13 @@ class MainWindowCallbacks:
     on_width_save: Callable[[int], None] | None = None
 
 
-def _load_title_emoji(*, row_height: int, bg_hex: str, label_width: int) -> tk.PhotoImage | None:
+def _load_title_emoji(
+    *, emoji_img_size: int, bg_hex: str, label_width: int
+) -> tk.PhotoImage | None:
     """Load the chef kiss PNG centered in a canvas matching the emoji label width."""
     try:
         if config.TITLE_EMOJI_IMAGE.is_file():
-            size = max(row_height - _EMOJI_PADDING, _EMOJI_MIN_SIZE)
+            size = emoji_img_size
             fg = Image.open(config.TITLE_EMOJI_IMAGE).convert("RGBA")
             fg.thumbnail((size, size), Image.Resampling.LANCZOS)
             bg_rgb = config.hex_to_rgb(hex_color=bg_hex)
@@ -164,6 +167,8 @@ class MainWindow:
         self._shaded = False
         self._last_highest_state_color: str = ""
         self._icon_cache: dict[tuple, tk.PhotoImage] = {}
+        self._icon_size = _ICON_MIN_SIZE  # updated by _update_icon_size()
+        self._emoji_img_size = _EMOJI_MIN_SIZE  # updated by _update_icon_size()
         # Tracked bottom edge for grow_up mode.  Wayland compositors may
         # not update winfo_y/winfo_height synchronously after geometry(),
         # so we maintain this ourselves instead of computing from winfo.
@@ -181,6 +186,9 @@ class MainWindow:
 
         self._frame = tk.Frame(self._window)
         self._frame.pack(fill=tk.BOTH, expand=True)
+
+        # Compute icon sizes from font metrics before building the UI
+        self._update_icon_size()
 
         # Title bar — at bottom when grow_up (anchor point), at top otherwise
         self._title_bar = self._create_title_bar()
@@ -203,6 +211,20 @@ class MainWindow:
 
         # Apply all settings (position, size, colors, topmost)
         self.apply_settings(settings, restore_position=True)
+
+    # ------------------------------------------------------------------
+    # Icon sizing — derived from rendered font metrics so images scale
+    # with both font_size and platform DPI.
+    # ------------------------------------------------------------------
+
+    def _update_icon_size(self):
+        """Recompute icon sizes from the current body font's rendered height."""
+        font_obj = tkfont.Font(font=self._font_body)
+        line_height = font_obj.metrics("linespace")
+        self._icon_size = max(line_height, _ICON_MIN_SIZE)
+        emoji_font_obj = tkfont.Font(font=self._font_emoji)
+        emoji_height = emoji_font_obj.metrics("linespace")
+        self._emoji_img_size = max(emoji_height, _EMOJI_MIN_SIZE)
 
     # ------------------------------------------------------------------
     # Title bar
@@ -230,7 +252,7 @@ class MainWindow:
         frame.pack_propagate(False)
 
         # Left side: eye icon (hardcoded ready green), emoji, title text
-        icon_size = max(self._settings.row_height - _ICON_PADDING, _ICON_MIN_SIZE)
+        icon_size = self._icon_size
         icon_rgb = config.hex_to_rgb(hex_color=config.DEFAULT_COLOR_READY)
         self._title_icon_image = _pil_to_photoimage(
             generate_icon_image(color=icon_rgb).resize((icon_size, icon_size))
@@ -251,7 +273,7 @@ class MainWindow:
 
         self._emoji_label_width = emoji_label_width
         self._title_emoji_image = _load_title_emoji(
-            row_height=self._settings.row_height,
+            emoji_img_size=self._emoji_img_size,
             bg_hex=self._title_bg,
             label_width=emoji_label_width,
         )
@@ -422,7 +444,7 @@ class MainWindow:
         self._title_7d_label.configure(fg=fg)
 
         # Eye icon: hidden when shaded, always green when expanded
-        icon_size = max(self._settings.row_height - _ICON_PADDING, _ICON_MIN_SIZE)
+        icon_size = self._icon_size
         if self._shaded:
             blank = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
             self._title_icon_image = _pil_to_photoimage(blank)
@@ -436,7 +458,7 @@ class MainWindow:
         # Update emoji image bg if using PNG
         if self._title_emoji_image:
             new_emoji_image = _load_title_emoji(
-                row_height=self._settings.row_height,
+                emoji_img_size=self._emoji_img_size,
                 bg_hex=bg,
                 label_width=self._emoji_label_width,
             )
@@ -575,12 +597,13 @@ class MainWindow:
         """Apply settings to the window. Does NOT change position unless restore_position=True."""
         self._settings = settings
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
+        self._update_icon_size()
         self._force_resize = True
         self._icon_cache.clear()
 
         # Update title bar emoji (image or font)
         new_emoji_image = _load_title_emoji(
-            row_height=settings.row_height,
+            emoji_img_size=self._emoji_img_size,
             bg_hex=self._title_bg,
             label_width=self._emoji_label_width,
         )
@@ -914,7 +937,7 @@ class MainWindow:
 
     def _flag_icon(self, row: SessionRow) -> tk.PhotoImage:
         """Generate an eye icon for git status + manual flag, or transparent if clean."""
-        icon_size = max(self._settings.row_height - _ICON_PADDING, _ICON_MIN_SIZE)
+        icon_size = self._icon_size
         eye_color = self._git_status_color(row)
         pupil_color_hex = self._settings.color_flag_manual if row.flagged else None
 

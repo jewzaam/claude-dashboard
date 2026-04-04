@@ -76,6 +76,16 @@ def main():
         )
         sys.exit(1)
 
+    # Enable DPI awareness on Windows before creating the Tk root.
+    # Without this, Windows bitmap-scales the entire window, making it blurry and oversized.
+    if config.IS_WINDOWS:
+        import ctypes
+
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+        except Exception:
+            pass  # Older Windows versions may not have shcore
+
     # Controller import deferred until args are parsed
     from claude_dashboard.controller import AppController
 

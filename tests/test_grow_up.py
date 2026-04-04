@@ -121,6 +121,8 @@ class TestTrackedBottomEdge:
             win._title_cost_label = MagicMock()
             win._title_5h_label = MagicMock()
             win._title_7d_label = MagicMock()
+            win._icon_size = 20
+            win._emoji_img_size = 16
 
             # Tracked bottom at 636, but winfo reports stale values
             win._grow_up_bottom_y = 636
@@ -177,6 +179,8 @@ class TestTrackedBottomEdge:
             win._title_cost_label = MagicMock()
             win._title_5h_label = MagicMock()
             win._title_7d_label = MagicMock()
+            win._icon_size = 20
+            win._emoji_img_size = 16
 
             # Tracked bottom at 636
             win._grow_up_bottom_y = 636
