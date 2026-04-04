@@ -67,14 +67,6 @@ DEFAULT_GROW_UP = True
 DEFAULT_RUN_ON_STARTUP = False
 DEFAULT_FONT_SIZE = 9
 
-# Status emojis
-DEFAULT_EMOJI_WORKING = "\U0001f504"  # 🔄
-DEFAULT_EMOJI_READY = "\u23f8\ufe0f"  # ⏸️ (same icon as idle, color distinguishes)
-DEFAULT_EMOJI_IDLE = "\u23f8\ufe0f"  # ⏸️
-DEFAULT_EMOJI_AWAITING_INPUT = "\u2753"  # ❓
-DEFAULT_EMOJI_PERMISSION_REQUIRED = "\u26a0\ufe0f"  # ⚠️
-DEFAULT_EMOJI_UNATTACHED = "\U0001f47b"  # 👻
-
 # Status colors (row background)
 DEFAULT_COLOR_WORKING = "#5a5a5a"
 DEFAULT_COLOR_READY = "#15803d"
@@ -138,9 +130,20 @@ STATUSLINE_DATA_DIR = CLAUDE_HOME / "my-claude-stuff-data"
 SESSION_TRACKER_DIR = STATUSLINE_DATA_DIR / "session-tracker"
 OAUTH_USAGE_CACHE = STATUSLINE_DATA_DIR / "statusline-cache" / "oauth_usage.json"
 
+# Status emoji images (Noto Color Emoji, Apache 2.0)
+_ASSETS = Path(__file__).parent / "assets"
+EMOJI_IMAGES: dict[StatusState | None, Path] = {
+    StatusState.WORKING: _ASSETS / "emoji_working.png",
+    StatusState.READY: _ASSETS / "emoji_ready.png",
+    StatusState.IDLE: _ASSETS / "emoji_idle.png",
+    StatusState.AWAITING_INPUT: _ASSETS / "emoji_awaiting_input.png",
+    StatusState.PERMISSION_REQUIRED: _ASSETS / "emoji_permission_required.png",
+    None: _ASSETS / "emoji_unattached.png",  # unattached / ghost
+}
+
 # Title bar
 TITLE_EMOJI = "\U0001f90c"  # 🤌 (chef's kiss) — fallback if image missing
-TITLE_EMOJI_IMAGE = Path(__file__).parent / "assets" / "chef_kiss.png"
+TITLE_EMOJI_IMAGE = _ASSETS / "chef_kiss.png"
 TITLE_TEXT = "Claude Dashboard"
 
 

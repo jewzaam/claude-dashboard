@@ -32,6 +32,10 @@ See [Getting Started](docs/guide/getting-started.md) for full setup instructions
 | [Interactions](docs/guide/interactions.md) | Click behaviors, menus, shade toggle, drag, tray |
 | [Settings](docs/guide/settings.md) | All settings, colors, emojis, filtering, window behavior |
 
+## Third-Party Assets
+
+Status emoji images are from [Noto Color Emoji](https://github.com/googlefonts/noto-emoji) by Google, licensed under the [Apache License 2.0](https://github.com/googlefonts/noto-emoji/blob/main/LICENSE).
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) for details.
