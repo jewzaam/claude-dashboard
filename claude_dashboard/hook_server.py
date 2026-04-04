@@ -31,8 +31,14 @@ def map_event_to_state(
     event: str,
     *,
     tool_name: str = "",
+    agent_id: str = "",
 ) -> StatusState | None:
-    """Map a hook event name (+ optional tool name) to a StatusState."""
+    """Map a hook event name (+ optional tool name) to a StatusState.
+
+    Unmapped agent events (e.g. SubagentStart) resolve to WORKING so the
+    agent gets registered.  SubagentStop is excluded — it signals removal,
+    not a state change.
+    """
     if event == "PreToolUse":
         if tool_name == "AskUserQuestion":
             return StatusState.AWAITING_INPUT
@@ -43,7 +49,10 @@ def map_event_to_state(
             return StatusState.AWAITING_INPUT
         return StatusState.PERMISSION_REQUIRED
 
-    return _EVENT_STATE_MAP.get(event)
+    state = _EVENT_STATE_MAP.get(event)
+    if state is None and agent_id and event != "SubagentStop":
+        return StatusState.WORKING
+    return state
 
 
 class _HookHandler(BaseHTTPRequestHandler):
@@ -58,15 +67,14 @@ class _HookHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            length = int(self.headers.get("Content-Length", 0))
-            if length < 0 or length > _MAX_PAYLOAD_BYTES:
-                logger.debug("invalid content-length=%d", length)
+            length = max(0, int(self.headers.get("Content-Length", 0)))
+            logger.debug("content-length=%d", length)
+            if length > _MAX_PAYLOAD_BYTES:
                 self.send_response(413)
                 self.end_headers()
                 return
-            raw = self.rfile.read(length) if length else b"{}"
-            body = json.loads(raw)
-        except (json.JSONDecodeError, ValueError) as exc:
+            body = json.loads(self.rfile.read(length))
+        except ValueError as exc:
             logger.debug("bad request error=%s", exc)
             self.send_response(400)
             self.end_headers()
@@ -74,57 +82,47 @@ class _HookHandler(BaseHTTPRequestHandler):
 
         session_id = body.get("session_id", "")
         event = body.get("hook_event_name", "")
-        tool_name = body.get("tool_name", "")
-        cwd = body.get("cwd", "")
         agent_id = body.get("agent_id", "")
-        agent_type = body.get("agent_type", "")
 
-        state = map_event_to_state(event, tool_name=tool_name)
-        mapped = state.value if state else "ignored"
+        state = map_event_to_state(event, tool_name=body.get("tool_name", ""), agent_id=agent_id)
         logger.debug(
-            "event=%s tool=%s mapped=%s session=%s agent=%s",
+            "event=%s tool_name=%s state_value=%s session_id=%s agent_id=%s",
             event,
-            tool_name or "-",
-            mapped,
-            session_id[:8] if session_id else "-",
-            agent_id[:12] if agent_id else "-",
+            body.get("tool_name", ""),
+            getattr(state, "value", "ignored"),
+            session_id,
+            agent_id,
         )
 
-        try:
-            if state is not None and session_id:
-                self.server.on_hook_event(  # type: ignore[attr-defined]
-                    session_id,
-                    event,
-                    state,
-                    cwd,
-                    agent_id=agent_id,
-                    agent_type=agent_type,
-                )
-            elif state is None and agent_id and event != "SubagentStop" and session_id:
-                # Agent event with no mapped state (e.g. SubagentStart).
-                # Pass through as WORKING so the agent gets registered (FR-036).
-                self.server.on_hook_event(  # type: ignore[attr-defined]
-                    session_id,
-                    event,
-                    StatusState.WORKING,
-                    cwd,
-                    agent_id=agent_id,
-                    agent_type=agent_type,
-                )
-
-            # SubagentStop — signal agent removal
-            if event == "SubagentStop" and session_id and agent_id:
-                self.server.on_agent_stop(session_id, agent_id)  # type: ignore[attr-defined]
-
-            # SessionEnd — signal removal
-            if event == "SessionEnd" and session_id:
-                self.server.on_session_end(session_id)  # type: ignore[attr-defined]
-        except Exception:
-            logger.exception("callback error processing event=%s", event)
+        self._dispatch(
+            session_id=session_id, event=event, state=state, agent_id=agent_id, body=body
+        )
 
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"{}")
+
+    def _dispatch(self, *, session_id, event, state, agent_id, body):
+        """Route a parsed hook event to the appropriate server callback."""
+        if not session_id:
+            return
+
+        try:
+            if state is not None:
+                self.server.on_hook_event(  # type: ignore[attr-defined]
+                    session_id,
+                    event,
+                    state,
+                    body.get("cwd", ""),
+                    agent_id=agent_id,
+                    agent_type=body.get("agent_type", ""),
+                )
+            if event == "SubagentStop" and agent_id:
+                self.server.on_agent_stop(session_id, agent_id)  # type: ignore[attr-defined]
+            elif event == "SessionEnd":
+                self.server.on_session_end(session_id)  # type: ignore[attr-defined]
+        except Exception:
+            logger.exception("callback error processing event=%s", event)
 
     def log_message(self, format, *args):
         """Suppress default access logging."""
