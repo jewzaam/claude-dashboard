@@ -22,6 +22,8 @@ class TestGrowUpPositionSave:
                 win._window = toplevel
                 win._settings = settings
                 win._grow_up_bottom_y = bottom_y
+                win._tracked_x = x
+                win._tracked_y = y
 
             toplevel.winfo_x.return_value = x
             toplevel.winfo_y.return_value = y
@@ -123,6 +125,8 @@ class TestTrackedBottomEdge:
             win._title_7d_label = MagicMock()
             win._icon_size = 20
             win._emoji_img_size = 16
+            win._tracked_x = 100
+            win._tracked_y = 500
 
             # Tracked bottom at 636, but winfo reports stale values
             win._grow_up_bottom_y = 636
@@ -181,6 +185,8 @@ class TestTrackedBottomEdge:
             win._title_7d_label = MagicMock()
             win._icon_size = 20
             win._emoji_img_size = 16
+            win._tracked_x = 100
+            win._tracked_y = 500
 
             # Tracked bottom at 636
             win._grow_up_bottom_y = 636
@@ -216,6 +222,8 @@ class TestTrackedBottomEdge:
             win._dragged = True
             win._grow_up_bottom_y = 636
             win._drag_start_height = 136
+            win._tracked_x = 100
+            win._tracked_y = 510
 
             toplevel.winfo_x.return_value = 100
             toplevel.winfo_y.return_value = 510

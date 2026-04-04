@@ -169,9 +169,11 @@ class MainWindow:
         self._icon_cache: dict[tuple, tk.PhotoImage] = {}
         self._icon_size = _ICON_MIN_SIZE  # updated by _update_icon_size()
         self._emoji_img_size = _EMOJI_MIN_SIZE  # updated by _update_icon_size()
-        # Tracked bottom edge for grow_up mode.  Wayland compositors may
-        # not update winfo_y/winfo_height synchronously after geometry(),
-        # so we maintain this ourselves instead of computing from winfo.
+        # Tracked position.  winfo_x/winfo_y can return stale or
+        # DPI-mismatched values (Wayland compositors, Windows DPI scaling).
+        # We track position ourselves and update on every geometry() call.
+        self._tracked_x: int | None = None
+        self._tracked_y: int | None = None
         self._grow_up_bottom_y: int | None = None
 
         # Create the window shell — apply_settings handles all configuration
@@ -211,6 +213,22 @@ class MainWindow:
 
         # Apply all settings (position, size, colors, topmost)
         self.apply_settings(settings, restore_position=True)
+
+    # ------------------------------------------------------------------
+    # Geometry helpers — track position on every geometry() call
+    # ------------------------------------------------------------------
+
+    def _set_geometry(self, geom: str):
+        """Set window geometry and update tracked x/y from the geometry string."""
+        self._window.geometry(geom)
+        # Parse +x+y from geometry string (formats: WxH+X+Y or +X+Y)
+        parts = geom.split("+")
+        if len(parts) >= 3:
+            try:
+                self._tracked_x = int(parts[-2])
+                self._tracked_y = int(parts[-1])
+            except ValueError:
+                pass
 
     # ------------------------------------------------------------------
     # Icon sizing — derived from rendered font metrics so images scale
@@ -374,41 +392,22 @@ class MainWindow:
         if self._dragged:
             return
         self._shaded = not self._shaded
+        self._apply_shade_state()
+
+    def _apply_shade_state(self):
+        """Apply shade/unshade: update title bar, pack/unpack rows, recalculate geometry."""
         self._apply_title_bar_style()
         if self._shaded:
-            # Hide all rows and empty label
             for row_data in self._rows.values():
                 row_data["frame"].pack_forget()
             self._empty_label.pack_forget()
-            # Resize to title bar only
-            title_bar_height = self._settings.row_height + _ROW_PAD_Y * 2
-            x = self._window.winfo_x()
-            if self._settings.grow_up and self._grow_up_bottom_y is not None:
-                y = self._grow_up_bottom_y - title_bar_height
-            else:
-                y = self._window.winfo_y()
-            geom = f"{self._settings.row_width}x{title_bar_height}+{x}+{y}"
-            # Guard: winfo_y/winfo_height are X11 round-trips, skip when not debugging
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(
-                    "grow_up: shade tracked_bottom=%s winfo_y=%d winfo_h=%d"
-                    " computed_y=%d geometry=%s",
-                    self._grow_up_bottom_y,
-                    self._window.winfo_y(),
-                    self._window.winfo_height(),
-                    y,
-                    geom,
-                )
-            self._window.geometry(geom)
-            if self._settings.grow_up:
-                self._window.update_idletasks()
-                self._grow_up_bottom_y = y + title_bar_height
         else:
-            # Re-show rows in order
             for pid in self._row_order:
                 if pid in self._rows:
                     self._rows[pid]["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
-            self._force_resize_now()
+            if not self._rows:
+                self._empty_label.pack(pady=10)
+        self._apply_geometry(row_count=len(self._rows))
 
     def _apply_title_bar_style(self):
         """Apply title bar bg/fg/icon based on current shade state and last known priority."""
@@ -466,38 +465,45 @@ class MainWindow:
                 self._title_emoji_image = new_emoji_image
                 self._title_emoji_label.configure(image=self._title_emoji_image)
 
-    def _force_resize_now(self):
-        """Recalculate geometry after unshade."""
+    def _apply_geometry(self, *, row_count: int):
+        """Single geometry calculation used by shade, unshade, and update_sessions.
+
+        Computes window height from *row_count*, reads x/y from tracked
+        position (never stale winfo), and sets the geometry.
+        """
         self._window.update_idletasks()
         title_bar_height = self._settings.row_height + _ROW_PAD_Y * 2
-        n = len(self._rows)
-        if n > 0:
-            new_height = title_bar_height + n * (self._settings.row_height + _ROW_PAD_Y * 2)
+        if self._shaded:
+            new_height = title_bar_height
+        elif row_count > 0:
+            new_height = title_bar_height + row_count * (self._settings.row_height + _ROW_PAD_Y * 2)
         else:
-            self._empty_label.pack(pady=10)
             new_height = title_bar_height + self._settings.row_height + _ROW_PAD_Y * 2
-        x = self._window.winfo_x()
+
+        x = self._tracked_x if self._tracked_x is not None else self._window.winfo_x()
         if self._settings.grow_up and self._grow_up_bottom_y is not None:
             y = self._grow_up_bottom_y - new_height
         else:
             old_height = self._window.winfo_height()
-            y = self._window.winfo_y()
+            y = self._tracked_y if self._tracked_y is not None else self._window.winfo_y()
             if self._settings.grow_up and old_height > 0:
                 y = y + old_height - new_height
+
         geom = f"{self._settings.row_width}x{new_height}+{x}+{y}"
-        # Guard: winfo_y/winfo_height are X11 round-trips, skip when not debugging
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                "grow_up: unshade tracked_bottom=%s winfo_y=%d winfo_h=%d"
-                " new_h=%d computed_y=%d geometry=%s",
+                "apply_geometry: shaded=%s rows=%d tracked=(%s,%s) bottom=%s"
+                " new_h=%d y=%d geom=%s",
+                self._shaded,
+                row_count,
+                self._tracked_x,
+                self._tracked_y,
                 self._grow_up_bottom_y,
-                self._window.winfo_y(),
-                self._window.winfo_height(),
                 new_height,
                 y,
                 geom,
             )
-        self._window.geometry(geom)
+        self._set_geometry(geom)
         if self._settings.grow_up:
             self._window.update_idletasks()
             self._grow_up_bottom_y = y + new_height
@@ -645,7 +651,7 @@ class MainWindow:
                         x,
                         y,
                     )
-                self._window.geometry(f"{settings.row_width}x1+{x}+{y}")
+                self._set_geometry(f"{settings.row_width}x1+{x}+{y}")
             else:
                 self._window.geometry(f"{settings.row_width}x1")
 
@@ -676,8 +682,8 @@ class MainWindow:
         avoid corrupting the saved position.
         """
         try:
-            x = self._window.winfo_x()
-            y = self._window.winfo_y()
+            x = self._tracked_x if self._tracked_x is not None else self._window.winfo_x()
+            y = self._tracked_y if self._tracked_y is not None else self._window.winfo_y()
             h = self._window.winfo_height()
             # Reject bogus geometry: a 1px-tall window at origin means the
             # compositor isn't reporting real values (common on Wayland).
@@ -714,7 +720,7 @@ class MainWindow:
         if self._dragged:
             x = self._window.winfo_x() + event.x - self._drag_start_x
             y = self._window.winfo_y() + event.y - self._drag_start_y
-            self._window.geometry(f"+{x}+{y}")
+            self._set_geometry(f"+{x}+{y}")
             if self._settings.grow_up:
                 self._grow_up_bottom_y = y + self._drag_start_height
                 # Guard: fires on every drag pixel
@@ -745,10 +751,10 @@ class MainWindow:
         if self._dragged:
             new_width = max(self._MIN_WIDTH, self._resize_start_width + dx)
             self._settings.row_width = new_width
-            x = self._window.winfo_x()
-            y = self._window.winfo_y()
+            x = self._tracked_x if self._tracked_x is not None else self._window.winfo_x()
+            y = self._tracked_y if self._tracked_y is not None else self._window.winfo_y()
             h = self._window.winfo_height()
-            self._window.geometry(f"{new_width}x{h}+{x}+{y}")
+            self._set_geometry(f"{new_width}x{h}+{x}+{y}")
         return "break"
 
     def _on_resize_end(self, event: Any):
@@ -835,61 +841,7 @@ class MainWindow:
         if not changed and not self._force_resize:
             return
         self._force_resize = False
-
-        # Resize height, preserve position (or anchor bottom edge if grow_up)
-        self._window.update_idletasks()
-        title_bar_height = self._settings.row_height + _ROW_PAD_Y * 2
-        if sessions:
-            new_height = title_bar_height + len(sessions) * (
-                self._settings.row_height + _ROW_PAD_Y * 2
-            )
-        else:
-            new_height = title_bar_height + self._settings.row_height + _ROW_PAD_Y * 2
-        x = self._window.winfo_x()
-
-        if self._settings.grow_up and self._grow_up_bottom_y is not None:
-            y = self._grow_up_bottom_y - new_height
-        else:
-            old_height = self._window.winfo_height()
-            y = self._window.winfo_y()
-            if self._settings.grow_up and old_height > 0:
-                y = y + old_height - new_height
-
-        # Clamp to keep window on-screen (grow_up can compute negative y;
-        # Wayland can report bogus positions that drift off-screen)
-        screen_w = self._root.winfo_screenwidth()
-        screen_h = self._root.winfo_screenheight()
-        if x < 0:
-            x = 0
-        elif x > screen_w - 50:
-            x = max(screen_w - self._settings.row_width, 0)
-        if y < 0:
-            y = 0
-        elif y > screen_h - 50:
-            y = max(screen_h - new_height, 0)
-
-        geom = f"{self._settings.row_width}x{new_height}+{x}+{y}"
-        # Guard: winfo_y/winfo_height are X11 round-trips, skip when not debugging
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "grow_up: update_sessions tracked_bottom=%s winfo_y=%d winfo_h=%d"
-                " rows=%d new_h=%d computed_y=%d geometry=%s",
-                self._grow_up_bottom_y,
-                self._window.winfo_y(),
-                self._window.winfo_height(),
-                len(sessions),
-                new_height,
-                y,
-                geom,
-            )
-        self._window.geometry(geom)
-        if self._settings.grow_up:
-            # Force the compositor to process the geometry change.
-            # Wayland compositors (Mutter/XWayland) may apply height
-            # changes but silently drop position changes unless the
-            # X event round-trip is flushed before the next request.
-            self._window.update_idletasks()
-            self._grow_up_bottom_y = y + new_height
+        self._apply_geometry(row_count=len(sessions))
 
     def _color_for_state(self, state: StatusState) -> str:
         return {

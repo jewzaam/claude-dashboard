@@ -66,5 +66,7 @@ class TestHookServerOversizedPayload:
                 assert False, "Expected HTTP 413 error"
             except urllib.error.HTTPError as e:
                 assert e.code == 413
+            except (ConnectionAbortedError, ConnectionResetError):
+                pass  # Windows may abort before sending HTTP 413
         finally:
             server.stop()

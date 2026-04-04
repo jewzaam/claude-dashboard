@@ -2,6 +2,7 @@
 """Atomic file write utilities."""
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -21,5 +22,11 @@ def atomic_write_json(*, data: dict, path: Path) -> None:
             fh.write("\n")
         Path(tmp_path).replace(path)
     except BaseException:
+        # Close the fd if open() failed before it could take ownership.
+        # On Windows an open fd prevents unlink.
+        try:
+            os.close(fd)
+        except OSError:
+            pass  # already closed by the with-statement, or invalid
         Path(tmp_path).unlink(missing_ok=True)
         raise
