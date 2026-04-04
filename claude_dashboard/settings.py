@@ -37,14 +37,6 @@ class Settings:
     # Startup
     run_on_startup: bool = config.DEFAULT_RUN_ON_STARTUP
 
-    # Status emojis
-    emoji_working: str = config.DEFAULT_EMOJI_WORKING
-    emoji_ready: str = config.DEFAULT_EMOJI_READY
-    emoji_idle: str = config.DEFAULT_EMOJI_IDLE
-    emoji_awaiting_input: str = config.DEFAULT_EMOJI_AWAITING_INPUT
-    emoji_permission_required: str = config.DEFAULT_EMOJI_PERMISSION_REQUIRED
-    emoji_unattached: str = config.DEFAULT_EMOJI_UNATTACHED
-
     # Status colors
     color_working: str = config.DEFAULT_COLOR_WORKING
     color_ready: str = config.DEFAULT_COLOR_READY

@@ -99,29 +99,25 @@ class SettingsWindow:
 
         self._section_label(frame, "Status Colors", row)
         row += 1
-        row = self._add_color_field(
-            frame, f"{settings.emoji_working} Working", "color_working", settings.color_working, row
-        )
+        row = self._add_color_field(frame, "Working", "color_working", settings.color_working, row)
         row = self._add_color_field(
             frame,
-            f"{settings.emoji_ready} Ready",
+            "Ready",
             "color_ready",
             settings.color_ready,
             row,
         )
-        row = self._add_color_field(
-            frame, f"{settings.emoji_idle} Idle", "color_idle", settings.color_idle, row
-        )
+        row = self._add_color_field(frame, "Idle", "color_idle", settings.color_idle, row)
         row = self._add_color_field(
             frame,
-            f"{settings.emoji_awaiting_input} Awaiting input",
+            "Awaiting input",
             "color_awaiting_input",
             settings.color_awaiting_input,
             row,
         )
         row = self._add_color_field(
             frame,
-            f"{settings.emoji_permission_required} Permission required",
+            "Permission required",
             "color_permission_required",
             settings.color_permission_required,
             row,
@@ -159,7 +155,7 @@ class SettingsWindow:
         )
         row = self._add_color_field(
             frame,
-            f"{settings.emoji_unattached} Unattached",
+            "Unattached",
             "color_unattached",
             settings.color_unattached,
             row,

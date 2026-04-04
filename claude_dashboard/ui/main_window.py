@@ -167,6 +167,7 @@ class MainWindow:
         self._shaded = False
         self._last_highest_state_color: str = ""
         self._icon_cache: dict[tuple, tk.PhotoImage] = {}
+        self._emoji_image_cache: dict[tuple, tk.PhotoImage] = {}
         self._icon_size = _ICON_MIN_SIZE  # updated by _update_icon_size()
         self._emoji_img_size = _EMOJI_MIN_SIZE  # updated by _update_icon_size()
         # Tracked position.  winfo_x/winfo_y can return stale or
@@ -240,9 +241,7 @@ class MainWindow:
         font_obj = tkfont.Font(font=self._font_body)
         line_height = font_obj.metrics("linespace")
         self._icon_size = max(line_height, _ICON_MIN_SIZE)
-        emoji_font_obj = tkfont.Font(font=self._font_emoji)
-        emoji_height = emoji_font_obj.metrics("linespace")
-        self._emoji_img_size = max(emoji_height, _EMOJI_MIN_SIZE)
+        self._emoji_img_size = max(line_height, _EMOJI_MIN_SIZE)
 
     # ------------------------------------------------------------------
     # Title bar
@@ -606,6 +605,7 @@ class MainWindow:
         self._update_icon_size()
         self._force_resize = True
         self._icon_cache.clear()
+        self._emoji_image_cache.clear()
 
         # Update title bar emoji (image or font)
         new_emoji_image = _load_title_emoji(
@@ -852,15 +852,6 @@ class MainWindow:
             StatusState.PERMISSION_REQUIRED: self._settings.color_permission_required,
         }.get(state, self._settings.color_idle)
 
-    def _emoji_for_state(self, state: StatusState) -> str:
-        return {
-            StatusState.WORKING: self._settings.emoji_working,
-            StatusState.READY: self._settings.emoji_ready,
-            StatusState.IDLE: self._settings.emoji_idle,
-            StatusState.AWAITING_INPUT: self._settings.emoji_awaiting_input,
-            StatusState.PERMISSION_REQUIRED: self._settings.emoji_permission_required,
-        }.get(state, self._settings.emoji_idle)
-
     def _container_label(self, container: ContainerInfo | None) -> str:
         if not container or container.container_type == ContainerType.UNKNOWN:
             return ""
@@ -886,6 +877,28 @@ class MainWindow:
         if merged:
             return config.DEFAULT_COLOR_BRANCH_MERGED
         return fg
+
+    def _emoji_image(self, state: StatusState | None, *, bg_hex: str) -> tk.PhotoImage:
+        """Return a cached emoji image for the given state, composited on bg."""
+        png_path = config.EMOJI_IMAGES[state]
+        cache_key = (state, bg_hex, self._emoji_img_size, self._emoji_label_width)
+        cached = self._emoji_image_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        size = self._emoji_img_size
+        label_width = self._emoji_label_width
+        fg = Image.open(png_path).convert("RGBA")
+        fg.thumbnail((size, size), Image.Resampling.LANCZOS)
+        bg_rgb = config.hex_to_rgb(hex_color=bg_hex)
+        canvas = Image.new("RGBA", (label_width, size), bg_rgb + (255,))
+        canvas.paste(
+            fg,
+            ((label_width - fg.width) // 2, (size - fg.height) // 2),
+            fg,
+        )
+        img = _pil_to_photoimage(canvas.convert("RGB"))
+        self._emoji_image_cache[cache_key] = img
+        return img
 
     def _flag_icon(self, row: SessionRow) -> tk.PhotoImage:
         """Generate an eye icon for git status + manual flag, or transparent if clean."""
@@ -938,12 +951,12 @@ class MainWindow:
         if row.unattached:
             bg = self._settings.color_unattached
             fg = _COLOR_CONTAINER_FG  # dim text for ghosts
-            emoji = self._settings.emoji_unattached
+            emoji_state: StatusState | None = None  # unattached
             container_text = ""
         else:
             bg = self._color_for_state(state)
             fg = _contrast_text_for_bg(bg)
-            emoji = self._emoji_for_state(state)
+            emoji_state = state
             container_text = self._container_label(container)
 
         row_frame = tk.Frame(self._frame, bg=bg, height=self._settings.row_height, cursor="hand2")
@@ -960,15 +973,14 @@ class MainWindow:
         )
         flag_label.pack(side=tk.LEFT, padx=(_MARGIN_LEFT, 0))
 
-        status_var = tk.StringVar(value=emoji)
+        emoji_image = self._emoji_image(emoji_state, bg_hex=bg)
         status_label = tk.Label(
             row_frame,
-            textvariable=status_var,
+            image=emoji_image,
             bg=bg,
-            fg=fg,
-            font=self._font_emoji,
-            width=2,
-            anchor=tk.CENTER,
+            borderwidth=0,
+            padx=0,
+            pady=0,
         )
         status_label.pack(side=tk.LEFT, padx=(0, _ELEMENT_GAP))
 
@@ -1073,7 +1085,7 @@ class MainWindow:
 
         self._rows[session.pid] = {
             "frame": row_frame,
-            "status_var": status_var,
+            "status_image": emoji_image,
             "cwd_var": cwd_var,
             "branch_var": branch_var,
             "container_var": container_var,
@@ -1091,15 +1103,17 @@ class MainWindow:
         if row_data.unattached:
             bg = self._settings.color_unattached
             fg = _COLOR_CONTAINER_FG
-            emoji = self._settings.emoji_unattached
+            emoji_state: StatusState | None = None
             container_text = ""
         else:
             bg = self._color_for_state(row_data.state)
             fg = _contrast_text_for_bg(bg)
-            emoji = self._emoji_for_state(row_data.state)
+            emoji_state = row_data.state
             container_text = self._container_label(row_data.container)
 
-        row["status_var"].set(emoji)
+        emoji_image = self._emoji_image(emoji_state, bg_hex=bg)
+        row["status_image"] = emoji_image  # prevent GC
+        row["status_label"].configure(image=emoji_image)
         row["cwd_var"].set(
             self._cwd_display(row_data.session.cwd, agent_count=row_data.agent_count)
         )
@@ -1109,7 +1123,6 @@ class MainWindow:
         row["branch_label"].configure(
             fg=self._branch_color(merged=row_data.merged, fg=fg), font=self._font_body
         )
-        row["status_label"].configure(font=self._font_emoji)
         row["container_label"].configure(font=self._font_container)
         flag_image = self._flag_icon(row_data)
         row["flag_image"] = flag_image  # prevent GC
