@@ -105,43 +105,45 @@ def detect_branch(*, cwd: str, trunk_branch: str = "") -> str:
         return ""
 
 
+def _git_output(*, args: list[str], cwd: str) -> str | None:
+    """Run a git command and return stdout, or None on failure/timeout."""
+    try:
+        result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=2)
+        if result.returncode == 0:
+            return result.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _parse_porcelain(porcelain: str) -> tuple[bool, bool]:
+    """Parse git status --porcelain output into (has_unstaged, has_staged)."""
+    has_unstaged = False
+    has_staged = False
+    for line in porcelain.splitlines():
+        if len(line) < 2 or line.startswith("??"):
+            continue
+        if line[1] != " ":
+            has_unstaged = True
+        if line[0] != " ":
+            has_staged = True
+    return has_unstaged, has_staged
+
+
 def detect_git_status(*, cwd: str) -> GitStatus:
     """Detect git working tree status for flag display.
 
     Returns the highest-priority git status found. Uses subprocess calls
     to git (read-only). Returns CLEAN for non-git directories.
     """
-    git_path = Path(cwd) / ".git"
-    if not git_path.exists():
+    if not (Path(cwd) / ".git").exists():
         return GitStatus.CLEAN
 
-    has_unstaged = False
-    has_staged = False
-
-    try:
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        if result.returncode == 0:
-            for line in result.stdout.splitlines():
-                if len(line) < 2:
-                    continue
-                index_col = line[0]
-                work_col = line[1]
-                if line.startswith("??"):
-                    continue  # ignore untracked files
-                else:
-                    if work_col != " ":
-                        has_unstaged = True
-                    if index_col != " ":
-                        has_staged = True
-    except (OSError, subprocess.TimeoutExpired):
+    porcelain = _git_output(args=["git", "status", "--porcelain"], cwd=cwd)
+    if porcelain is None:
         return GitStatus.CLEAN
 
+    has_unstaged, has_staged = _parse_porcelain(porcelain)
     if has_unstaged:
         return GitStatus.UNSTAGED_CHANGES
     if has_staged:
@@ -151,37 +153,15 @@ def detect_git_status(*, cwd: str) -> GitStatus:
     trunk_branch = trunk_ref.split("/", 1)[-1] if trunk_ref else ""
     branch = detect_branch(cwd=cwd, trunk_branch=trunk_branch)
 
-    has_upstream = False
-    try:
-        result = subprocess.run(
-            ["git", "log", "--oneline", "@{u}..HEAD"],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        if result.returncode == 0:
-            has_upstream = True
-            if result.stdout.strip():
-                return GitStatus.COMMITTED_NOT_PUSHED
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-
-    if not has_upstream and branch:
-        _, trunk = detect_upstream(cwd=cwd)
-        if trunk:
-            try:
-                fallback = subprocess.run(
-                    ["git", "log", "--oneline", f"{trunk}..HEAD"],
-                    cwd=cwd,
-                    capture_output=True,
-                    text=True,
-                    timeout=2,
-                )
-                if fallback.returncode == 0 and fallback.stdout.strip():
-                    return GitStatus.COMMITTED_NOT_PUSHED
-            except (OSError, subprocess.TimeoutExpired):
-                pass
+    # Check upstream tracking branch first, fall back to trunk
+    upstream_log = _git_output(args=["git", "log", "--oneline", "@{u}..HEAD"], cwd=cwd)
+    if upstream_log is not None:
+        if upstream_log.strip():
+            return GitStatus.COMMITTED_NOT_PUSHED
+    elif branch and trunk_ref:
+        trunk_log = _git_output(args=["git", "log", "--oneline", f"{trunk_ref}..HEAD"], cwd=cwd)
+        if trunk_log and trunk_log.strip():
+            return GitStatus.COMMITTED_NOT_PUSHED
 
     if branch:
         return GitStatus.PUSHED_NOT_MERGED

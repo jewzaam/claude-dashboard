@@ -61,24 +61,12 @@ class TestLoadSettings:
         assert settings.color_flag_manual == "#ff0000"
         assert settings.color_flag_unstaged == "#cc0000"
 
-    def test_migrates_color_flagged_to_color_flag_manual(self, tmp_settings_path):
-        data = {"color_flagged": "#purple1"}
-        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
-        settings = load_settings(path=tmp_settings_path)
-        assert settings.color_flag_manual == "#purple1"
-
     def test_flag_color_roundtrip(self, tmp_settings_path):
         original = Settings(color_flag_manual="#aa0000", color_flag_unmerged="#330000")
         save_settings(original, path=tmp_settings_path)
         loaded = load_settings(path=tmp_settings_path)
         assert loaded.color_flag_manual == "#aa0000"
         assert loaded.color_flag_unmerged == "#330000"
-
-    def test_migration_both_keys_prefers_new(self, tmp_settings_path):
-        data = {"color_flagged": "#old", "color_flag_manual": "#new"}
-        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
-        settings = load_settings(path=tmp_settings_path)
-        assert settings.color_flag_manual == "#new"
 
 
 class TestSaveSettings:

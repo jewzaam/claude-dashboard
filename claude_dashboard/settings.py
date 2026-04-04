@@ -66,63 +66,52 @@ class Settings:
     ignore_regex: str = config.DEFAULT_IGNORE_REGEX
 
 
+def _is_valid_value(*, value: object, default: object) -> bool:
+    """Check if a JSON value is type-compatible with a Settings field default."""
+    if value is None:
+        return default is None
+    if default is None:
+        # Optional[int] — accept int but not bool
+        return isinstance(value, int) and not isinstance(value, bool)
+    if not isinstance(value, type(default)):
+        return False
+    # bool is subclass of int — reject bool for int fields
+    if isinstance(default, int) and not isinstance(default, bool):
+        return not isinstance(value, bool)
+    return True
+
+
+SETTINGS_FIELD_NAMES = {f.name for f in fields(Settings)}
+
+
 def load_settings(*, path: Path | None = None) -> Settings:
     """Load settings from JSON file. Returns defaults if file missing or invalid."""
-    settings_path = path or config.SETTINGS_FILE
+    settings_path = config.SETTINGS_FILE if path is None else path
+    settings = Settings()
 
     if not settings_path.exists():
         logger.debug("settings file not found, using defaults path=%s", settings_path)
-        return Settings()
+        return settings
 
     try:
         raw = json.loads(settings_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
+
+        # Filter to known fields only
+        filtered = {k: v for k, v in raw.items() if k in SETTINGS_FIELD_NAMES}
+
+        # Validate types by comparing against default value types
+        for field_name in SETTINGS_FIELD_NAMES:
+            if field_name not in filtered:
+                continue
+            value = filtered[field_name]
+            default = getattr(settings, field_name)
+            if not _is_valid_value(value=value, default=default):
+                logger.debug("skipping invalid settings field=%s value=%r", field_name, value)
+                continue
+            setattr(settings, field_name, value)
+
+    except Exception as exc:
         logger.warning("failed to read settings, using defaults error=%s", exc)
-        return Settings()
-
-    if not isinstance(raw, dict):
-        logger.warning("settings file is not a JSON object, using defaults")
-        return Settings()
-
-    # Migrate legacy color_flagged → color_flag_manual
-    if "color_flagged" in raw and "color_flag_manual" not in raw:
-        raw["color_flag_manual"] = raw.pop("color_flagged")
-    elif "color_flagged" in raw:
-        del raw["color_flagged"]
-
-    # Filter to known fields only
-    known_fields = {f.name for f in fields(Settings)}
-    filtered = {k: v for k, v in raw.items() if k in known_fields}
-
-    # Validate types by comparing against default value types
-    settings = Settings()
-    for field_info in fields(Settings):
-        if field_info.name not in filtered:
-            continue
-        value = filtered[field_info.name]
-        default = getattr(settings, field_info.name)
-
-        # Accept None if the default is also None (Optional field)
-        if value is None and default is None:
-            continue  # already None
-
-        # Accept value if it matches the type of the default
-        if default is not None and isinstance(value, type(default)):
-            # bool is a subclass of int — reject bools for int fields
-            if isinstance(default, int) and not isinstance(default, bool):
-                if isinstance(value, bool):
-                    logger.debug("skipping bool for int field=%s", field_info.name)
-                    continue
-            setattr(settings, field_info.name, value)
-        elif default is None and isinstance(value, int) and not isinstance(value, bool):
-            # Optional[int] fields where default is None
-            setattr(settings, field_info.name, value)
-        else:
-            logger.debug(
-                "skipping invalid settings field=%s value=%r",
-                field_info.name,
-                value,
-            )
 
     return settings
 
