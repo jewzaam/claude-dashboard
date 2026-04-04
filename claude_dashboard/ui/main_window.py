@@ -208,8 +208,6 @@ class MainWindow:
         self._empty_label.pack(pady=10)
 
         # Bindings
-        self._window.bind("<Button-1>", self._on_drag_start)
-        self._window.bind("<B1-Motion>", self._on_drag_motion)
         self._window.bind("<Button-3>", self._on_right_click_event)
 
         # Apply all settings (position, size, colors, topmost)
@@ -1027,7 +1025,7 @@ class MainWindow:
                 if self._double_clicked_pid == s.pid:
                     self._double_clicked_pid = None
                     return
-                if not self._dragged and self._on_row_left_click:
+                if self._on_row_left_click:
                     # Delay single-click so double-click can suppress it.
                     # On Linux, <ButtonRelease-1> fires before <Double-1>,
                     # so without a delay the single-click runs first.
@@ -1076,8 +1074,6 @@ class MainWindow:
         mid_click = make_middle_click()
         right_click = make_right_click()
         for w in widgets:
-            w.bind("<Button-1>", self._on_drag_start)
-            w.bind("<B1-Motion>", self._on_drag_motion)
             w.bind("<ButtonRelease-1>", click)
             w.bind("<Double-1>", dbl_click)
             w.bind("<Button-2>", mid_click)
