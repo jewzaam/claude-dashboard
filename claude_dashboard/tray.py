@@ -25,28 +25,40 @@ def generate_icon_image(
     personality — 'keeping an eye on your sessions'.
     """
     size = TRAY_ICON_SIZE[0]
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    scale = 4
+    hi = size * scale
+    image = Image.new("RGBA", (hi, hi), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
 
-    cx, cy = size // 2, size // 2
-    margin = 3
+    cx, cy = hi // 2, hi // 2
+    margin = 3 * scale
 
-    # --- Outer eye (filled circle, nearly full icon) ---
+    # --- Outer eye (filled circle with black outline) ---
+    # Black outline prevents system tray downscaling from blending
+    # the state color into the background as visible green artifacts.
+    outline_w = scale
     draw.ellipse(
-        [margin, margin, size - margin, size - margin],
+        [margin, margin, hi - margin, hi - margin],
         fill=color,
+        outline=(0, 0, 0),
+        width=outline_w,
     )
 
     # --- Iris/pupil (dark circle, offset right and slightly up) ---
-    pupil_r = 10
-    pupil_cx = cx + 6
-    pupil_cy = cy - 2
+    pupil_r = 10 * scale
+    pupil_cx = cx + 6 * scale
+    pupil_cy = cy - 2 * scale
     draw.ellipse(
         [pupil_cx - pupil_r, pupil_cy - pupil_r, pupil_cx + pupil_r, pupil_cy + pupil_r],
         fill=pupil_color,
     )
 
-    return image
+    result = image.resize((size, size), Image.Resampling.LANCZOS)
+    # Threshold alpha to eliminate semi-transparent edge pixels that
+    # appear as colored glow on dark tray backgrounds.
+    alpha = result.getchannel("A").point(lambda a: 255 if a > 128 else 0)
+    result.putalpha(alpha)
+    return result
 
 
 def create_tray_icon(
