@@ -237,3 +237,90 @@ class TestTrackedBottomEdge:
 
             # bottom_y = new_y + height = 520 + 136 = 656
             assert win._grow_up_bottom_y == 520 + 136
+
+
+class TestGeometryBeforePacking:
+    """Verify geometry is set before rows are packed in update_sessions.
+
+    On Wayland, packing rows triggers intermediate geometry events that
+    the compositor may act on.  Setting geometry first ensures the window
+    is already the correct size when frames are packed, preventing the
+    compositor from repositioning dock windows on secondary monitors.
+    """
+
+    def test_apply_geometry_called_before_add_row(self):
+        """When new sessions are added, _apply_geometry must run before _add_row."""
+        with patch("claude_dashboard.ui.main_window.tk"):
+            from claude_dashboard.ui.main_window import MainWindow
+
+            settings = Settings(grow_up=True, window_x=2093, window_y=1434, row_height=32)
+
+            with patch.object(MainWindow, "__init__", lambda self, *a, **kw: None):
+                win = MainWindow.__new__(MainWindow)
+
+            toplevel = MagicMock()
+            win._window = toplevel
+            win._settings = settings
+            win._shaded = False
+            win._rows = {}
+            win._row_order = []
+            win._force_resize = False
+            win._grow_up_bottom_y = 1434
+            win._tracked_x = 2093
+            win._tracked_y = 1400
+            win._empty_label = MagicMock()
+            win._font_body = ("Noto Sans", 10)
+            win._font_emoji = ("Noto Emoji", 13)
+            win._font_container = ("Noto Sans", 8)
+            win._icon_size = 20
+            win._emoji_img_size = 16
+            win._emoji_label_width = 30
+            win._icon_cache = {}
+            win._emoji_image_cache = {}
+
+            call_order = []
+
+            def tracking_apply_geometry(self, *, row_count):
+                call_order.append(("apply_geometry", row_count))
+                # Set geometry without full Tk processing
+                title_bar_height = self._settings.row_height + 2
+                new_height = title_bar_height + row_count * (self._settings.row_height + 2)
+                y = self._grow_up_bottom_y - new_height
+                geom = f"{self._settings.row_width}x{new_height}+{self._tracked_x}+{y}"
+                self._window.geometry(geom)
+                self._tracked_y = y
+
+            def tracking_add_row(self, row):
+                call_order.append(("add_row", row.session.pid))
+
+            with (
+                patch.object(MainWindow, "_apply_geometry", tracking_apply_geometry),
+                patch.object(MainWindow, "_add_row", tracking_add_row),
+            ):
+                from claude_dashboard.models import SessionRow
+                from claude_dashboard.session import SessionInfo
+
+                sessions = [
+                    SessionRow(
+                        session=SessionInfo(
+                            pid=i, cwd=f"/tmp/{i}", session_id=f"s{i}", started_at=0
+                        ),
+                        state=MagicMock(),
+                        container=None,
+                        branch="",
+                        flagged=False,
+                        git_status=MagicMock(),
+                        merged=False,
+                        agent_count=0,
+                        unattached=True,
+                    )
+                    for i in range(1, 6)
+                ]
+                win.update_sessions(sessions)
+
+            # apply_geometry must be the first call
+            assert call_order[0][0] == "apply_geometry"
+            assert call_order[0][1] == 5  # 5 sessions
+            # add_row calls come after
+            add_row_calls = [c for c in call_order if c[0] == "add_row"]
+            assert len(add_row_calls) == 5
