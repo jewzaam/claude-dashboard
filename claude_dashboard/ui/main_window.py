@@ -877,7 +877,7 @@ class MainWindow:
         }.get(container.container_type, container.container_type.value)
 
     def _cwd_display(self, cwd: str, *, agent_count: int = 0) -> str:
-        display = cwd_relative_to_home(cwd=cwd)
+        display = cwd_relative_to_home(cwd=cwd).replace("git-worktrees/", ".../")
         if agent_count > 0:
             display += f" (+{agent_count})"
         return display
