@@ -504,6 +504,18 @@ class MainWindow:
         if self._settings.grow_up:
             self._window.update_idletasks()
             self._grow_up_bottom_y = y + new_height
+            # Detect compositor drift (Wayland may reposition dock windows)
+            actual_x = self._window.winfo_x()
+            actual_y = self._window.winfo_y()
+            if actual_x != x or actual_y != y:
+                logger.warning(
+                    "apply_geometry: compositor drift detected:"
+                    " requested=(%d,%d) actual=(%d,%d)",
+                    x,
+                    y,
+                    actual_x,
+                    actual_y,
+                )
 
     def _on_ghost_toggle_click(self, event: Any):
         """Middle-click on title bar — toggle ghost session visibility."""
@@ -803,12 +815,25 @@ class MainWindow:
             return
 
         current_pids = {row.session.pid for row in sessions}
-        changed = False
+
+        # Detect changes that affect geometry
+        stale_pids = set(self._rows.keys()) - current_pids
+        new_pids = {r.session.pid for r in sessions} - set(self._rows.keys())
+        desired_order = [row.session.pid for row in sessions]
+        geometry_changed = bool(stale_pids or new_pids) or desired_order != self._row_order
+
+        # Pre-set geometry BEFORE packing to prevent Wayland compositor
+        # from repositioning the dock window during intermediate auto-resize.
+        # Row packing triggers geometry negotiation; on secondary monitors
+        # the compositor may snap the window to the primary monitor if it
+        # sees a large transient resize before the final geometry is applied.
+        if geometry_changed or self._force_resize:
+            self._force_resize = False
+            self._apply_geometry(row_count=len(sessions))
 
         # Remove stale rows
-        for pid in set(self._rows.keys()) - current_pids:
+        for pid in stale_pids:
             self._remove_row(pid)
-            changed = True
 
         # Add or update rows
         for row in sessions:
@@ -816,10 +841,8 @@ class MainWindow:
                 self._update_row(row)
             else:
                 self._add_row(row)
-                changed = True
 
         # Re-order rows only if the order changed
-        desired_order = [row.session.pid for row in sessions]
         if desired_order != self._row_order:
             for sr in sessions:
                 row_data = self._rows.get(sr.session.pid)
@@ -827,19 +850,12 @@ class MainWindow:
                     row_data["frame"].pack_forget()
                     row_data["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
             self._row_order = desired_order
-            changed = True
 
         # Empty state label
         if sessions:
             self._empty_label.pack_forget()
         else:
             self._empty_label.pack(pady=10)
-
-        # Only recalculate geometry when rows were added/removed/reordered
-        if not changed and not self._force_resize:
-            return
-        self._force_resize = False
-        self._apply_geometry(row_count=len(sessions))
 
     def _color_for_state(self, state: StatusState) -> str:
         return {
