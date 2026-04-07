@@ -564,8 +564,8 @@ class MainWindow:
         *,
         daily_cost: float,
         limits: dict,
-        visible_count: int = 0,
-        total_count: int = 0,
+        hidden_live: int = 0,
+        hidden_ghost: int = 0,
         highest_state_color: str = "",
     ):
         """Update the title bar with current cost, limit data, and state icon."""
@@ -573,11 +573,12 @@ class MainWindow:
         self._apply_title_bar_style()
         fg = self._title_fg
 
-        hidden_count = total_count - visible_count
-        if hidden_count > 0:
-            self._title_text_label.configure(text=f"{config.TITLE_TEXT} (+{hidden_count})")
-        else:
-            self._title_text_label.configure(text=config.TITLE_TEXT)
+        suffix = ""
+        if hidden_live > 0:
+            suffix += f" (+{hidden_live})"
+        if hidden_ghost > 0:
+            suffix += f" [+{hidden_ghost}]"
+        self._title_text_label.configure(text=f"{config.TITLE_TEXT}{suffix}")
 
         # Right-side info
         cost_text = f"${daily_cost:.2f}" if daily_cost > 0 else ""

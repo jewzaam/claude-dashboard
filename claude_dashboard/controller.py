@@ -812,11 +812,13 @@ class AppController:
             self._tray_state = highest
             update_tray_icon(self._tray_icon, color=self._tray_color_for_state(highest))
 
+        hidden_live = sum(1 for e in all_entries if e.hidden and not e.unattached)
+        hidden_ghost = sum(1 for e in all_entries if e.hidden and e.unattached)
         self._main_window.update_title_bar(
             daily_cost=self._daily_cost,
             limits=self._usage_limits,
-            visible_count=len(visible_states),
-            total_count=len(all_entries),
+            hidden_live=hidden_live,
+            hidden_ghost=hidden_ghost,
             highest_state_color=self._tray_color_hex_for_state(highest),
         )
 
