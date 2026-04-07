@@ -108,7 +108,14 @@ def detect_branch(*, cwd: str, trunk_branch: str = "") -> str:
 def _git_output(*, args: list[str], cwd: str) -> str | None:
     """Run a git command and return stdout, or None on failure/timeout."""
     try:
-        result = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=2)
+        result = subprocess.run(
+            args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=2,
+            creationflags=config.SUBPROCESS_FLAGS,
+        )
         if result.returncode == 0:
             return result.stdout
     except (OSError, subprocess.TimeoutExpired):
@@ -183,6 +190,7 @@ def detect_upstream(*, cwd: str) -> tuple[str, str]:
             capture_output=True,
             text=True,
             timeout=2,
+            creationflags=config.SUBPROCESS_FLAGS,
         )
         if remotes_result.returncode != 0:
             return ("", "")
@@ -193,6 +201,7 @@ def detect_upstream(*, cwd: str) -> tuple[str, str]:
                 capture_output=True,
                 text=True,
                 timeout=2,
+                creationflags=config.SUBPROCESS_FLAGS,
             )
             if result.returncode == 0:
                 ref = result.stdout.strip()
@@ -221,6 +230,7 @@ def detect_merged(*, cwd: str, branch: str) -> bool:
             cwd=cwd,
             capture_output=True,
             timeout=2,
+            creationflags=config.SUBPROCESS_FLAGS,
         )
         if ancestor.returncode == 0:
             return True
@@ -232,6 +242,7 @@ def detect_merged(*, cwd: str, branch: str) -> bool:
             capture_output=True,
             text=True,
             timeout=2,
+            creationflags=config.SUBPROCESS_FLAGS,
         )
         if cherry.returncode == 0:
             unmerged = sum(1 for line in cherry.stdout.splitlines() if line.startswith("+"))
@@ -244,6 +255,7 @@ def detect_merged(*, cwd: str, branch: str) -> bool:
             cwd=cwd,
             capture_output=True,
             timeout=2,
+            creationflags=config.SUBPROCESS_FLAGS,
         )
         if diff.returncode == 0:
             return True
