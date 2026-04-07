@@ -7,6 +7,7 @@ live session Hide/Clear State, ghost Dismiss, and row right-click dispatch.
 
 from unittest.mock import MagicMock, patch
 
+from claude_dashboard import config
 from claude_dashboard.config import GitStatus, StatusState
 from claude_dashboard.controller import _AgentEntry, _SessionEntry
 from claude_dashboard.session import SessionInfo
@@ -236,6 +237,7 @@ class TestOpenPrAction:
             stdout=-3,
             stderr=-3,
             timeout=10,
+            creationflags=config.SUBPROCESS_FLAGS,
         )
 
     @patch("claude_dashboard.controller.subprocess.Popen")
@@ -253,6 +255,7 @@ class TestOpenPrAction:
             cwd="/tmp/my-repo",
             stdout=-3,
             stderr=-3,
+            creationflags=config.SUBPROCESS_FLAGS,
         )
 
     @patch("claude_dashboard.controller.subprocess.run", side_effect=FileNotFoundError)
@@ -287,6 +290,7 @@ class TestLaunchVscode:
             ["code", "/tmp/my-project"],
             stdout=-3,
             stderr=-3,
+            creationflags=config.SUBPROCESS_FLAGS,
         )
 
     @patch("claude_dashboard.controller.subprocess.Popen", side_effect=FileNotFoundError)

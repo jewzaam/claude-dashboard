@@ -383,6 +383,7 @@ class AppController:
                                     stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL,
                                     timeout=10,
+                                    creationflags=config.SUBPROCESS_FLAGS,
                                 )
                             except (OSError, subprocess.TimeoutExpired):
                                 pass
@@ -965,6 +966,7 @@ class AppController:
                 ["code", folder],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                creationflags=config.SUBPROCESS_FLAGS,
             )
             logger.info("launched VS Code for folder=%s", folder)
         except FileNotFoundError:
@@ -996,6 +998,7 @@ class AppController:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=10,
+                creationflags=config.SUBPROCESS_FLAGS,
             )
             if result.returncode == 0:
                 logger.info("opened PR in browser for cwd=%s", session.cwd)
@@ -1005,6 +1008,7 @@ class AppController:
                     cwd=session.cwd,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    creationflags=config.SUBPROCESS_FLAGS,
                 )
                 logger.info("no PR found, opened create-PR page for cwd=%s", session.cwd)
         except FileNotFoundError:

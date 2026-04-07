@@ -4,12 +4,17 @@
 import hashlib
 import json
 import platform
+import subprocess
 from enum import Enum
 from pathlib import Path
 
 # Platform detection — single source of truth for the entire codebase
 IS_WINDOWS = platform.system() == "Windows"
 IS_LINUX = platform.system() == "Linux"
+
+# Subprocess creation flags: prevent console window flash on Windows when
+# the parent process is pythonw.exe (no inherited console).
+SUBPROCESS_FLAGS: int = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 # Claude CLI paths
 CLAUDE_HOME = Path.home() / ".claude"
