@@ -1020,18 +1020,21 @@ class AppController:
         except OSError as exc:
             logger.warning("failed to open PR for cwd=%s error=%s", session.cwd, exc)
 
-    def _on_ghost_toggle(self):
+    def _on_ghost_toggle(self, *, force_show: bool = False):
         """Middle-click on title bar — toggle ghost session visibility.
 
-        If any non-flagged ghosts are currently visible, hide them.
+        If force_show is True, always show ghosts (used when unshading).
+        Otherwise: if any non-flagged ghosts are visible, hide them.
         Flagged ghosts are never hidden by this toggle.
-        Only show all ghosts when no non-flagged ghosts are currently visible.
         """
-        any_visible = any(
-            entry.unattached and not entry.hidden and not entry.flagged
-            for entry in self._sessions.values()
-        )
-        hide = any_visible
+        if force_show:
+            hide = False
+        else:
+            any_visible = any(
+                entry.unattached and not entry.hidden and not entry.flagged
+                for entry in self._sessions.values()
+            )
+            hide = any_visible
         for entry in self._sessions.values():
             if entry.unattached and not entry.flagged:
                 entry.hidden = hide
