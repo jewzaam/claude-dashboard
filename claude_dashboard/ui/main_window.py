@@ -521,6 +521,9 @@ class MainWindow:
         """Middle-click on title bar — toggle ghost session visibility."""
         if self._on_ghost_toggle:
             self._on_ghost_toggle()
+        if self._shaded:
+            self._shaded = False
+            self._apply_shade_state()
 
     def _on_cost_label_leave(self, event: Any):
         """Mouse left the cost label area — dismiss any open cost popup."""

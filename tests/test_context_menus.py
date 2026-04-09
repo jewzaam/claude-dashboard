@@ -436,6 +436,51 @@ class TestGhostToggle:
         assert ghost2.hidden is True
         assert stub._ghosts_hidden is True
 
+    def test_flagged_ghosts_not_hidden_by_toggle(self):
+        from claude_dashboard.controller import AppController
+
+        flagged_ghost = _SessionEntry(_make_session(pid=-1, cwd="/tmp/g1"))
+        flagged_ghost.unattached = True
+        flagged_ghost.hidden = False
+        flagged_ghost.flagged = True
+        unflagged_ghost = _SessionEntry(_make_session(pid=-2, cwd="/tmp/g2"))
+        unflagged_ghost.unattached = True
+        unflagged_ghost.hidden = False
+
+        stub = self._make_controller_stub({-1: flagged_ghost, -2: unflagged_ghost})
+        with (
+            patch.object(AppController, "_save_session_state"),
+            patch.object(AppController, "_refresh_ui"),
+        ):
+            stub._on_ghost_toggle()
+
+        assert flagged_ghost.hidden is False
+        assert unflagged_ghost.hidden is True
+        assert stub._ghosts_hidden is True
+
+    def test_show_ghosts_when_only_flagged_visible(self):
+        """When only flagged ghosts are visible, toggle shows all ghosts."""
+        from claude_dashboard.controller import AppController
+
+        flagged_ghost = _SessionEntry(_make_session(pid=-1, cwd="/tmp/g1"))
+        flagged_ghost.unattached = True
+        flagged_ghost.hidden = False
+        flagged_ghost.flagged = True
+        hidden_ghost = _SessionEntry(_make_session(pid=-2, cwd="/tmp/g2"))
+        hidden_ghost.unattached = True
+        hidden_ghost.hidden = True
+
+        stub = self._make_controller_stub({-1: flagged_ghost, -2: hidden_ghost})
+        with (
+            patch.object(AppController, "_save_session_state"),
+            patch.object(AppController, "_refresh_ui"),
+        ):
+            stub._on_ghost_toggle()
+
+        assert flagged_ghost.hidden is False
+        assert hidden_ghost.hidden is False
+        assert stub._ghosts_hidden is False
+
     def test_shows_all_ghosts_when_none_visible(self):
         from claude_dashboard.controller import AppController
 
