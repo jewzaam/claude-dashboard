@@ -77,7 +77,7 @@ class MainWindowCallbacks:
     on_build_sessions_menu: Callable[[tk.Menu], None] | None = None
     on_open_folder: Callable[[], None] | None = None
     on_cost_click: Callable[[int, int], None] | None = None
-    on_ghost_toggle: Callable[[], None] | None = None
+    on_ghost_toggle: Callable[..., None] | None = None
     on_width_save: Callable[[int], None] | None = None
 
 
@@ -518,12 +518,22 @@ class MainWindow:
                 )
 
     def _on_ghost_toggle_click(self, event: Any):
-        """Middle-click on title bar — toggle ghost session visibility."""
-        if self._on_ghost_toggle:
-            self._on_ghost_toggle()
+        """Middle-click on title bar — toggle ghost session visibility.
+
+        Interaction with shade state:
+        - Shaded + ghosts hidden: unshade and show ghosts
+        - Shaded + ghosts shown: unshade only (keep ghosts shown)
+        - Unshaded + ghosts hidden: show ghosts
+        - Unshaded + ghosts shown: hide ghosts (flagged excluded)
+        """
         if self._shaded:
             self._shaded = False
             self._apply_shade_state()
+            if self._on_ghost_toggle:
+                self._on_ghost_toggle(force_show=True)
+        else:
+            if self._on_ghost_toggle:
+                self._on_ghost_toggle()
 
     def _on_cost_label_leave(self, event: Any):
         """Mouse left the cost label area — dismiss any open cost popup."""
