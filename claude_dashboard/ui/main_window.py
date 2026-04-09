@@ -577,6 +577,7 @@ class MainWindow:
         *,
         daily_cost: float,
         limits: dict,
+        active: int = 0,
         hidden_live: int = 0,
         hidden_ghost: int = 0,
         highest_state_color: str = "",
@@ -587,6 +588,8 @@ class MainWindow:
         fg = self._title_fg
 
         suffix = ""
+        if active > 0:
+            suffix += f" {{{active}}}"
         if hidden_live > 0:
             suffix += f" (+{hidden_live})"
         if hidden_ghost > 0:
