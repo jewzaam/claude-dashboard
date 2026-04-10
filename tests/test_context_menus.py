@@ -281,27 +281,32 @@ class TestLaunchVscode:
     """Test the shared _launch_vscode subprocess wrapper."""
 
     @patch("claude_dashboard.controller.subprocess.Popen")
-    def test_launch_vscode_calls_code_with_folder(self, mock_popen):
+    @patch("claude_dashboard.controller.shutil.which", return_value="/usr/bin/code")
+    def test_launch_vscode_calls_code_with_folder(self, mock_which, mock_popen):
         from claude_dashboard.controller import AppController
 
         stub = object.__new__(AppController)
         AppController._launch_vscode(stub, folder="/tmp/my-project")
+        mock_which.assert_called_once_with("code")
         mock_popen.assert_called_once_with(
-            ["code", "/tmp/my-project"],
+            ["/usr/bin/code", "/tmp/my-project"],
             stdout=-3,
             stderr=-3,
             creationflags=config.SUBPROCESS_FLAGS,
         )
 
-    @patch("claude_dashboard.controller.subprocess.Popen", side_effect=FileNotFoundError)
-    def test_launch_vscode_handles_missing_code(self, mock_popen):
+    @patch("claude_dashboard.controller.subprocess.Popen")
+    @patch("claude_dashboard.controller.shutil.which", return_value=None)
+    def test_launch_vscode_handles_missing_code(self, mock_which, mock_popen):
         from claude_dashboard.controller import AppController
 
         stub = object.__new__(AppController)
         AppController._launch_vscode(stub, folder="/tmp/x")  # should not raise
+        mock_popen.assert_not_called()
 
     @patch("claude_dashboard.controller.subprocess.Popen", side_effect=OSError("fail"))
-    def test_launch_vscode_handles_os_error(self, mock_popen):
+    @patch("claude_dashboard.controller.shutil.which", return_value="/usr/bin/code")
+    def test_launch_vscode_handles_os_error(self, mock_which, mock_popen):
         from claude_dashboard.controller import AppController
 
         stub = object.__new__(AppController)

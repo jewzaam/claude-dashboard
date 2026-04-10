@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -965,19 +966,21 @@ class AppController:
 
     def _launch_vscode(self, *, folder: str):
         """Launch VS Code for the given folder."""
+        code_path = shutil.which("code")
+        if not code_path:
+            logger.warning(
+                "VS Code 'code' command not found — install it via "
+                "Command Palette > Shell Command: Install 'code' command in PATH"
+            )
+            return
         try:
             subprocess.Popen(
-                ["code", folder],
+                [code_path, folder],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 creationflags=config.SUBPROCESS_FLAGS,
             )
             logger.info("launched VS Code for folder=%s", folder)
-        except FileNotFoundError:
-            logger.warning(
-                "VS Code 'code' command not found — install it via "
-                "Command Palette > Shell Command: Install 'code' command in PATH"
-            )
         except OSError as exc:
             logger.warning("failed to launch VS Code for folder=%s error=%s", folder, exc)
 
