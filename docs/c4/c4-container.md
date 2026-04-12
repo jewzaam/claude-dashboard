@@ -1,110 +1,122 @@
-# C4 Container Diagram — Claude Dashboard
+# C4 Container — Claude Dashboard
 
-## Container View (Level 2)
+> Mermaid C4 may not render in all viewers.
 
-Zooms into the "Claude Dashboard" system boundary to show the major runtime containers (processes, threads, scripts) and how they communicate.
+## Container Diagram
 
 ```mermaid
 C4Container
-    title Container Diagram — Claude Dashboard
+    title Container - Claude Dashboard
 
-    Person(user, "Developer", "Interacts with dashboard via mouse")
+    Person(user, "User")
 
-    System_Boundary(dashboard, "Claude Dashboard") {
-        Container(main_loop, "Tkinter Main Loop", "Python, Tkinter", "Event loop: UI rendering, timer callbacks, hook dispatch. Single-threaded.")
-        Container(hook_server, "Hook HTTP Server", "Python, http.server", "Daemon thread listening on 127.0.0.1:17384. Receives hook events, dispatches to main thread via root.after(0).")
-        Container(tray_icon, "System Tray", "Python, pystray", "Daemon thread. Renders eye icon with state color. Exposes menu: toggle, unhide, settings, restart, quit.")
-        Container(state_store, "State Persistence", "JSON files", "Atomic read/write of session-state.json and settings.json. Survives restarts.")
+    Container_Boundary(dashboard_proc, "Dashboard Process - Python 3.11+") {
+        Container(main_thread, "Tkinter Main Thread", "Python/Tkinter", "UI rendering, session discovery polling, controller logic, git operations, state persistence")
+        Container(hook_thread, "HTTP Hook Server Thread", "Python http.server daemon thread", "Receives POST /hook on 127.0.0.1:17384, maps events to states, marshals to main thread via root.after")
+        Container(tray_thread, "System Tray Thread", "pystray daemon thread", "Renders tray icon with state color, dynamic menu with unhide items")
     }
 
-    System_Boundary(hook_chain, "Hook Relay Chain") {
-        Container(hook_relay, "Hook Relay Script", "Python script", "Invoked by Claude Code via stdin pipe. Reads JSON, POSTs to localhost:17384. Exits immediately. No return channel.")
-    }
+    Container_Ext(hook_relay, "Hook Relay Script", "Python script - scripts/hook_relay.py", "Reads hook JSON from stdin, POSTs to localhost:17384, logs payloads to JSONL")
+    Container_Ext(claude_sessions, "Claude Code Session Files", "JSON files in ~/.claude/sessions/", "One file per running session with PID, sessionId, cwd, startedAt, entrypoint")
+    Container_Ext(state_files, "Persistent State Files", "JSON", "settings.json and session-state.json - survives process restarts")
 
-    System_Ext(claude_code, "Claude Code", "Fires command hooks on state transitions")
-    System_Ext(fs_sessions, "Session Files", "~/.claude/sessions/*.json")
-    System_Ext(git_repos, "Git Repositories", "Local .git/ directories")
-    System_Ext(gh_cli, "GitHub CLI", "gh pr view/create")
-    System_Ext(vscode, "VS Code", "code CLI")
-    System_Ext(os_wm, "OS Window Manager", "D-Bus / Win32")
-    System_Ext(cost_data, "Cost/Usage Files", "session-tracker, oauth_usage")
-
-    Rel(claude_code, hook_relay, "Pipes hook JSON to stdin", "Per-event invocation")
-    Rel(hook_relay, hook_server, "POST /hook", "HTTP, JSON, localhost:17384")
-    Rel(hook_server, main_loop, "root.after(0, callback)", "Thread-safe dispatch to main thread")
-    Rel(main_loop, state_store, "Read on startup, write on every UI refresh", "Atomic JSON")
-    Rel(main_loop, tray_icon, "Update icon color, rebuild menu", "In-process API calls")
-    Rel(main_loop, fs_sessions, "Poll every 3s", "File read")
-    Rel(main_loop, git_repos, "Branch, status, merge detection", "Subprocess, 2s timeout")
-    Rel(main_loop, gh_cli, "Open/create PR", "Subprocess, 10s timeout")
-    Rel(main_loop, vscode, "Launch/foreground", "Subprocess")
-    Rel(main_loop, os_wm, "Bring windows to front", "D-Bus / Win32 API")
-    Rel(main_loop, cost_data, "Read cost and usage", "File read, every ~30s")
-    Rel(user, main_loop, "Click, drag, right-click, middle-click")
-    Rel(user, tray_icon, "Left-click toggle, right-click menu")
+    Rel(user, main_thread, "Mouse clicks, drags, right-click menus")
+    Rel(main_thread, hook_thread, "Registers callbacks: on_hook_event, on_session_end, on_agent_stop")
+    Rel(hook_thread, main_thread, "root.after(0, callback) - marshals events to Tk event loop")
+    Rel(main_thread, tray_thread, "update_tray_icon(color) - regenerates PIL image")
+    Rel(tray_thread, main_thread, "root.after(0, callback) - menu actions marshaled to Tk loop")
+    Rel(hook_relay, hook_thread, "HTTP POST /hook with JSON payload", "localhost:17384")
+    Rel(main_thread, claude_sessions, "Reads *.json every poll_interval_seconds")
+    Rel(main_thread, state_files, "Reads on startup, writes on every state change via atomic_write_json")
 ```
 
-## Container Descriptions
+## Threading and Concurrency Model
 
-### Hook Relay Script
-- **Runtime**: Separate Python process, invoked per-event by Claude Code's hook system
-- **Lifecycle**: Starts when Claude Code fires a hook, exits after POST (or on failure). Stateless
-- **Communication**: Reads stdin (JSON payload), POSTs to `http://127.0.0.1:17384/hook` with 2s timeout
-- **Failure mode**: Silent exit — never blocks or errors back to Claude Code
-- **Debug mode**: Logs raw payloads to `~/.claude/claude-dashboard/logs/hook-payloads.jsonl` (rotating, 2 MB)
+The dashboard runs as a single Python process with three threads:
 
-### Hook HTTP Server
-- **Runtime**: Daemon thread within the dashboard process
-- **Lifecycle**: Starts on dashboard launch, stops on shutdown. Uses `SO_REUSEADDR`/`SO_REUSEPORT` for clean restarts
-- **Communication**: Accepts POST /hook (max 64 KB), parses JSON, maps event to StatusState, dispatches callback to main thread
-- **Thread safety**: All state mutation happens on the main thread via `root.after(0, fn)` — the server thread never touches session state directly
+| Thread | Lifecycle | Communication to Main | Notes |
+|--------|-----------|----------------------|-------|
+| **Tkinter main thread** | Created at startup, runs `root.mainloop()` until quit | N/A (is the main thread) | All UI mutations, session discovery, git operations, and state persistence happen here |
+| **HTTP hook server** | Daemon thread, started in `AppController.run()` | `root.after(0, callback)` marshals every event to the Tk event loop | Uses `http.server.HTTPServer` with `SO_REUSEADDR`/`SO_REUSEPORT`; shutdown via `server.shutdown()` with 1s join timeout |
+| **System tray** | Daemon thread, started in `AppController.run()` | `root.after(0, callback)` for all menu actions | Uses `pystray.Icon.run()` blocking call; icon image regenerated on main thread, assigned from main thread |
 
-### Tkinter Main Loop
-- **Runtime**: Main thread of the dashboard process
-- **Lifecycle**: Entered after all initialization, runs until quit/restart
-- **Responsibilities**:
-  - Session discovery (periodic timer)
-  - Hook event processing (dispatched from server thread)
-  - UI rendering (rows, title bar, menus)
-  - Git status detection (subprocess calls)
-  - User interaction handling (all click/drag events)
-  - State persistence (writes session-state.json on every refresh)
-  - Settings application
-  - Cost/usage reading
+There is no lock or queue — thread safety relies on `root.after(0, fn)` as the sole cross-thread communication mechanism. The hook server thread never mutates session state directly; it always posts a callback to the main thread.
 
-### System Tray
-- **Runtime**: Daemon thread (pystray's `icon.run()`)
-- **Lifecycle**: Starts after main loop begins, stops on shutdown
-- **Communication**: Main loop calls `update_icon()` and `rebuild_menu()` to change tray state
-- **Menu**: Dynamically rebuilt with per-session "Unhide" items when sessions are hidden
-
-### State Persistence
-- **Files**:
-  - `~/.claude/claude-dashboard/session-state.json` — session flags, visibility, state, agents
-  - `~/.config/claude-dashboard/settings.json` (Linux) or `~/AppData/Roaming/claude-dashboard/settings.json` (Windows) — user preferences
-- **Atomicity**: Write to temp file, then rename (POSIX atomic)
-- **Frequency**: State file written on every UI refresh; settings written on explicit save
-
-## Threading Model
+## Data Flow: Hook Event to UI Update
 
 ```
-┌──────────────────────────────────────────────────────┐
-│ Main Thread (Tkinter mainloop)                       │
-│                                                      │
-│  ┌─────────────┐  ┌──────────────┐  ┌────────────┐  │
-│  │ UI Rendering │  │ Timer Ticks  │  │ Hook       │  │
-│  │ & Events     │  │ (discovery,  │  │ Callbacks  │  │
-│  │              │  │  refresh)    │  │ (after(0)) │  │
-│  └─────────────┘  └──────────────┘  └────────────┘  │
-└──────────────────────┬───────────────────────────────┘
-                       │ root.after(0, fn)
-┌──────────────────────┴───────────────────────────────┐
-│ Daemon Threads                                       │
-│  ┌─────────────────┐  ┌────────────────────────────┐ │
-│  │ Hook HTTP Server │  │ pystray Tray Icon          │ │
-│  │ (port 17384)     │  │ (native OS tray loop)      │ │
-│  └─────────────────┘  └────────────────────────────┘ │
-└──────────────────────────────────────────────────────┘
+Claude Code session
+    |
+    v
+Command hook fires → hook_relay.py reads JSON from stdin
+    |
+    v
+HTTP POST to 127.0.0.1:17384/hook
+    |
+    v
+HookServer thread: _HookHandler.do_POST()
+  → parses JSON body
+  → map_event_to_state(event, tool_name, agent_id)
+  → calls self.server.on_hook_event(session_id, event, state, cwd, agent_id, agent_type)
+    |
+    v
+root.after(0, _apply_hook_state, ...)   [marshals to main thread]
+    |
+    v
+AppController._apply_hook_state() on main thread:
+  → looks up PID by session_id (or CWD fallback)
+  → if agent_id: registers/updates agent, applies 5s debounce for permission
+  → if main process: idle→ready intercept, PostToolUseFailure guard
+  → updates entry.state
+  → calls _refresh_ui()
+    |
+    v
+_refresh_ui() → debounced (300ms) or immediate (if permission/awaiting_input)
+  → builds SessionRow list from all non-hidden entries
+  → MainWindow.update_sessions(rows) — adds/removes/reorders row frames
+  → updates tray icon color for highest-priority actionable state
+  → updates title bar (cost, limits, active count, state color)
+  → saves session state to disk
 ```
 
-All session state is owned by the main thread. Daemon threads only dispatch events inward — they never read or write session state directly.
+## Data Flow: Session Discovery Tick
+
+```
+_discovery_tick() fires every poll_interval_seconds (default 3s)
+    |
+    v
+discover_sessions() reads ~/.claude/sessions/*.json
+  → filters to entries with pid + session_id
+  → sorted by cwd_relative_to_home
+    |
+    v
+For each discovered session:
+  → validate_pid() checks psutil.pid_exists + "claude" in process name
+  → if new: _add_session() — detect container, branch, git status, apply saved state
+  → if known: skip (state updated only via hooks)
+    |
+    v
+Dead PIDs (in _sessions but not in alive set):
+  → _remove_session(pid)
+  → _create_ghost(cwd, flagged) — synthetic negative PID, unattached=True
+    |
+    v
+On first tick only: _create_unattached_from_state() — ghosts from state file
+    |
+    v
+Prune ghosts whose CWD directory no longer exists on disk
+    |
+    v
+Every ~60s (fetch_tick_interval ticks): git fetch for pushed-not-merged sessions
+    |
+    v
+For all sessions: detect_branch(), detect_git_status(), detect_merged()
+  → git status skipped if it takes >0.5s
+    |
+    v
+Every ~30s (poll_interval * 10): read_daily_cost() from session tracker
+Every tick: read_usage_limits() from OAuth cache
+    |
+    v
+_refresh_ui()
+```

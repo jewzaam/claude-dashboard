@@ -1,323 +1,168 @@
-# C4 Component Diagram — Claude Dashboard
+# C4 Component — Claude Dashboard
 
-## Component View (Level 3)
+> Mermaid C4 may not render in all viewers.
 
-Decomposes each container into its behavioral components: what each does, what it talks to, and what data it owns.
-
----
-
-## Container: Tkinter Main Loop
-
-The main thread owns all mutable state. Every other thread dispatches work here via `root.after(0, fn)`.
+## Tkinter Main Thread — Components
 
 ```mermaid
 C4Component
-    title Components — Tkinter Main Loop
+    title Components - Tkinter Main Thread
 
-    Component(controller, "AppController", "Orchestrator", "Session lifecycle, hook dispatch, user interaction routing, state persistence, settings application")
-    Component(session_discovery, "Session Discovery", "Poller", "Reads ~/.claude/sessions/*.json every N seconds, validates PIDs, sorts by CWD")
-    Component(git_inspector, "Git Inspector", "Subprocess caller", "Branch detection (.git/HEAD read), status (porcelain), merge detection (3 strategies), upstream discovery, periodic fetch")
-    Component(state_persistence, "State Persistence", "JSON serializer", "Atomic read/write of session-state.json — flags, visibility, state, agents per CWD")
-    Component(settings_manager, "Settings Manager", "JSON serializer", "Load/save/validate settings.json, type-checked against defaults, atomic I/O")
-    Component(ui_renderer, "UI Renderer", "MainWindow + rows", "Borderless Tkinter window: title bar, session rows, context menus, shade, resize, drag")
-    Component(cost_reader, "Cost/Usage Reader", "File reader", "Reads daily cost from session-tracker JSONs, usage limits from oauth_usage.json, every ~30s")
-    Component(settings_ui, "Settings Editor", "Modal dialog", "Shows all configurable fields, color pickers, Apply/Save/Cancel, position memory")
-    Component(cost_popup, "Cost Popup", "Tooltip window", "14-day daily cost history with bar chart, auto-positioned near click point")
+    Component(controller, "AppController", "claude_dashboard/controller.py", "Central orchestrator - session lifecycle, hook wiring, UI coordination, settings, state persistence")
+    Component(main_window, "MainWindow", "claude_dashboard/ui/main_window.py", "Borderless Tkinter window with title bar, session rows, drag, resize, shade toggle")
+    Component(settings_window, "SettingsWindow", "claude_dashboard/ui/settings_window.py", "Modal dialog for editing all user-configurable settings with color pickers")
+    Component(color_picker, "ColorPickerDialog", "claude_dashboard/ui/color_picker.py", "Custom color picker with palette grid, hex entry, live preview")
+    Component(cost_popup, "CostPopup", "claude_dashboard/ui/cost_popup.py", "Dismissable popup showing 14-day cost history with bar chart")
+    Component(session_discovery, "Session Discovery", "claude_dashboard/session.py", "Reads session files, validates PIDs, detects git branch/status/merge/upstream")
+    Component(platform_adapter, "Platform Adapter", "claude_dashboard/platform/", "Container detection and window foregrounding - dispatches to windows.py or linux.py")
+    Component(settings_io, "Settings I/O", "claude_dashboard/settings.py", "Settings dataclass with JSON load/save, type validation, atomic writes")
+    Component(config, "Config", "claude_dashboard/config.py", "Constants, enums - StatusState, GitStatus, paths, defaults, platform flags")
+    Component(models, "Models", "claude_dashboard/models.py", "SessionRow NamedTuple - data transfer from controller to UI")
+    Component(startup, "Startup", "claude_dashboard/startup.py", "OS auto-start registration - Windows Registry or XDG .desktop")
+    Component(file_utils, "File Utils", "claude_dashboard/file_utils.py", "atomic_write_json - tempfile + rename pattern")
+    Component(tray_module, "Tray Module", "claude_dashboard/tray.py", "Creates pystray icon, generates eye-shaped PIL images, dynamic menu builder")
 
-    Rel(controller, session_discovery, "Polls on timer tick")
-    Rel(controller, git_inspector, "Calls per-session per tick")
-    Rel(controller, state_persistence, "Writes on every UI refresh, reads on startup")
-    Rel(controller, settings_manager, "Reads on startup, writes on save/position change")
-    Rel(controller, ui_renderer, "Pushes SessionRow[] on refresh")
-    Rel(controller, cost_reader, "Reads every 10 ticks")
-    Rel(controller, settings_ui, "Opens on user request")
-    Rel(controller, cost_popup, "Opens on cost label click")
-    Rel(ui_renderer, controller, "Fires callbacks: click, double-click, middle-click, right-click, drag, shade, resize")
+    Rel(controller, main_window, "Creates with callbacks, calls update_sessions and update_title_bar")
+    Rel(controller, session_discovery, "discover_sessions, validate_pid, detect_branch/git_status/merged/upstream")
+    Rel(controller, platform_adapter, "detect_container, find_window_for_session, foreground_window")
+    Rel(controller, settings_io, "load_settings, save_settings")
+    Rel(controller, startup, "set_run_on_startup on init and settings change")
+    Rel(controller, tray_module, "create_tray_icon, update_tray_icon")
+    Rel(controller, file_utils, "atomic_write_json for session-state.json")
+    Rel(controller, config, "Reads paths, enums, defaults, platform flags")
+    Rel(main_window, models, "Receives list of SessionRow for rendering")
+    Rel(main_window, config, "Reads color defaults, emoji paths, platform flags")
+    Rel(main_window, tray_module, "generate_icon_image for row flag icons")
+    Rel(settings_window, color_picker, "Opens for each color setting field")
+    Rel(settings_io, file_utils, "atomic_write_json for settings.json")
+    Rel(settings_io, config, "Reads SETTINGS_FILE path and all DEFAULT_* constants")
 ```
 
-### Component: AppController
-
-The central orchestrator. Owns the session map (`_sessions: dict[int, _SessionEntry]`), reverse lookup (`_session_id_to_pid`), and all lifecycle logic.
-
-**Responsibilities:**
-- Register new sessions from discovery
-- Convert dead sessions to ghosts
-- Route hook events to session entries (main process or agent)
-- Handle user interactions (clicks, context menus)
-- Coordinate UI refresh with debouncing
-- Manage tray icon state
-- Apply settings changes
-- Handle restart (state save → `os.execv`) and quit
-
-**State owned:**
-- `_sessions` — all tracked sessions (live + ghost)
-- `_session_id_to_pid` — reverse lookup for hook routing
-- `_pending_hook_states` — buffer for events before session discovery
-- `_trunk_cache` — cached trunk branch per CWD (cleared each tick)
-- `_agent_perm_debounce` — pending debounce timers per agent
-- `_ghosts_hidden` — global ghost visibility toggle
-- `_daily_cost`, `_usage_limits` — title bar data
-
-### Component: Session Discovery
-
-Reads `~/.claude/sessions/*.json` and returns validated `SessionInfo` objects.
-
-**Behavior:**
-- Glob `*.json` files in sessions directory
-- Parse each: extract `pid`, `sessionId`, `cwd`, `startedAt`, `entrypoint`
-- Validate PID: `psutil.pid_exists()` + process name contains "claude"
-- Sort alphabetically by CWD relative to home
-- Return list; controller handles add/remove/ghost logic
-
-### Component: Git Inspector
-
-All git operations are **read-only** with **2-second timeouts** (10s for fetch). Failures degrade to CLEAN status.
-
-**Branch detection:** Reads `.git/HEAD` file directly (no subprocess). Returns empty string if on trunk or detached.
-
-**Status detection** (priority order):
-1. `git status --porcelain` → UNSTAGED_CHANGES or STAGED_UNCOMMITTED
-2. `git log @{u}..HEAD` → COMMITTED_NOT_PUSHED (has upstream tracking)
-3. `git log <trunk_ref>..HEAD` → COMMITTED_NOT_PUSHED (fallback to trunk)
-4. Non-trunk branch with no unpushed commits → PUSHED_NOT_MERGED
-5. Otherwise → CLEAN
-
-**Merge detection** (three strategies):
-1. `git merge-base --is-ancestor <branch> <trunk>` — regular merge
-2. `git cherry <trunk> <branch>` — rebase merge (all commits have patch-equivalent)
-3. `git diff --quiet <trunk> <branch>` — squash merge (trees identical)
-
-**Upstream discovery:** `git remote` → `git symbolic-ref refs/remotes/<remote>/HEAD` per remote.
-
-**Periodic fetch:** Every ~60s, runs `git fetch <remote>` for PUSHED_NOT_MERGED sessions (10s timeout).
-
-### Component: State Persistence
-
-**Session state file:** `~/.claude/claude-dashboard/session-state.json`
-
-Written atomically (temp file + rename) on every UI refresh. Read once on startup.
-
-**Per-CWD entry:**
-```json
-{
-  "state": "ready",
-  "hidden": false,
-  "flagged": true,
-  "agents": { "agent-id": { "state": "working", "agent_type": "..." } }
-}
-```
-
-**Multi-session merge:** When multiple sessions share a CWD, `hidden` is only true if ALL sessions are hidden. Agents are merged.
-
-**Restore behavior:** On first tick, creates ghost entries for CWDs in saved state that have no live session.
-
-### Component: Settings Manager
-
-**File:** Platform-specific path (Linux: `~/.config/claude-dashboard/settings.json`, Windows: `AppData`)
-
-**Validation:** Filters unknown fields, type-checks against defaults (rejects bool for int), skips invalid entries.
-
-**Settings fields** (27 total):
-- Window geometry: `window_x`, `window_y`, `settings_x/y`, `color_picker_x/y`
-- Behavior: `always_on_top`, `grow_up`, `run_on_startup`
-- Layout: `row_height`, `row_width`, `font_size`, `poll_interval_seconds`
-- Colors: 12 hex color fields (5 status states, 5 flag states, unattached, window_bg)
-- Text: `text_color` (exists but unused — auto-contrast computes this)
-- Filtering: `ignore_regex` (Python regex matched against CWD)
-
-### Component: UI Renderer (MainWindow)
-
-**Window type:**
-- Linux: `_NET_WM_WINDOW_TYPE_DOCK` (visible on all workspaces, no decorations)
-- Windows: `overrideredirect(True)` (borderless)
-
-**Title bar content** (left to right):
-- Eye icon (green when expanded, transparent when shaded)
-- Chef's kiss emoji (PNG or unicode fallback)
-- "Claude Dashboard" text
-- Session counts: `{active}` `(+hidden_live)` `[+hidden_ghost]`
-- Daily cost: `$X.XX`
-- 5h usage: `5h: X%`
-- 7d usage: `7d: X%`
-
-**Row content** (left to right):
-- Eye/flag icon (outer = git status color, pupil = manual flag color)
-- Status emoji (per state)
-- CWD path (relative to home, "git-worktrees/" shortened to ".../")
-- Agent count `(+N)` suffix
-- Branch `[name]` (red if merged)
-- Container label (right-aligned, dim: "VS Code", "Term", etc.)
-
-**Text color:** Auto-contrasted — W3C sRGB luminance formula. Light text (`#f5f0e8`) on dark backgrounds, dark text (`#1a1520`) on light.
-
-**Geometry management:**
-- Position tracked independently (avoids stale `winfo_x/y` on Wayland)
-- Grow-up mode: anchors bottom edge, window grows upward
-- Shade: collapses to title bar only; title bar background = highest-priority state color (excludes "ready")
-- Width resize: drag cost labels horizontally (min 150px, persisted)
-
-### Component: Cost Popup
-
-**Behavior:** Shows 14-day daily cost breakdown in a tooltip window. Positioned near click point, adjusted to stay on-screen. Dismisses on mouse leave.
-
-**Data source:** Reads `~/.claude/my-claude-stuff-data/session-tracker/{YYYY-MM-DD}/*.json` for the last 14 days.
-
----
-
-## Container: Hook HTTP Server
-
-Single component — the HTTP listener.
+## HTTP Hook Server Thread — Components
 
 ```mermaid
 C4Component
-    title Components — Hook HTTP Server
+    title Components - HTTP Hook Server Thread
 
-    Component(http_listener, "HTTP Listener", "http.server", "POST /hook on 127.0.0.1:17384, max 64KB payload, JSON parse, event→state mapping, callback dispatch")
+    Component(hook_server, "HookServer", "claude_dashboard/hook_server.py:145-188", "Manages HTTPServer lifecycle on daemon thread, wires callbacks to server instance")
+    Component(hook_handler, "HookHandler", "claude_dashboard/hook_server.py:58-135", "BaseHTTPRequestHandler - parses POST /hook, dispatches to callbacks")
+    Component(event_mapper, "Event-to-State Mapper", "claude_dashboard/hook_server.py:30-55", "map_event_to_state - translates hook event names + tool names to StatusState enum values")
 
-    System_Ext(hook_relay, "Hook Relay Script")
-    Component_Ext(controller, "AppController", "Main thread")
-
-    Rel(hook_relay, http_listener, "POST /hook", "JSON payload")
-    Rel(http_listener, controller, "root.after(0, callback)", "on_hook_event, on_session_end, on_agent_stop")
+    Rel(hook_handler, event_mapper, "Calls map_event_to_state for each POST")
+    Rel(hook_handler, hook_server, "Accesses self.server.on_hook_event/on_session_end/on_agent_stop callbacks")
+    Rel(hook_server, hook_handler, "HTTPServer uses HookHandler as request handler class")
 ```
 
-**Event routing:**
-- Events with `agent_id` → agent state update (register or update)
-- Events without `agent_id` → main process state update
-- `SubagentStop` → agent removal (separate callback)
-- `SessionEnd` → ghost conversion (separate callback)
-
-**Event-to-state mapping:**
-
-| Event | State | Condition |
-|-------|-------|-----------|
-| UserPromptSubmit | WORKING | — |
-| PreToolUse | WORKING | Default |
-| PreToolUse | AWAITING_INPUT | tool_name = "AskUserQuestion" |
-| PostToolUse | WORKING | — |
-| PostToolUseFailure | WORKING | — |
-| PermissionRequest | PERMISSION_REQUIRED | Default |
-| PermissionRequest | AWAITING_INPUT | tool_name = "AskUserQuestion" |
-| Stop | IDLE | (Controller intercepts → READY) |
-| StopFailure | IDLE | (Controller intercepts → READY) |
-| SubagentStart | WORKING | Registers agent |
-| SubagentStop | (none) | Removes agent |
-| SessionEnd | (none) | Converts to ghost |
-
----
-
-## Container: System Tray
+## Hook Relay — Components
 
 ```mermaid
 C4Component
-    title Components — System Tray
+    title Components - Hook Relay Process
 
-    Component(icon_renderer, "Icon Renderer", "PIL/Pillow", "64x64 eye icon with asymmetric pupil, state-colored, black outline for tray downscaling")
-    Component(menu_builder, "Menu Builder", "pystray", "Dynamic menu: Toggle, Unhide items for hidden sessions, Settings, Restart, Quit")
+    Component(relay, "Hook Relay", "scripts/hook_relay.py", "Reads JSON from stdin, POSTs to localhost:17384/hook, logs to JSONL in debug mode")
 
-    Component_Ext(controller, "AppController")
+    System_Ext(claude_hook, "Claude Code Command Hook", "Fires relay as subprocess, pipes JSON to stdin")
+    System_Ext(dashboard_http, "Dashboard HTTP Server", "Receives POST on 127.0.0.1:17384")
 
-    Rel(controller, icon_renderer, "update_tray_icon(color)")
-    Rel(controller, menu_builder, "get_hidden_sessions() called on menu open")
+    Rel(claude_hook, relay, "Pipes JSON payload to stdin")
+    Rel(relay, dashboard_http, "HTTP POST /hook with JSON body, 2s timeout")
 ```
 
-**Icon design:** Eye shape with offset pupil (looking slightly right). Outer circle = state color. Black outline prevents color bleed at small sizes. Threshold alpha eliminates semi-transparent edges.
+## Event-to-State Mapping
 
-**Color mapping:** Highest-priority *actionable* state across all visible sessions. Working is excluded — tray only reflects states needing user action (permission, awaiting input, ready, idle).
+| Hook Event | tool_name | agent_id | Mapped State |
+|-----------|-----------|----------|-------------|
+| `PreToolUse` | `AskUserQuestion` | any | `AWAITING_INPUT` |
+| `PreToolUse` | any other | any | `WORKING` |
+| `PermissionRequest` | `AskUserQuestion` | any | `AWAITING_INPUT` |
+| `PermissionRequest` | any other | any | `PERMISSION_REQUIRED` |
+| `UserPromptSubmit` | N/A | any | `WORKING` |
+| `PostToolUse` | N/A | any | `WORKING` |
+| `PostToolUseFailure` | N/A | any | `WORKING` |
+| `Stop` | N/A | any | `IDLE` |
+| `StopFailure` | N/A | any | `IDLE` |
+| `SubagentStop` | N/A | yes | Not mapped (signals agent removal) |
+| `SessionEnd` | N/A | N/A | Not mapped (signals session end) |
+| Any unmapped event | N/A | yes (agent) | `WORKING` (registers agent) |
+| Any unmapped event | N/A | no (main) | `None` (ignored) |
 
-**Menu items:**
-- "Toggle" — show/hide main window (default left-click action)
-- Per-hidden-session "Unhide: {CWD}" items (dynamic)
-- "Settings", "Restart", "Quit"
+**Controller-level state overrides** (applied after mapping, main process only):
 
----
+| Mapped State | Prior State | Event | Result |
+|-------------|------------|-------|--------|
+| `IDLE` | any | any | Intercepted to `READY` (`controller.py:672-673`) |
+| `WORKING` | `PERMISSION_REQUIRED` | `PostToolUseFailure` | Suppressed — state remains `PERMISSION_REQUIRED` (`controller.py:679-691`) |
+| same as prior | any | any | Suppressed — no UI refresh (`controller.py:675-676`) |
 
-## Container: Hook Relay Script
+## State Priority (highest to lowest)
 
-```mermaid
-C4Component
-    title Components — Hook Relay Script
+| Priority | State | Tray icon eligible |
+|----------|-------|--------------------|
+| 0 | `PERMISSION_REQUIRED` | Yes (actionable) |
+| 1 | `AWAITING_INPUT` | Yes (actionable) |
+| 2 | `WORKING` | No |
+| 3 | `READY` | Yes (actionable) |
+| 4 | `IDLE` | Yes (actionable) |
 
-    Component(stdin_reader, "Stdin Reader", "Python", "Non-blocking read of JSON from Claude Code hook pipe")
-    Component(http_poster, "HTTP Poster", "urllib.request", "POST JSON to localhost:17384/hook, 2s timeout, silent on failure")
-    Component(debug_logger, "Debug Logger", "RotatingFileHandler", "Logs raw payloads to hook-payloads.jsonl when --debug enabled")
+The tray icon reflects the highest-priority *actionable* state across all non-hidden, non-ghost sessions. `WORKING` is not actionable.
 
-    System_Ext(claude_code, "Claude Code")
-    Component_Ext(hook_server, "Hook HTTP Server")
+## Agent State Model
 
-    Rel(claude_code, stdin_reader, "Pipes JSON to stdin")
-    Rel(stdin_reader, http_poster, "Parsed payload")
-    Rel(http_poster, hook_server, "POST /hook")
-    Rel(stdin_reader, debug_logger, "Raw payload + timestamp")
-```
+Each session tracks zero or more agents in `entry.agents: dict[str, _AgentEntry]`.
 
-**Lifecycle:** Invoked per-event by Claude Code. Reads stdin, POSTs, exits. No state, no return channel.
+- **Effective state** of a session = highest-priority state across main process + all agents (`_SessionEntry.effective_state`, `controller.py:156-165`).
+- **Agent registration:** Any hook event with `agent_id` (except `SubagentStop`) registers or updates the agent.
+- **Agent removal:** `SubagentStop` event removes the agent from the dict.
+- **Agent permission debounce:** When an agent enters `PERMISSION_REQUIRED`, a 5-second timer starts. If still pending after 5s, the UI updates. Non-permission events for that agent cancel the timer immediately. Main process permission events are never debounced.
+- **Agent lifecycle on session death:** When a session's PID dies, the entire session (including agents) is removed and replaced with a ghost. Agents are not individually cleaned up — they go with the session.
 
-**Flags:**
-- `--debug` — enable payload logging (always on in hooks-settings.json)
-- `--marker TEXT` — log a boundary line and exit (debugging aid)
+## Git Status Detection
 
----
+Priority order (first match wins, `session.py:140-176`):
 
-## Container: Platform Adapters
+| Check | Git Status | Eye Color Setting |
+|-------|-----------|------------------|
+| `git status --porcelain` has entries with non-space in column 2 | `UNSTAGED_CHANGES` | `color_flag_unstaged` |
+| `git status --porcelain` has entries with non-space in column 1 | `STAGED_UNCOMMITTED` | `color_flag_staged` |
+| `git log @{u}..HEAD` or `git log <trunk>..HEAD` has output | `COMMITTED_NOT_PUSHED` | `color_flag_unpushed` |
+| Branch is not trunk (non-empty after `detect_branch`) | `PUSHED_NOT_MERGED` | `color_flag_unmerged` |
+| All else | `CLEAN` | No eye icon (transparent) |
 
-```mermaid
-C4Component
-    title Components — Platform Adapters
+## Merged Branch Detection
 
-    Component(container_detector, "Container Detector", "psutil", "Walk parent process chain to identify VS Code, Terminal, tmux, screen")
-    Component(window_finder, "Window Finder", "Platform API", "Match window handle to PID + CWD folder name for multi-window disambiguation")
-    Component(window_foregronder, "Window Foregronder", "D-Bus / Win32", "Bring identified window to front")
-    Component(startup_manager, "Startup Manager", "OS config", "Register/unregister auto-start via XDG .desktop or Windows Registry")
+Three strategies checked in order (`session.py:215-264`):
 
-    Component_Ext(controller, "AppController")
+1. **Ancestor check:** `git merge-base --is-ancestor <branch> <trunk>` — detects regular merges
+2. **Cherry check:** `git cherry <trunk> <branch>` — detects rebase merges (all commits have patch-equivalent in trunk)
+3. **Diff check:** `git diff --quiet <trunk> <branch> --` — detects squash merges (tree identical to trunk)
 
-    Rel(controller, container_detector, "detect_container(pid)")
-    Rel(controller, window_finder, "find_window_for_session(cwd, container)")
-    Rel(controller, window_foregronder, "foreground_window(container, cwd)")
-    Rel(controller, startup_manager, "set_run_on_startup(enabled)")
-```
+Trunk ref is resolved dynamically from `<remote>/HEAD` via `git symbolic-ref` — no hardcoded branch names.
 
-**Container detection:** Walks parent PID chain looking for known process names:
-- VS Code: `code` (Linux), `code.exe` (Windows)
-- Terminal: gnome-terminal, konsole, alacritty, kitty, wezterm, ghostty, etc.
-- Multiplexers: tmux, screen
-- Windows-specific: Windows Terminal (`wt.exe`), cmd.exe, Git Bash (`mintty.exe`)
+## Cross-Module Data Flow Summary
 
-**Window foregrounding (Linux):**
-- VS Code: `code <cwd>` CLI (most reliable on Wayland)
-- Terminal: D-Bus `window-calls` GNOME Shell extension (Wayland-native)
-  - List windows → match by PID → Activate window ID
-  - Multi-window VS Code: disambiguate by CWD folder name in window title
+| Producer | Data | Consumer | Transformation |
+|----------|------|----------|---------------|
+| `hook_server.map_event_to_state` | `StatusState.IDLE` | `controller._apply_hook_state` | Intercepted to `READY` for main process events |
+| `session.discover_sessions` | `list[SessionInfo]` | `controller._discovery_tick` | Filtered by `validate_pid`, matched against `_sessions` dict |
+| `session.detect_git_status` | `GitStatus` enum | `controller._discovery_tick` | Stored in `_SessionEntry.git_status`, skipped if detection takes >0.5s |
+| `controller._do_refresh_ui` | `list[SessionRow]` | `main_window.update_sessions` | NamedTuple projection from `_SessionEntry` — includes `effective_state` (agent-aware) |
+| `settings.load_settings` | `Settings` dataclass | `controller.__init__` | Used directly; invalid fields silently replaced with defaults |
+| `controller._save_session_state` | `dict[cwd, state_dict]` | `controller._load_session_state` (next run) | Keyed by CWD; duplicate-CWD sessions merge (hidden only if ALL hidden) |
+| `tray.generate_icon_image` | `PIL.Image` | `main_window._flag_icon` | Reused by main_window for row eye icons (not just tray) |
+| `config.hex_to_rgb` | `(r,g,b)` tuple | `tray.generate_icon_image`, `main_window` | Shared utility for color conversion |
 
-**Window foregrounding (Windows):**
-- Find main VS Code PID (parent is NOT Code.exe)
-- Enumerate visible windows owned by that PID
-- Match by CWD folder name in title
-- `SetForegroundWindow` + Alt-key trick for focus stealing
-- Restore minimized windows first
+## Platform-Conditional Behavior Summary
 
----
-
-## Data Flow Summary
-
-```
-Hook Relay ──POST──▶ Hook Server ──after(0)──▶ AppController
-                                                    │
-Session Discovery ──poll──▶ AppController           │
-                                │                   │
-                           ┌────┴────┐         ┌────┴────┐
-                           │ Git     │         │ State   │
-                           │Inspector│         │Persist  │
-                           └─────────┘         └─────────┘
-                                │                   │
-                           ┌────┴───────────────────┴────┐
-                           │     UI Renderer             │
-                           │  (MainWindow + rows)        │
-                           └────┬───────────────────┬────┘
-                                │                   │
-                           ┌────┴────┐         ┌────┴────┐
-                           │ Tray    │         │ Platform│
-                           │ Icon    │         │ Adapter │
-                           └─────────┘         └─────────┘
-```
+| Behavior | Windows | Linux |
+|----------|---------|-------|
+| **DPI awareness** | `ctypes.windll.shcore.SetProcessDpiAwareness(1)` at startup | Not needed |
+| **Window type** | `overrideredirect(True)` — frameless | `wm_attributes("-type", "dock")` — Wayland-compatible, visible on all workspaces |
+| **Container detection** | Walk parent chain via psutil, match Code.exe/WindowsTerminal.exe/mintty.exe | Walk parent chain via psutil, match code/terminal emulators/screen/tmux |
+| **Window matching** | Win32 `EnumWindows` + `GetWindowTextW`, match CWD folder name in title | Not done at discovery time — happens at foreground time |
+| **Window foregrounding** | `SetForegroundWindow(hwnd)` with Alt-key fallback | VS Code: `code <cwd>` CLI. Terminals: `gdbus call` to window-calls D-Bus extension |
+| **Auto-start** | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` registry key | `~/.config/autostart/claude-dashboard.desktop` XDG file |
+| **Startup command** | `pythonw.exe -m claude_dashboard --debug --log-file <path>` | `python -m claude_dashboard --debug --log-file <path>` |
+| **Subprocess flags** | `CREATE_NO_WINDOW` (prevents console flash) | `0` |
+| **Font family** | `Segoe UI` / `Segoe UI Emoji` | `Noto Sans` / `Noto Emoji` |
+| **Settings path** | `%APPDATA%/claude-dashboard/settings.json` | `~/.config/claude-dashboard/settings.json` |
+| **Popup window type** | `overrideredirect(True)` | `wm_attributes("-type", "dock")` |
