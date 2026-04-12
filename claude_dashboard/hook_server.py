@@ -62,6 +62,12 @@ class _HookHandler(BaseHTTPRequestHandler):
         logger.debug("POST received path=%s", self.path)
 
         if self.path != "/hook":
+            # Drain the request body so the OS closes cleanly with FIN rather
+            # than RST — on Windows, unread bytes in the receive buffer cause
+            # the client to see ConnectionAbortedError instead of the 404.
+            length = max(0, int(self.headers.get("Content-Length", 0)))
+            if length:
+                self.rfile.read(min(length, _MAX_PAYLOAD_BYTES))
             self.send_response(404)
             self.end_headers()
             return
