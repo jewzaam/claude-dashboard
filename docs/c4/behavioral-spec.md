@@ -1,581 +1,466 @@
 # Behavioral Specification — Claude Dashboard
 
-## 1. Purpose
+## 1. Purpose and Operational Overview
 
-Claude Dashboard is a desktop status monitor for Claude Code sessions. It provides at-a-glance visibility into what every running Claude Code instance is doing — working, waiting for input, requesting permission, or finished — and offers one-click navigation to the relevant window.
+Claude Dashboard is a cross-platform desktop application that monitors running Claude Code sessions and displays their real-time state. It renders a borderless always-on-top Tkinter window with one row per session, a system tray icon reflecting the highest-priority session state, and context menus for session management.
 
----
+State detection is event-driven: Claude Code command hooks fire a relay script that POSTs JSON to a local HTTP server. The dashboard maps hook events to five session states (`WORKING`, `READY`, `IDLE`, `AWAITING_INPUT`, `PERMISSION_REQUIRED`) and updates the UI accordingly.
 
-## 2. Operational Overview
+Session discovery is poll-based: the dashboard reads `~/.claude/sessions/*.json` on a configurable interval (default 3 seconds) to find new sessions and detect dead ones.
 
-The dashboard runs as a single desktop process with a borderless always-on-top window and a system tray icon. It discovers Claude Code sessions by polling the file system and receives real-time state updates via HTTP hooks that Claude Code fires on every state transition.
+## 2. Startup and Initialization Sequence
 
-Sessions appear as colored rows in the window. Each row shows the project directory, git branch, status emoji, and container (VS Code or terminal). The user interacts with rows via mouse clicks to foreground windows, toggle flags, open PRs, or manage visibility.
+1. **Argument parsing** (`__main__.py:40-47`): Four CLI arguments — `--debug` (debug logging), `--quiet`/`-q` (suppress non-essential), `--ttl N` (auto-quit after N seconds, 0=forever), `--log-file <path>` (redirect logs to rotating file).
 
-When a Claude Code session exits, its row becomes a "ghost" — a persistent placeholder that can relaunch Claude in that project directory via VS Code.
+2. **Logging configuration** (`__main__.py:49-69`):
+   - With `--log-file`: `RotatingFileHandler` (2 MB max, 1 backup). Level is `DEBUG` if `--debug`, `WARNING` if `--quiet`, else `INFO`.
+   - Without `--log-file`: logs to stderr. Level is `DEBUG` if `--debug`, `WARNING` if `--quiet`, else `INFO`.
+   - PIL logger forced to `WARNING` regardless.
+   - `sys.excepthook` replaced to route uncaught exceptions through the logger (`__main__.py:27-36`). `KeyboardInterrupt` is excluded and forwarded to `sys.__excepthook__`.
 
----
+3. **Single-instance check** (`__main__.py:14-24`): Attempts to bind a socket to `127.0.0.1:17384`. If the port is already in use, logs an error and exits with code 1.
 
-## 3. Startup
+4. **DPI awareness** (Windows only, `__main__.py:81-87`): Calls `ctypes.windll.shcore.SetProcessDpiAwareness(1)` (`PROCESS_SYSTEM_DPI_AWARE`). Failure is caught and ignored (older Windows versions).
 
-### 3.1 Single-Instance Enforcement
+5. **AppController construction** (`controller.py:192-280`):
+   - Loads settings from disk via `load_settings()`.
+   - Creates `tk.Tk()` root, immediately withdrawn.
+   - Creates `MainWindow` with a `MainWindowCallbacks` struct containing 12 callback functions.
+   - Initializes session tracking structures: `_sessions` (PID -> `_SessionEntry`), `_session_id_to_pid` (reverse lookup), `_pending_hook_states` (buffer for pre-discovery events).
+   - Initializes trunk cache (CWD -> trunk branch name), fetch tick counter, debounce state.
+   - Creates `HookServer` with three callbacks: `_on_hook_event`, `_on_hook_session_end`, `_on_hook_agent_stop`.
+   - Syncs OS auto-start with `settings.run_on_startup`.
+   - Creates pystray tray icon (not yet running) with four menu callbacks.
+   - Creates context menu and ghost-toggle state.
+   - Loads saved session state from `session-state.json`.
 
-On launch, the dashboard attempts to bind a socket to port 17384. If the port is already in use, the dashboard exits immediately — only one instance can run.
+6. **AppController.run()** (`controller.py:286-321`):
+   - Starts hook server (daemon thread).
+   - Starts tray icon (daemon thread).
+   - If `ttl_seconds > 0`, schedules `_quit` via `root.after`.
+   - Fires first `_discovery_tick()`.
+   - Enters `root.mainloop()`.
+   - On exit (KeyboardInterrupt or quit): stops hook server, stops tray icon.
 
-### 3.2 Initialization Sequence
+## 3. Core Lifecycle: Discovery, Polling, Event Processing
 
-1. Parse CLI arguments: `--debug`, `--ttl <seconds>`, `--log-file <path>`
-2. Configure logging (file or stderr, level based on flags)
-3. Install global exception handler (routes uncaught exceptions to logger)
-4. On Windows: set DPI awareness to prevent blurry rendering
-5. Load user settings from disk (or defaults if missing/corrupt)
-6. Load saved session state from disk
-7. Create hidden Tkinter root window
-8. Create main dashboard window (borderless, positioned from saved settings)
-9. Create hook HTTP server (not yet started)
-10. Sync OS auto-start with settings (write/remove .desktop or Registry entry)
-11. Create system tray icon
-12. Start hook server on daemon thread
-13. Start tray icon on daemon thread
-14. Execute first discovery tick
-15. Enter Tkinter main loop
+### 3.1 Discovery Tick
 
-### 3.3 Auto-Start
+The discovery tick runs every `poll_interval_seconds * 1000` milliseconds via `root.after` (`controller.py:419-420`). Default interval: 3 seconds (`config.py:40`).
 
-When enabled, the dashboard registers itself to start on OS login:
-- **Linux:** Writes an XDG `.desktop` file to `~/.config/autostart/`
-- **Windows:** Writes a Registry key to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+Each tick performs these steps in order:
 
----
+1. **Discover sessions**: Read all `~/.claude/sessions/*.json` files. Each file contains `pid`, `sessionId`, `cwd`, `startedAt`, `entrypoint`. Sessions are sorted by `cwd_relative_to_home` (case-insensitive).
 
-## 4. Session Discovery
+2. **Register new sessions**: For each discovered session whose PID is alive (validated via `psutil.pid_exists` + process name contains "claude"), if not already tracked, call `_add_session()`.
 
-### 4.1 Polling
+3. **Ghost dead sessions**: PIDs in `_sessions` but not in the alive set are removed and replaced with ghost entries (synthetic negative PIDs, `unattached=True`). Ghost creation is skipped if another live session still uses the same CWD.
 
-Every `poll_interval_seconds` (default 3s), the dashboard reads all `*.json` files from `~/.claude/sessions/`. Each file represents a Claude Code session.
+4. **First-tick ghosts**: On the first tick only, `_create_unattached_from_state()` creates ghost entries from the state file for CWDs that have no live session. This provides restart continuity.
 
-**Session file fields:**
-- `pid` — OS process ID
-- `sessionId` — unique session identifier
-- `cwd` — working directory
-- `startedAt` — Unix timestamp (milliseconds)
-- `entrypoint` — how Claude was launched ("cli", "api", etc.)
+5. **Prune stale ghosts**: Ghost entries whose CWD directory no longer exists on disk are removed.
 
-### 4.2 PID Validation
+6. **Periodic git fetch**: Every `max(60 // max(poll_interval, 1), 1)` ticks (approximately once per minute at default settings), runs `git fetch <remote>` for all sessions with `PUSHED_NOT_MERGED` status. Fetches are deduplicated by CWD. Timeout: 10 seconds per fetch.
 
-For each discovered session, the dashboard verifies:
-1. The PID exists (`psutil.pid_exists`)
-2. The process name contains "claude"
+7. **Clear trunk cache**: The trunk branch cache (`_trunk_cache`) is cleared every tick so newly-added remotes are detected.
 
-Both checks must pass for a session to be considered alive.
+8. **Git status update**: For all sessions (live and ghost), re-detect branch, git status, and merge status. Git status detection is skipped (result discarded) if it takes longer than 0.5 seconds (`controller.py:400-403`).
 
-### 4.3 Ignore Regex
+9. **Cost and usage update**: Daily cost is re-read every `poll_interval_seconds * 10` ticks (approximately every 30 seconds at default settings, `controller.py:407-409`). Usage limits are re-read every tick.
 
-Sessions whose CWD matches the `ignore_regex` setting are excluded entirely — never displayed, never tracked. The regex is evaluated on every discovery tick and on settings change.
+10. **Refresh UI**: Calls `_refresh_ui()` which is debounced (see section 5).
 
-### 4.4 Auto-Hide
+### 3.2 Session Registration (`_add_session`)
 
-Sessions with `entrypoint != "cli"` (e.g., API-launched sessions) are automatically hidden on first discovery. They still exist in the state map and can be unhidden via the Sessions menu.
+When a new session is discovered (`controller.py:443-495`):
 
-### 4.5 Session Registration
+1. Check if CWD matches `ignore_regex` setting — if so, skip silently.
+2. Create `_SessionEntry` with initial state `IDLE`.
+3. Detect container (VS Code, Terminal, Git Bash, Screen, Unknown) via platform-specific process tree walk.
+4. Find the specific window for the session (Windows: title matching by CWD folder name; Linux: deferred to foreground time).
+5. Detect git branch (reads `.git/HEAD` directly, no subprocess).
+6. Detect git status (subprocess, logs warning if >0.5s on first detection).
+7. If an unattached ghost exists for this CWD, replace it — inherit its `flagged` state, force `hidden=False`.
+8. Otherwise, apply saved state from the state file (flagged, hidden, state value, agents).
+9. If `entrypoint != "cli"` (e.g., `claude -p`), auto-hide the session.
+10. Store in `_sessions` dict and register session_id -> PID mapping.
+11. Replay any buffered hook state (events that arrived before discovery).
 
-When a new session is discovered:
-1. Detect container (VS Code, terminal, etc.) from parent process chain
-2. Detect git branch from `.git/HEAD`
-3. Detect git working tree status
-4. Check if a ghost exists for this CWD — if so, replace it (inherit flag state, force unhide)
-5. If no ghost, apply saved state from previous run (flags, visibility, state, agents)
-6. Replay any buffered hook events that arrived before discovery
-7. Add to session map
+### 3.3 Ghost Session Lifecycle
 
----
+When a session's PID dies:
+- The live session is removed from `_sessions`.
+- A ghost entry is created with a synthetic negative PID (decremented from -1).
+- The ghost inherits the `flagged` state from the dead session.
+- Ghosts appear in the UI with the `color_unattached` background and dim text.
+- Ghosts persist across dashboard restarts via the state file.
 
-## 5. Session States
+Ghost cleanup:
+- When a new live session matches a ghost's CWD, the ghost is replaced.
+- When the ghost's CWD directory is deleted from disk, the ghost is pruned.
+- User can dismiss a ghost via right-click context menu.
 
-### 5.1 State Enum
+## 4. State Machines and Transitions
 
-| State | Meaning | Visual |
-|-------|---------|--------|
-| WORKING | Claude is actively processing | Gray row |
-| READY | Claude finished a turn, awaiting user | Green row |
-| IDLE | Baseline inactive state | Dark row |
-| AWAITING_INPUT | Claude asked the user a question (AskUserQuestion tool) | Amber/yellow row |
-| PERMISSION_REQUIRED | Claude needs tool approval | Amber/yellow row |
-
-### 5.2 State Priority
-
-Lower number = higher priority. Used for effective state calculation and tray icon color.
-
-1. PERMISSION_REQUIRED (0)
-2. AWAITING_INPUT (1)
-3. WORKING (2)
-4. READY (3)
-5. IDLE (4)
-
-### 5.3 Effective State
-
-Each session's effective state is the highest-priority state across its main process and all tracked agents. This is what determines the row color and tray icon.
-
-### 5.4 State Transitions
-
-All state changes are driven by hook events, except:
-- **IDLE → READY:** The controller intercepts IDLE (from Stop/StopFailure events) and maps it to READY. READY is cleared to IDLE by the user clicking the row
-- **Discovery → IDLE:** New sessions start as IDLE until their first hook event
-- **Clear State (context menu):** Resets to IDLE and clears all agents
-
-### 5.5 State Transition Guards
-
-- **PostToolUseFailure during PERMISSION_REQUIRED:** Ignored. When Claude fires parallel tool calls, one may need permission while others fail. The permission state must not be overwritten by a failure on a different tool
-- **Duplicate state:** If the new state equals the current state, the event is silently dropped (no UI refresh)
-
----
-
-## 6. Hook Event Processing
-
-### 6.1 Event Chain
+### 4.1 Main Process State Machine
 
 ```
-Claude Code → command hook fires → hook_relay.py reads JSON from stdin
-→ POST to http://127.0.0.1:17384/hook → HookServer parses JSON
-→ maps event to StatusState → dispatches callback to main thread
-→ AppController applies state change → UI refresh
+                    UserPromptSubmit,
+                    PreToolUse (non-AskUserQuestion),
+                    PostToolUse
+                  +------------------+
+                  |                  |
+                  v                  |
+    +----------+     +---------+    |
+    |          |     |         |----+
+    |  IDLE *  |---->| WORKING |
+    |          |     |         |---->  PERMISSION_REQUIRED
+    +----------+     +---------+      (PermissionRequest, non-AskUserQuestion)
+         ^               |
+         |               |          +---------+
+         |               +--------> |         |
+         |               Stop/      | AWAITING|
+         |               StopFail   | _INPUT  |
+         |                          |         |
+         |    +--------+            +---------+
+         |    |        |  (PreToolUse or PermissionRequest
+         +----|  READY |   where tool_name = AskUserQuestion)
+   click      |        |
+              +--------+
+                  ^
+                  |
+              Stop/StopFail (intercepted: IDLE -> READY)
 ```
 
-### 6.2 Event-to-State Mapping
+*Notes:*
+- `IDLE` is the initial state for new sessions.
+- The `IDLE` state is never reached via hook events for the main process — `Stop` and `StopFail` are intercepted to `READY` (`controller.py:672-673`). `READY` is cleared to `IDLE` by a left-click on the row (`controller.py:847-849`).
+- `PostToolUseFailure` during `PERMISSION_REQUIRED` is suppressed — state remains `PERMISSION_REQUIRED` (`controller.py:679-691`). This prevents parallel tool failures from clearing a pending permission.
+- Same-state transitions are suppressed (`controller.py:675-676`).
 
-| Hook Event | Default State | Condition Override |
-|------------|---------------|-------------------|
-| UserPromptSubmit | WORKING | — |
-| PreToolUse | WORKING | AWAITING_INPUT if tool = AskUserQuestion |
-| PostToolUse | WORKING | — |
-| PostToolUseFailure | WORKING | Suppressed if current state = PERMISSION_REQUIRED |
-| PermissionRequest | PERMISSION_REQUIRED | AWAITING_INPUT if tool = AskUserQuestion |
-| Stop | READY | Controller intercepts IDLE → READY |
-| StopFailure | READY | Controller intercepts IDLE → READY |
-| SubagentStart | WORKING | Registers agent entry |
-| SubagentStop | (removal) | Removes agent; no state change |
-| SessionEnd | (ghost) | Converts live session to ghost |
+### 4.2 Agent State
 
-### 6.3 Session ID Resolution
+Agents have the same five states but with different rules:
+- There is no `IDLE -> READY` intercept for agents.
+- `PERMISSION_REQUIRED` is debounced by 5 seconds before surfacing in the UI.
+- Agents are removed on `SubagentStop`, not on state transitions.
+- Unmapped events with an `agent_id` (except `SubagentStop`) default to `WORKING`.
 
-Hook events arrive with a `session_id`. The controller maintains a reverse lookup map (`session_id → PID`).
+### 4.3 Effective State
 
-**Fallback:** If the session_id is not found (common with resumed sessions), the controller matches by CWD instead and registers the new session_id for future lookups.
+A session's effective state is the highest-priority state across its main process state and all agent states (`_SessionEntry.effective_state`, `controller.py:156-165`). Priority order: `PERMISSION_REQUIRED` (0) > `AWAITING_INPUT` (1) > `WORKING` (2) > `READY` (3) > `IDLE` (4).
 
-**Buffering:** If neither lookup succeeds (session not yet discovered), the event is buffered in `_pending_hook_states` and replayed when the session is registered.
+## 5. Event Flows and Processing Rules
 
-### 6.4 Hook Relay Behavior
+### 5.1 Hook Event Flow
 
-The relay script is invoked per-event by Claude Code's hook system. It:
-1. Reads the complete JSON payload from stdin
-2. POSTs to `http://127.0.0.1:17384/hook` with a 2-second timeout
-3. Exits immediately (exit code always 0)
+See the ASCII data flow in `c4-container.md`. Key processing rules:
 
-If the dashboard is not running, the POST fails silently. Claude Code is never blocked or affected.
+1. **Session ID lookup**: Events are matched to sessions by `session_id`. If not found, a CWD-based fallback match is attempted (handles resumed sessions where the session ID may differ from the file, `controller.py:609-615`).
 
-When `--debug` is enabled (default in shipped config), raw payloads are appended to a JSONL log file with ISO 8601 timestamps.
+2. **Buffering**: Events for undiscovered sessions are buffered in `_pending_hook_states` and replayed when the session is registered (`controller.py:618-619`, `controller.py:484-487`).
 
----
+3. **Thread marshaling**: All hook server callbacks use `root.after(0, fn)` to marshal to the Tkinter main thread (`controller.py:576-593`).
 
-## 7. Agent Tracking
+### 5.2 UI Refresh Debounce
 
-### 7.1 Agent Lifecycle
+UI refreshes are debounced at 300ms (`_DEBOUNCE_MS`, `controller.py:68`). When `_refresh_ui()` is called:
+- If any non-hidden session has `PERMISSION_REQUIRED` or `AWAITING_INPUT` as its effective state, the debounce is bypassed and `_do_refresh_ui` runs immediately (`controller.py:761-772`).
+- Otherwise, a 300ms timer is (re)set. If a previous timer was pending, it is cancelled (`controller.py:773-785`).
+- The deferred handler re-reads current state to avoid staleness (`controller.py:787-790`).
 
-Agents are subprocesses spawned by Claude Code sessions (via the Agent tool). The dashboard tracks them per-session.
+### 5.3 Agent Permission Debounce
 
-- **SubagentStart:** Creates or updates an agent entry with `agent_id`, `state`, `agent_type`
-- **SubagentStop:** Removes the agent entry
-- **Other events with `agent_id`:** Updates the agent's state
+When an agent enters `PERMISSION_REQUIRED` (`controller.py:648-655`):
+- Any existing debounce timer for that agent is cancelled.
+- A new 5-second timer is started.
+- The event is NOT immediately reflected in the UI.
+- If the agent's state changes to anything else within 5 seconds, the timer is cancelled and the new state takes effect immediately.
+- If still `PERMISSION_REQUIRED` after 5 seconds, `_flush_agent_perm_debounce` triggers a UI refresh.
 
-Agents are never explicitly listed in the UI as separate rows. Their state contributes to the session's effective state, and their count is shown as `(+N)` in the row.
+## 6. User Interactions
 
-### 7.2 Agent Permission Debounce
+### 6.1 Session Row Interactions
 
-Agent permission requests are debounced for 5 seconds before affecting the UI. Rationale: agents are typically run via skills that auto-resolve permission prompts, so most agent permission events are transient.
+| Input | Target | Condition | Action |
+|-------|--------|-----------|--------|
+| Left-click | Live session row | State is `READY` | Clears state to `IDLE`, then foregrounds container window |
+| Left-click | Live session row | State is not `READY` | Foregrounds container window (re-detects container if missing) |
+| Left-click | Ghost session row | Always | Writes `.vscode/tasks.json` if not present, launches `code <cwd>` |
+| Double-click | Any session row | `git_status == PUSHED_NOT_MERGED` | Opens PR in browser via `gh pr view --web`; falls back to `gh pr create --web` if no PR exists |
+| Middle-click | Any session row | Always | Toggles `flagged` boolean on the session |
+| Right-click | Live session row | Always | Context menu: CWD (disabled header), separator, Open PR (if pushed-not-merged), Hide, Clear State |
+| Right-click | Ghost session row | Always | Context menu: "Ghost: CWD" (disabled header), separator, Open PR (if pushed-not-merged), Open in VS Code, Hide, Dismiss |
 
-- If the agent sends a non-permission event within 5s, the debounce timer is cancelled
-- If the agent is stopped within 5s, the debounce timer is cancelled
-- If still pending after 5s, the UI updates to show PERMISSION_REQUIRED
+**Single/double-click discrimination** (`main_window.py:1056-1088`): Single-clicks are delayed by 200ms (`_CLICK_DELAY_MS`). If a double-click fires within that window, the pending single-click is cancelled. On Linux, `<ButtonRelease-1>` fires before `<Double-1>`, requiring this delay pattern.
 
-Main process permission requests are **not** debounced — they always update the UI immediately.
+### 6.2 Title Bar Interactions
 
-### 7.3 Agent Cleanup
+| Input | Target | Action |
+|-------|--------|--------|
+| Left-click + release (no drag) | Title icon, emoji, or text | Toggle window shade — collapse to title bar only / expand rows |
+| Left-click + drag | Title icon, emoji, or text | Move window (5-pixel drag threshold before movement starts) |
+| Middle-click | Title icon, emoji, or text (unshaded, ghosts visible) | Hide all non-flagged ghosts |
+| Middle-click | Title icon, emoji, or text (unshaded, ghosts hidden) | Show all ghosts |
+| Middle-click | Title icon, emoji, or text (shaded, ghosts hidden) | Unshade window and show all ghosts |
+| Middle-click | Title icon, emoji, or text (shaded, ghosts shown) | Unshade window only (ghosts stay shown) |
+| Left-click (no drag) | Cost/usage labels | Open 14-day cost history popup |
+| Left-click + drag | Cost/usage labels | Horizontal resize (minimum 150px), width persisted to settings |
+| Right-click | Any title bar widget | Menu: Sessions (visibility checkboxes), separator, Open... (folder picker -> VS Code), separator, Settings, Restart, Quit |
+| Mouse leave | Cost/usage label area | Dismiss cost popup if open |
 
-Agents are removed individually via SubagentStop. They are **not** cleared on UserPromptSubmit because auto-wake events (fired after each SubagentStop) are indistinguishable from real user prompts and would prematurely clear active agents.
+### 6.3 Title Bar Shade State
 
-When a session's PID dies, all its agents are implicitly cleaned up (the entire session entry is removed).
+When shaded:
+- All session rows are hidden (`pack_forget`).
+- The title bar background changes to the highest-priority state color, excluding `READY` — only states requiring user action color the shaded bar (`main_window.py:412-413`).
+- The eye icon is replaced with a transparent placeholder.
+- The emoji image background is recomposited to match the new title bar color.
 
-**There is no TTL or timeout-based agent cleanup.** This is an intentional design decision — agents can run for hours, and there is no reliable signal to distinguish "still working" from "orphaned."
+When unshaded:
+- All session rows are restored to their pack order.
+- The title bar returns to the default `color_unattached` background.
+- The eye icon is restored to its default green.
 
----
+### 6.4 System Tray
 
-## 8. Ghost Sessions
+- **Left-click (default action)**: Toggle dashboard window visibility (show/hide).
+- **Right-click**: Dynamic menu with: Toggle, separator, "Unhide: (session)" for each hidden session, separator, Settings, Restart, Quit.
+- **Icon appearance**: Eye shape (off-center pupil) generated as a PIL image. Outer color reflects the highest-priority actionable state across all non-hidden, non-ghost sessions. `WORKING` is not actionable and is skipped. Gray when no actionable state.
 
-### 8.1 What Ghosts Are
+### 6.5 Settings Window
 
-When a Claude Code session exits (PID dies or SessionEnd hook fires), the dashboard converts it to a "ghost" — an unattached placeholder with a synthetic negative PID. Ghosts persist until:
-- The user dismisses them via right-click context menu
-- The CWD directory is deleted (pruned on next discovery tick)
-- A new live session starts in the same CWD (ghost is replaced)
+Modal dialog created fresh on each open, destroyed on save or cancel. Position restored from `settings_x`/`settings_y`. Sections:
 
-### 8.2 Ghost Behavior
+- **Window**: Always on top (checkbox), Grow upward (checkbox)
+- **Rows**: Row height in px (int), Font size in pt (int)
+- **Polling**: Poll interval in seconds (int)
+- **Startup**: Start on login (checkbox)
+- **Filtering**: Ignore CWD regex (text field)
+- **Status Colors**: Color swatches for all 5 session states + 5 flag colors + unattached color + window background (each opens `ColorPickerDialog`)
 
-- Ghost rows show the "unattached" emoji (👻) and use the `color_unattached` background
-- Left-click on a ghost: writes `.vscode/tasks.json` (if not present) and launches VS Code
-- Right-click on a ghost: Dismiss, Open in VS Code, Hide, Open PR (if pushed-not-merged)
-- Ghosts preserve their `flagged` state from the live session
+On save: settings are written to disk, `set_run_on_startup` is called, sessions matching the new `ignore_regex` are removed, `MainWindow.apply_settings` is called, UI refreshes.
 
-### 8.3 Ghost Visibility Toggle
+### 6.6 Cost Popup
 
-Middle-clicking the title bar toggles ghost visibility:
-- Show: All non-flagged ghosts become visible
-- Hide: All non-flagged ghosts become hidden
-- **Flagged ghosts are never hidden by this toggle** — the manual flag protects them
+Clicking cost/usage labels in the title bar opens a `CostPopup` (`ui/cost_popup.py`):
+- Reads daily costs for the last 14 days from `~/.claude/my-claude-stuff-data/session-tracker/<date>/*.json`.
+- Each day's cost = `sum(cost.total_cost_usd - _prior_cost)` across all session files for that date.
+- Displays a text table with day abbreviation, date, cost, and proportional bar chart.
+- Today's row is marked with `*`.
+- Shows 14-day total at the bottom.
+- Dismissed when the mouse leaves the cost label area.
 
-**Shade interaction:** If the window is shaded (collapsed) and ghosts are hidden, middle-click both unshades and shows ghosts. If shaded and ghosts are visible, it only unshades.
+## 7. Integration Behaviors
 
-### 8.4 State Restoration
+### 7.1 Claude Code Sessions
 
-On startup, the dashboard reads `session-state.json` and creates ghost entries for every CWD that has saved state but no live session. This preserves flags, visibility, and state across dashboard restarts.
+**Discovery**: Reads all `*.json` files in `~/.claude/sessions/`. Expected schema: `{"pid": int, "sessionId": str, "cwd": str, "startedAt": int, "entrypoint": str}`. Files missing `pid` or `sessionId` are skipped. Corrupt JSON is logged as a warning and skipped.
 
----
+**PID Validation**: `psutil.pid_exists(pid)` + `psutil.Process(pid).name().lower()` must contain "claude". `NoSuchProcess` and `AccessDenied` exceptions return False.
 
-## 9. Git Integration
+**Hook Events**: Claude Code fires command hooks defined in `~/.claude/settings.json`. The hook config (shipped as `hooks-settings.json`) defines hooks for events including `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `UserPromptSubmit`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, `SessionEnd`, `SessionStart`. Each hook runs `hook_relay.py --debug` which reads the JSON payload from stdin and POSTs it to `http://127.0.0.1:17384/hook`.
 
-### 9.1 Branch Detection
+### 7.2 VS Code
 
-Reads `.git/HEAD` directly (no subprocess). If HEAD points to the trunk branch (detected via `<remote>/HEAD`), the branch name is suppressed — only non-trunk branches are displayed.
+**Container detection** (Windows): Walk process parent chain via psutil. Match `Code.exe` in process name. Find the "main" VS Code PID by walking up until the parent is not `Code.exe`. Enumerate all windows owned by the main PID via `EnumWindows`, match by CWD folder name in window title.
 
-### 9.2 Working Tree Status
+**Container detection** (Linux): Walk process parent chain. Match `code` or `code-*` in process name. Fallback: check `TERM_PROGRAM=vscode` env var on the bash parent process.
 
-Detected per-session per-tick via `git status --porcelain` with a 2-second timeout. Priority order:
+**Ghost session launch**: Write `.vscode/tasks.json` to the CWD (skipped if file exists). The template defines two tasks with the same group `claude-dev`: "claude" (runs `claude` command) and "bash" (runs `exec bash -li`), both set to `runOn: folderOpen`. Then launch `code <folder>` via `shutil.which("code")`.
 
-| Priority | Status | Meaning | Eye Icon Color |
-|----------|--------|---------|----------------|
-| 1 | UNSTAGED_CHANGES | Working tree modifications | Green |
-| 2 | STAGED_UNCOMMITTED | Staged but not committed | Amber |
-| 3 | COMMITTED_NOT_PUSHED | Commits ahead of upstream | Red |
-| 4 | PUSHED_NOT_MERGED | Branch pushed, not in trunk | Light blue |
-| 5 | CLEAN | Nothing to show | (transparent) |
+### 7.3 Git
 
-**Performance guard:** If `detect_git_status()` takes longer than 500ms, the result is discarded to avoid blocking the UI thread.
+All git operations use `subprocess.run` with a 2-second timeout (10 seconds for `git fetch`), `capture_output=True`, and `creationflags=config.SUBPROCESS_FLAGS` (Windows: `CREATE_NO_WINDOW`).
 
-### 9.3 Merge Detection
+| Operation | Command | Called from | Frequency |
+|-----------|---------|-------------|-----------|
+| Branch detection | Read `.git/HEAD` file directly | `_add_session`, each discovery tick, each hook state change | No subprocess |
+| Git status | `git status --porcelain` | `_add_session`, each discovery tick | Every tick |
+| Upstream detection | `git remote` + `git symbolic-ref refs/remotes/<remote>/HEAD` | `detect_git_status`, `detect_merged`, `_trunk_branch` | Via callers |
+| Unpushed check | `git log --oneline @{u}..HEAD` or `git log --oneline <trunk>..HEAD` | `detect_git_status` | Every tick (if no unstaged/staged) |
+| Merge detection | `git merge-base --is-ancestor`, `git cherry`, `git diff --quiet` | `_discovery_tick` | Every tick (if branch exists) |
+| Remote fetch | `git fetch <remote>` | `_discovery_tick` | Every ~60 seconds for pushed-not-merged sessions |
 
-For sessions with a non-trunk branch, the dashboard checks if the branch has been merged into trunk using three strategies:
+### 7.4 GitHub CLI
 
-1. **Ancestor check:** `git merge-base --is-ancestor <branch> <trunk>` — detects regular merges
-2. **Cherry check:** `git cherry <trunk> <branch>` — detects rebase merges (all commits have patch-equivalent)
-3. **Diff check:** `git diff --quiet <trunk> <branch>` — detects squash merges (trees identical)
+`gh pr view --web` ��� opens existing PR in browser. Timeout: 10 seconds. If returncode != 0 (no PR found), falls back to `gh pr create --web` (fire-and-forget via Popen). If `gh` is not found (`FileNotFoundError`), logs a warning.
 
-When merged, the branch name text turns red (`#ef4444`).
+### 7.5 OS Window Manager
 
-### 9.4 Upstream Discovery
+**Windows**: `ctypes.windll.user32.SetForegroundWindow(hwnd)`. If the window is minimized, `ShowWindow(hwnd, SW_RESTORE)` first. If `SetForegroundWindow` fails (Windows restricts foreground changes), uses the Alt-key trick: press/release `VK_ALT` around the `SetForegroundWindow` call to acquire foreground permission.
 
-The dashboard detects the remote and trunk branch dynamically:
-1. List all remotes (`git remote`)
-2. For each remote, check `git symbolic-ref refs/remotes/<remote>/HEAD`
-3. First successful result becomes the upstream (e.g., `origin/main`)
+**Linux — VS Code**: `code <cwd>` CLI. VS Code activates the window whose root folder matches `<cwd>`, or opens a new window if none match.
 
-No hardcoded branch names — works with main, master, develop, or any trunk convention.
+**Linux — Terminals**: `gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell/Extensions/Windows --method org.gnome.Shell.Extensions.Windows.Activate <window_id>`. Window ID is found by `List`-ing all windows via D-Bus, collecting PIDs in the container's process tree, and matching. For VS Code with multiple windows, disambiguates by CWD folder name in window title.
 
-### 9.5 Periodic Fetch
+### 7.6 OS Auto-start
 
-For sessions with git status PUSHED_NOT_MERGED, the dashboard runs `git fetch <remote>` approximately once per minute (rate-limited by tick counter). This keeps merge detection current.
+**Windows**: Writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\ClaudeDashboard` registry value with the startup command. Command uses `pythonw.exe` (falls back to `python.exe` with a warning if `pythonw.exe` not found). Always includes `--debug --log-file <path>`.
 
----
+**Linux**: Writes `~/.config/autostart/claude-dashboard.desktop` with `Type=Application`, `Name=Claude Dashboard`, `Exec=<startup_cmd>`, `X-GNOME-Autostart-enabled=true`.
 
-## 10. User Interactions
+Both are toggled in `set_run_on_startup` — called on startup (sync with settings) and on settings save.
 
-### 10.1 Row Interactions
+## 8. Persistence and Recovery
 
-| Action | Target | Behavior |
-|--------|--------|----------|
-| Left-click | Live row | Foreground the session's VS Code/terminal window. If state is READY, clear to IDLE |
-| Left-click | Ghost row | Write `.vscode/tasks.json`, launch VS Code |
-| Double-click | Any row | Open PR in browser if PUSHED_NOT_MERGED (via `gh pr view --web`); fallback to create-PR page |
-| Middle-click | Any row | Toggle manual flag on/off |
-| Right-click | Live row | Context menu: Open PR (if applicable), Hide, Clear State |
-| Right-click | Ghost row | Context menu: Open PR (if applicable), Open in VS Code, Hide, Dismiss |
+### 8.1 Settings File
 
-### 10.2 Title Bar Interactions
+**Path**: `%APPDATA%/claude-dashboard/settings.json` (Windows) or `~/.config/claude-dashboard/settings.json` (Linux).
 
-| Action | Behavior |
-|--------|----------|
-| Left-click | Toggle shade (collapse to title bar only / expand to show rows) |
-| Middle-click | Toggle ghost visibility (flagged ghosts exempt) |
-| Right-click | Context menu: Sessions submenu (visibility checkboxes), Open..., Settings, Restart, Quit |
-| Drag | Move window |
+**Load** (`settings.py:79-108`): Reads JSON, filters to known field names, validates each value's type against the Settings dataclass default (including bool/int discrimination). Invalid fields are silently dropped. Returns defaults if file is missing, corrupt, or unreadable.
 
-### 10.3 Cost/Usage Labels
+**Save** (`settings.py:111-118`): Writes via `atomic_write_json` (tempfile + rename). Logs error on failure.
 
-| Action | Behavior |
-|--------|----------|
-| Click (no drag) | Open 14-day cost history popup |
-| Horizontal drag | Resize window width (min 150px, persisted to settings) |
+**Fields**: 26 fields covering window position (x/y for main, settings, color picker), appearance (row_height, row_width, font_size), behavior (always_on_top, grow_up, poll_interval_seconds, run_on_startup), 11 color hex strings, window_bg, text_color (unused — auto-contrast), ignore_regex.
 
-### 10.4 System Tray
+### 8.2 Session State File
 
-| Action | Behavior |
-|--------|----------|
-| Left-click | Toggle main window visibility |
-| Right-click | Menu: Toggle, Unhide items for hidden sessions, Settings, Restart, Quit |
+**Path**: `~/.claude/claude-dashboard/session-state.json`.
 
----
+**Structure**: Dict keyed by CWD string. Each entry: `{state: str, hidden: bool, flagged: bool, agents: {agent_id: {state: str, agent_type: str}}}`.
 
-## 11. Visual Design
+**Save** (`controller.py:1144-1172`): Written on every `_do_refresh_ui` call. For duplicate-CWD sessions, `hidden` is only `True` if ALL sessions with that CWD are hidden. Agent dicts are merged.
 
-### 11.1 Window
+**Load** (`controller.py:1134-1142`): Read once at startup. Applied to new sessions in `_apply_saved_state` (flagged, hidden, state, agents). Applied to ghosts in `_create_unattached_from_state`. Buffered hook states override saved state (`controller.py:484-487`).
 
-- Borderless, always-on-top (configurable)
-- Linux: dock window type (visible on all virtual desktops)
-- Grow-up mode: window expands upward from a fixed bottom edge
-- Background: configurable (`#1a1a1a` default)
+### 8.3 Atomic Writes
 
-### 11.2 Title Bar
+All JSON persistence uses `atomic_write_json` (`file_utils.py:10-33`): Creates parent directories, writes to a tempfile in the same directory, then renames. On any failure, the tempfile is cleaned up and the original file is preserved.
 
-- Left side: Eye icon + chef's kiss emoji (PNG, unicode fallback) + "Claude Dashboard"
-- Right side: Session counts `{N} (+hidden) [+ghosts]`, daily cost `$X.XX`, 5h/7d usage percentages
-- When shaded: background color reflects highest-priority action-required state (excludes READY to keep title minimal)
-- When expanded: background color is always `color_unattached`
+### 8.4 Restart
 
-### 11.3 Session Rows
+`_restart()` (`controller.py:1248-1262`): Saves window position, settings, and session state. Stops hook server and tray icon. Calls `root.quit()` then `os.execv(sys.executable, args)` to re-exec the same process with the same arguments. Uses `-m claude_dashboard` to avoid adding the package directory to `sys.path` (which would shadow stdlib `platform`).
 
-- Background color determined by effective state (configurable per-state)
-- Text color auto-calculated via W3C sRGB contrast — not user-configurable
-  - Light backgrounds → dark text (`#1a1520`)
-  - Dark backgrounds → light text (`#f5f0e8`)
-- Container label (VS Code, Term, etc.) right-aligned in dim gray (`#888888`)
-- CWD paths shortened: `git-worktrees/` → `.../`
+## 9. Degradation Behavior
 
-### 11.4 Eye/Flag Icon
+### 9.1 Hook Server Unreachable
 
-Each row has an eye-shaped icon with two visual channels:
-- **Outer eye color:** Git working tree status (green=unstaged, amber=staged, red=unpushed, blue=unmerged)
-- **Pupil color:** Manual flag (purple when flagged, transparent when not)
-- Both transparent when no git status and no flag
+`hook_relay.py:83-86`: `urllib.request.urlopen(req, timeout=2)` wrapped in a bare `except Exception`. If the dashboard HTTP server is down or unresponsive, the relay exits silently. No retry. The hook event is lost — the session state will be stale until the next hook event arrives.
 
-### 11.5 Status Emojis
+### 9.2 Git Subprocess Failures
 
-Each state has a distinct emoji (loaded as PNG from assets):
-- Working: 🔄
-- Ready: ✅
-- Idle: 😐
-- Awaiting Input: ❓
-- Permission Required: 🔐
-- Unattached: 👻
+`session.py:108-123`: `_git_output` wraps `subprocess.run` with `timeout=2`. On `OSError` or `TimeoutExpired`, returns `None`. All callers treat `None` as "no data":
+- `detect_git_status`: Returns `GitStatus.CLEAN`.
+- `detect_upstream`: Returns `("", "")`.
+- `detect_merged`: Returns `False`.
 
-### 11.6 Tray Icon
+`controller.py:400-403`: If `detect_git_status` takes longer than 0.5 seconds, the result is discarded (the entry keeps its previous `git_status`). This prevents slow git operations (e.g., on network mounts) from blocking the discovery tick.
 
-64x64 eye shape with offset pupil (asymmetric, "looking right"). Color = highest-priority actionable state. Black outline prevents color bleed when downscaled. Only actionable states are reflected (permission, awaiting input, ready, idle) — working is excluded.
+### 9.3 Git Fetch Failures
 
----
+`controller.py:381-390`: `git fetch <remote>` has a 10-second timeout. On `OSError` or `TimeoutExpired`, the fetch is silently skipped. The session's merge status will be stale until the next fetch succeeds.
 
-## 12. UI Refresh and Debouncing
+### 9.4 Session File Read Failures
 
-### 12.1 Standard Debounce
+`session.py:53-54`: Individual session files that fail to parse (`JSONDecodeError`) or read (`OSError`) are logged as warnings and skipped. The session is not discovered.
 
-State changes are debounced at 300ms. If multiple hook events arrive within that window, only the final state is rendered.
+`session.py:34-35`: If the sessions directory does not exist, returns an empty list.
 
-### 12.2 Priority Bypass
+### 9.5 Settings File Failures
 
-If any visible session has PERMISSION_REQUIRED or AWAITING_INPUT as its effective state, the debounce is bypassed and the UI refreshes immediately. This ensures action-required states are visible without delay.
+`settings.py:81-108`: Returns a `Settings()` with all defaults on any exception during load.
 
-### 12.3 Refresh Scope
+`settings.py:111-118`: Logs an error on write failure. The in-memory settings remain correct; only persistence is lost.
 
-Each refresh:
-1. Collects all visible (non-hidden) session entries
-2. Builds `SessionRow` tuples for the UI
-3. Pushes to MainWindow for rendering
-4. Updates tray icon color if priority state changed
-5. Updates title bar (cost, usage, counts)
-6. Saves session state to disk
+### 9.6 State File Failures
 
----
+`controller.py:1134-1142`: Returns empty dict on `FileNotFoundError`, `JSONDecodeError`, or `OSError`. Dashboard starts with no saved state — all sessions appear as fresh.
 
-## 13. Settings
+`controller.py:1169-1172`: Logs debug on write failure. State is lost for that save cycle; the next save may succeed.
 
-### 13.1 Configurable Fields
+### 9.7 VS Code Launch Failures
 
-**Window behavior:** Always on top, grow upward
-**Layout:** Row height (px), font size (pt), row width (px)
-**Polling:** Interval in seconds
-**Startup:** Run on login
-**Filtering:** Ignore CWD regex
-**Colors:** 12 configurable colors (5 status states, 5 flag states, unattached background, window background)
+`controller.py:967-985`: `shutil.which("code")` returns `None` if VS Code CLI is not in PATH — logs a warning with installation instructions. `subprocess.Popen` catches `OSError` and logs a warning.
 
-### 13.2 Settings Flow
+### 9.8 GitHub CLI Failures
 
-1. User opens Settings (via menu or tray)
-2. Modal dialog shows all fields with current values
-3. Color fields open a color picker (palette grid + hex entry)
-4. Apply: saves to disk, applies to UI, keeps dialog open
-5. Save: saves to disk, applies to UI, closes dialog
-6. Cancel: saves only dialog position, discards changes
+`controller.py:1001-1026`: `gh pr view --web` has a 10-second timeout. `FileNotFoundError` (gh not installed) is logged as a warning. `TimeoutExpired` is logged as a warning. Other `OSError` is logged as a warning. No fallback — the PR is not opened.
 
-### 13.3 Settings Application
+### 9.9 Window Foregrounding Failures
 
-When settings are applied:
-1. Save to disk (atomic JSON write)
-2. Update OS auto-start registration
-3. Remove sessions matching new ignore_regex
-4. Rebuild UI fonts, colors, and window attributes
-5. Recompute geometry
-6. Full UI refresh
+**Windows** (`platform/windows.py:136-159`): `SetForegroundWindow` returns a boolean. On failure, the Alt-key trick is attempted. If that also fails, returns `False`. The controller logs a warning (`controller.py:860`).
 
-### 13.4 Persistence
+**Linux — D-Bus** (`platform/linux.py:160-189`): `gdbus call` has a 3-second timeout. `FileNotFoundError` (gdbus not found), `TimeoutExpired`, and non-zero return codes all return `False`.
 
-Settings are stored as a JSON file at the platform-specific config path. Unknown fields are stripped on load. Invalid types are skipped with a log warning. Missing or corrupt files fall back to defaults.
+**Linux — VS Code CLI** (`platform/linux.py:242-259`): `code <cwd>` has a 5-second timeout. `FileNotFoundError` and `TimeoutExpired` return `False`.
 
-**Dialog and picker positions** are saved to settings on close — so they reopen where the user left them.
+**Linux fallthrough** (`platform/linux.py:279-284`): If no foreground method succeeds, logs debug and returns `False`.
 
----
+### 9.10 OS Auto-start Failures
 
-## 14. State Persistence
+**Windows** (`startup.py:59-77`): Registry operations wrapped in try/except. Logs warning on failure. Dashboard continues running; only auto-start registration is affected.
 
-### 14.1 What's Persisted
+**Linux** (`startup.py:96-115`): File write wrapped in try/except for `OSError`. Logs warning on failure.
 
-Per-CWD snapshot saved to `~/.claude/claude-dashboard/session-state.json`:
-- Session state (WORKING, READY, IDLE, etc.)
-- Hidden flag (boolean)
-- Manual flag (boolean)
-- Agent states and types
+### 9.11 Cost and Usage Data Failures
 
-### 14.2 Write Frequency
+`controller.py:71-90`: `read_daily_cost()` iterates `*.json` in the tracker directory. Individual file failures (`JSONDecodeError`, `OSError`) are silently skipped. Missing directory returns 0.0.
 
-Written on every UI refresh (which happens on every hook event and every discovery tick). Atomic write (temp file + rename).
+`controller.py:93-103`: `read_usage_limits()` returns empty dict on any failure.
 
-### 14.3 Multi-Session Merge
+### 9.12 Tray Icon Failures
 
-When multiple live sessions share the same CWD:
-- `hidden` is only `true` if ALL sessions with that CWD are hidden
-- Agent maps are merged
-- Last state wins for the state field
+`tray.py:107-117`: `update_tray_icon` catches `Exception` and logs debug. The tray icon keeps its previous color.
 
-### 14.4 Restore on Startup
+`controller.py:296-299`: Tray thread crashes are caught and logged. The dashboard continues running without a tray icon.
 
-On the first discovery tick, for every CWD in saved state that has no live session, a ghost is created with the saved flags and visibility.
+## 10. Behavioral Nuances
 
----
+### 10.1 IDLE-to-READY Intercept
 
-## 15. Window Foregrounding
+The `IDLE` state is unreachable for main process events via hooks. When `map_event_to_state` returns `IDLE` (on `Stop`/`StopFailure`), the controller intercepts it and stores `READY` instead (`controller.py:672-673`). `READY` is a user-actionable state indicating "Claude finished, check results." It is cleared to `IDLE` by left-clicking the row (`controller.py:847-849`). This intercept does not apply to agents — agent `IDLE` is stored as-is.
 
-### 15.1 Container Detection
+### 10.2 PostToolUseFailure Suppression During Permission
 
-The dashboard walks the parent process chain of each Claude Code PID to identify what container it's running in:
-- VS Code (code/code.exe)
-- Terminal emulators (gnome-terminal, konsole, alacritty, kitty, wezterm, ghostty, etc.)
-- Multiplexers (tmux, screen)
-- Windows-specific (Windows Terminal, cmd.exe, Git Bash/mintty)
+When the main process state is `PERMISSION_REQUIRED` and a `PostToolUseFailure` event arrives with `new_state=WORKING`, the event is suppressed (`controller.py:679-691`). This handles parallel tool calls where one tool needs permission while others fail — the failures should not clear the permission-required state.
 
-Fallback: checks `TERM_PROGRAM` environment variable.
+### 10.3 CWD-Based Session Matching
 
-### 15.2 Foregrounding (Linux/Wayland)
+When a hook event's `session_id` is not found in `_session_id_to_pid`, the controller falls back to matching by CWD (`controller.py:609-615`). This handles resumed sessions where Claude Code reuses a CWD but generates a new session ID. The fallback registers the new session ID for future lookups.
 
-- **VS Code:** Launches `code <cwd>` CLI — this foregrounds the correct VS Code window
-- **Terminal:** Uses GNOME Shell `window-calls` D-Bus extension to list windows by PID and activate the matching one
+### 10.4 Text Color: Auto-Contrast, Not Configurable
 
-For multi-window VS Code instances, the dashboard disambiguates by matching the CWD folder name against window titles.
+`main_window.py:112-123`: Text color is computed per-row from the background color using the W3C sRGB relative luminance formula. The `text_color` field exists in Settings for backward compatibility but is unused — auto-contrast overrides it. Two text colors are defined: `_TEXT_LIGHT` (#f5f0e8, warm white) for dark backgrounds, `_TEXT_DARK` (#1a1520, cool near-black) for light backgrounds.
 
-### 15.3 Foregrounding (Windows)
+### 10.5 Git Status Timeout Guard
 
-- Finds the main VS Code process (the one whose parent is NOT another Code.exe)
-- Enumerates all visible windows owned by that PID
-- Matches by CWD folder name in window title
-- Uses `SetForegroundWindow` with an Alt-key workaround for focus stealing prevention
-- Restores minimized windows before foregrounding
+`controller.py:400-403`: `detect_git_status` is timed with `time.monotonic()`. If the call takes longer than 0.5 seconds, the result is discarded and the session keeps its previous `git_status`. This prevents network-mounted or large repos from blocking the UI update cycle. The guard is also applied during initial session registration (`controller.py:452-459`), where it only logs a warning rather than discarding.
 
----
+### 10.6 Duplicate-CWD Session Handling
 
-## 16. VS Code Integration
+Multiple live sessions can share the same CWD. State persistence handles this: `hidden` is only written as `True` if ALL sessions with that CWD are hidden (`controller.py:1156-1158`). Agent dicts are merged across sessions sharing a CWD (`controller.py:1160`).
 
-### 16.1 Tasks.json Auto-Generation
+### 10.7 Ghost Toggle and Shade Interaction
 
-When launching VS Code for a ghost session or via "Open in VS Code," the dashboard writes `.vscode/tasks.json` with two tasks:
-1. **claude** — runs `claude` command
-2. **bash** — runs `exec bash -li`
+The middle-click ghost toggle has four-case interaction with the shade state (`main_window.py:520-536`):
+- Shaded + ghosts hidden: Unshade and show ghosts (`force_show=True`).
+- Shaded + ghosts shown: Unshade only (ghosts stay shown).
+- Unshaded + ghosts hidden: Show ghosts.
+- Unshaded + ghosts shown: Hide non-flagged ghosts. Flagged ghosts are never hidden by this toggle.
 
-Both tasks:
-- Are in the same group (`claude-dev`) so VS Code splits them side-by-side
-- Have `runOptions.runOn = "folderOpen"` so they start automatically when the folder opens
-- Use `isBackground: true` so they don't block VS Code startup
+### 10.8 Grow-Up Window Positioning
 
-The file is only written if it doesn't already exist (user customizations are preserved).
+When `grow_up=True`, the window's bottom edge is anchored. As sessions are added/removed, the window grows upward (y decreases). The bottom-y position is tracked explicitly (`_grow_up_bottom_y`) and saved as the y-coordinate in settings. On restore, the saved y is treated as the bottom edge, and the top-y is computed from `bottom_y - window_height` (`main_window.py:481-482`).
 
-### 16.2 PR Operations
+Compositor drift detection: After setting geometry, the actual position is compared to the requested position. If they differ, a warning is logged. This detects Wayland compositors that reposition dock-type windows.
 
-Double-click on a PUSHED_NOT_MERGED session runs:
-1. `gh pr view --web` — opens existing PR in browser
-2. If no PR exists (non-zero exit): `gh pr create --web` — opens create-PR page
+### 10.9 Non-Interactive Session Auto-Hide
 
----
+Sessions with `entrypoint != "cli"` (e.g., `claude -p` for piped/non-interactive usage) are automatically hidden on discovery (`controller.py:477-479`). They still receive hook events and appear in the Sessions visibility menu.
 
-## 17. Shutdown and Restart
+### 10.10 VS Code Tasks.json Template
 
-### 17.1 Quit
+Ghost left-click writes `.vscode/tasks.json` only if the file does not exist (`controller.py:168-186`). The template is never updated or overwritten — once written, the file belongs to the user. The template defines two tasks in the same `claude-dev` group (split terminal): `claude` (auto-runs on folder open) and `bash -li` (interactive shell).
 
-1. Save window position to settings
-2. Save settings to disk
-3. Stop hook server (join thread with 1s timeout)
-4. Stop tray icon
-5. Exit Tkinter main loop
+### 10.11 Agent Auto-Wake Suppression
 
-### 17.2 Restart
+`UserPromptSubmit` events do not clear agents (`controller.py:663-667`). This is because auto-wake events (fired after each `SubagentStop`) are indistinguishable from real user prompts and would prematurely clear active agents. Agents are removed only by `SubagentStop` or on PID death.
 
-Same as quit, plus:
-1. Save session state to disk
-2. Re-execute the process via `os.execv(python, ["-m", "claude_dashboard", ...args])`
+### 10.12 Shaded Title Bar Color
 
-The next startup reads the saved session state and recreates ghosts for all CWDs that were being tracked.
+When shaded, the title bar color reflects the highest-priority state, but `READY` is excluded (`main_window.py:412-413`). The rationale: shaded mode is for "at a glance" awareness — only states requiring user action should color the bar. `READY` means "Claude finished" but doesn't require immediate attention, so the shaded bar remains the default dark color.
 
-### 17.3 TTL Mode
+### 10.13 Single-Instance Enforcement
 
-When launched with `--ttl <seconds>`, the dashboard auto-quits after that duration. Used for testing.
-
----
-
-## 18. External Data Sources
-
-### 18.1 Daily Cost
-
-Reads `~/.claude/my-claude-stuff-data/session-tracker/{YYYY-MM-DD}/*.json`. Each file contains `cost.total_cost_usd` and `_prior_cost` (for cross-day sessions). Displayed in the title bar as `$X.XX`. Refreshed every ~30 seconds (10 × poll interval).
-
-### 18.2 Usage Limits
-
-Reads `~/.claude/my-claude-stuff-data/statusline-cache/oauth_usage.json`. Displays 5-hour and 7-day utilization percentages in the title bar. Refreshed on every discovery tick.
-
----
-
-## 19. Behavioral Nuances
-
-### 19.1 CWD-Based Fallback Matching
-
-When a hook event arrives with a session_id that isn't in the reverse lookup, the controller falls back to matching by CWD. This handles resumed sessions where Claude Code assigns a new session_id but keeps the same working directory.
-
-### 19.2 Hook Event Buffering
-
-Events that arrive before their session is discovered are buffered by session_id. On session registration, buffered events are replayed. This prevents losing the initial state of fast-starting sessions.
-
-### 19.3 Git Status Timeout Guard
-
-If `detect_git_status()` takes longer than 500ms, the result is discarded. This prevents slow git operations (large repos, network mounts) from freezing the UI.
-
-### 19.4 Wayland Position Tracking
-
-Wayland compositors can report stale or zero-value window positions. The dashboard tracks position independently (not relying on `winfo_x/y`) and rejects suspicious values (x=0, y=0, height<=1).
-
-### 19.5 Context Menu State Machine
-
-The context menu tracks whether it's currently open (`_context_menu_open`). If right-click is fired while the menu is open, it closes instead of opening a new one. This prevents menu stacking.
-
-### 19.6 Multiple Sessions Same CWD
-
-When multiple Claude Code sessions run in the same directory:
-- Each has its own row
-- State persistence merges them: `hidden` is only true if ALL are hidden
-- Ghost creation is suppressed while any live session exists for that CWD
-- When the last session dies, one ghost is created
-
-### 19.7 Auto-Wake Agent Confusion
-
-When an agent stops, Claude Code fires a UserPromptSubmit event on the main process. The dashboard does NOT clear agents on UserPromptSubmit because this auto-wake is indistinguishable from a real user prompt. Agents are only removed by explicit SubagentStop events.
+The port-binding check in `__main__.py:14-24` uses `SO_REUSEADDR` on the test socket, then attempts to bind to `127.0.0.1:17384`. If binding fails (`OSError`), another instance is running. The socket is closed immediately — it's a probe, not the actual server socket. The hook server creates its own socket later.
