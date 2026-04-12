@@ -371,7 +371,8 @@ class AppController:
                 fetched_cwds: set[str] = set()
                 for entry in self._sessions.values():
                     if (
-                        entry.git_status == config.GitStatus.PUSHED_NOT_MERGED
+                        not entry.unattached
+                        and entry.git_status == config.GitStatus.PUSHED_NOT_MERGED
                         and entry.session.cwd not in fetched_cwds
                     ):
                         fetched_cwds.add(entry.session.cwd)
@@ -392,8 +393,12 @@ class AppController:
             # 6. Clear trunk cache so newly-added remotes are detected
             self._trunk_cache.clear()
 
-            # 7. Update branch, git status, and merge status for all sessions
+            # 7. Update branch, git status, and merge status for live sessions.
+            # Ghosts are checked once at creation — skip them here to avoid
+            # O(ghosts × git_calls) subprocess overhead every tick (#89).
             for entry in self._sessions.values():
+                if entry.unattached:
+                    continue
                 cwd = entry.session.cwd
                 entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
                 start = time.monotonic()
@@ -525,7 +530,6 @@ class AppController:
             if saved.get("hidden"):
                 entry.hidden = True
             entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
-            entry.git_status = detect_git_status(cwd=cwd)
             self._sessions[synthetic_pid] = entry
             logger.debug("created unattached placeholder for %s pid=%d", cwd, synthetic_pid)
 
@@ -549,7 +553,6 @@ class AppController:
         entry.unattached = True
         entry.flagged = flagged
         entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
-        entry.git_status = detect_git_status(cwd=cwd)
         self._sessions[synthetic_pid] = entry
         logger.info("created ghost for %s pid=%d", cwd, synthetic_pid)
 
