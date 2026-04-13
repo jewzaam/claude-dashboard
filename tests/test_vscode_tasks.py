@@ -16,7 +16,7 @@ class TestVscodeTasksTemplate:
         assert parsed["version"] == "2.0.0"
         assert len(parsed["tasks"]) == 2
         claude_task = parsed["tasks"][0]
-        assert claude_task["command"] == "claude"
+        assert claude_task["command"] == "claude -c || claude"
         assert claude_task["label"] == "claude"
         assert claude_task["runOptions"]["runOn"] == "folderOpen"
         assert claude_task["presentation"]["group"] == "claude-dev"
