@@ -100,7 +100,7 @@ VSCODE_TASKS_JSON_TEMPLATE = json.dumps(
             {
                 "label": "claude",
                 "type": "shell",
-                "command": "claude",
+                "command": "claude -c || claude",
                 "isBackground": True,
                 "problemMatcher": [],
                 "presentation": {
