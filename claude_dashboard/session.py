@@ -4,6 +4,7 @@
 import json
 import logging
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -85,16 +86,61 @@ def encode_project_key(*, cwd: str) -> str:
     return normalized
 
 
+def _resolve_git_dir(cwd: str) -> Path | None:
+    """Resolve the git directory for a working tree.
+
+    For regular repos, .git is a directory containing HEAD, config, refs, etc.
+    For worktrees, .git is a file containing ``gitdir: /path/to/git/dir``.
+    Returns None if *cwd* is not inside a git repo.
+    """
+    dot_git = Path(cwd) / ".git"
+    try:
+        if dot_git.is_dir():
+            return dot_git
+        if dot_git.is_file():
+            content = dot_git.read_text(encoding="utf-8").strip()
+            if content.startswith("gitdir: "):
+                gitdir_path = content[len("gitdir: ") :]
+                resolved = Path(gitdir_path)
+                if not resolved.is_absolute():
+                    resolved = (Path(cwd) / resolved).resolve()
+                if resolved.is_dir():
+                    return resolved
+    except OSError:
+        pass
+    return None
+
+
+def _resolve_common_dir(git_dir: Path) -> Path:
+    """Resolve the common git directory (shared refs, config, packed-refs).
+
+    For regular repos, common_dir == git_dir.
+    For worktrees, ``git_dir/commondir`` contains a relative path to the
+    main ``.git`` directory.
+    """
+    commondir_file = git_dir / "commondir"
+    try:
+        if commondir_file.is_file():
+            rel = commondir_file.read_text(encoding="utf-8").strip()
+            return (git_dir / rel).resolve()
+    except OSError:
+        pass
+    return git_dir
+
+
 def detect_branch(*, cwd: str, trunk_branch: str = "") -> str:
     """Return the active git branch for a directory, or empty string on failure.
 
-    Reads .git/HEAD directly — no subprocess or external dependency needed.
+    Reads HEAD from the resolved git directory — works for both regular repos
+    and worktrees. No subprocess needed.
     Returns empty string if the branch matches trunk_branch, if HEAD is
     detached, or if the directory is not a git repo.
     """
+    git_dir = _resolve_git_dir(cwd)
+    if git_dir is None:
+        return ""
     try:
-        head_path = Path(cwd) / ".git" / "HEAD"
-        head_content = head_path.read_text(encoding="utf-8").strip()
+        head_content = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
         if not head_content.startswith("ref: refs/heads/"):
             return ""
         branch = head_content[len("ref: refs/heads/") :]
@@ -103,6 +149,80 @@ def detect_branch(*, cwd: str, trunk_branch: str = "") -> str:
         return branch
     except OSError:
         return ""
+
+
+def _read_remotes(common_dir: Path) -> list[str]:
+    """Parse remote names from git config via file read.
+
+    Reads ``common_dir/config`` looking for ``[remote "name"]`` sections.
+    """
+    config_path = common_dir / "config"
+    try:
+        content = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    remotes: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('[remote "') and stripped.endswith('"]'):
+            name = stripped[len('[remote "') : -len('"]')]
+            remotes.append(name)
+    return remotes
+
+
+def _read_symbolic_ref(common_dir: Path, ref_path: str) -> str | None:
+    """Read a symbolic ref from the filesystem (loose ref then packed-refs).
+
+    *ref_path* is e.g. ``refs/remotes/origin/HEAD``.
+    Returns the target ref string if found, else None.
+    """
+    loose = common_dir / ref_path
+    try:
+        content = loose.read_text(encoding="utf-8").strip()
+        if content.startswith("ref: "):
+            return content[len("ref: ") :]
+        return None
+    except OSError:
+        pass
+    packed = common_dir / "packed-refs"
+    try:
+        for line in packed.read_text(encoding="utf-8").splitlines():
+            if line.startswith("#") or line.startswith("^"):
+                continue
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] == ref_path:
+                return None
+    except OSError:
+        pass
+    return None
+
+
+def _read_upstream(common_dir: Path) -> tuple[str, str]:
+    """Detect upstream remote and trunk ref via file reads only.
+
+    Returns ``(remote, trunk_ref)`` e.g. ``("origin", "origin/main")``.
+    """
+    for remote in _read_remotes(common_dir):
+        ref_path = f"refs/remotes/{remote}/HEAD"
+        target = _read_symbolic_ref(common_dir, ref_path)
+        if target and target.startswith("refs/remotes/"):
+            return (remote, target[len("refs/remotes/") :])
+    return ("", "")
+
+
+def read_trunk_info(*, cwd: str) -> tuple[str, str, str]:
+    """Read trunk remote, ref, and branch name via file reads only.
+
+    Returns ``(remote, trunk_ref, trunk_branch)``
+    e.g. ``("origin", "origin/main", "main")``.
+    """
+    git_dir = _resolve_git_dir(cwd)
+    if git_dir is None:
+        return ("", "", "")
+    common_dir = _resolve_common_dir(git_dir)
+    remote, trunk_ref = _read_upstream(common_dir)
+    trunk_branch = trunk_ref.split("/", 1)[-1] if trunk_ref else ""
+    return (remote, trunk_ref, trunk_branch)
 
 
 def _git_output(*, args: list[str], cwd: str) -> str | None:
@@ -262,6 +382,87 @@ def detect_merged(*, cwd: str, branch: str) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         pass
     return False
+
+
+def git_check(*, cwd: str, trunk_ref: str = "", branch: str = "") -> tuple[GitStatus, bool]:
+    """Consolidated git status and merge check.
+
+    Combines ``detect_git_status`` and ``detect_merged`` into one call with
+    fewer subprocess invocations.  Upstream/trunk resolution is done by the
+    caller via file reads — this function only runs the git plumbing that
+    *requires* a subprocess (status, log, merge-base, cherry, diff).
+
+    Returns ``(git_status, is_merged)``.
+    """
+    if _resolve_git_dir(cwd) is None:
+        return (GitStatus.CLEAN, False)
+
+    deadline = time.monotonic() + 4.0
+
+    def _run(args: list[str]) -> subprocess.CompletedProcess[str] | None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        try:
+            return subprocess.run(
+                args,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=min(remaining, 2),
+                creationflags=config.SUBPROCESS_FLAGS,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    # 1. git status --porcelain
+    result = _run(["git", "status", "--porcelain"])
+    if result is None or result.returncode != 0:
+        return (GitStatus.CLEAN, False)
+
+    has_unstaged, has_staged = _parse_porcelain(result.stdout)
+    if has_unstaged:
+        return (GitStatus.UNSTAGED_CHANGES, False)
+    if has_staged:
+        return (GitStatus.STAGED_UNCOMMITTED, False)
+
+    # 2. Check commits ahead of upstream tracking branch
+    git_status = GitStatus.CLEAN
+    result = _run(["git", "log", "--oneline", "@{u}..HEAD"])
+    if result is not None and result.returncode == 0:
+        if result.stdout.strip():
+            git_status = GitStatus.COMMITTED_NOT_PUSHED
+    elif branch and trunk_ref:
+        result = _run(["git", "log", "--oneline", f"{trunk_ref}..HEAD"])
+        if result is not None and result.returncode == 0 and result.stdout.strip():
+            git_status = GitStatus.COMMITTED_NOT_PUSHED
+
+    if git_status == GitStatus.CLEAN and branch:
+        git_status = GitStatus.PUSHED_NOT_MERGED
+
+    # 3. Merge detection (only when there is a branch to check)
+    is_merged = False
+    if branch and trunk_ref:
+        # Strategy 1: regular merge (branch is ancestor of trunk)
+        result = _run(["git", "merge-base", "--is-ancestor", branch, trunk_ref])
+        if result is not None and result.returncode == 0:
+            is_merged = True
+
+        # Strategy 2: rebase merge (all commits have patch-equivalent)
+        if not is_merged:
+            result = _run(["git", "cherry", trunk_ref, branch])
+            if result is not None and result.returncode == 0:
+                unmerged = sum(1 for line in result.stdout.splitlines() if line.startswith("+"))
+                if unmerged == 0:
+                    is_merged = True
+
+        # Strategy 3: squash merge (trees identical)
+        if not is_merged:
+            result = _run(["git", "diff", "--quiet", trunk_ref, branch, "--"])
+            if result is not None and result.returncode == 0:
+                is_merged = True
+
+    return (git_status, is_merged)
 
 
 def cwd_basename(*, cwd: str) -> str:

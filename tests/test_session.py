@@ -7,12 +7,19 @@ from unittest.mock import MagicMock, patch
 
 from claude_dashboard.config import GitStatus
 from claude_dashboard.session import (
+    _read_remotes,
+    _read_symbolic_ref,
+    _read_upstream,
+    _resolve_common_dir,
+    _resolve_git_dir,
     cwd_relative_to_home,
     detect_branch,
     detect_git_status,
     detect_merged,
     discover_sessions,
     encode_project_key,
+    git_check,
+    read_trunk_info,
     validate_pid,
 )
 
@@ -448,3 +455,308 @@ class TestDetectMerged:
             "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
         ):
             assert detect_merged(cwd=str(tmp_path), branch="feature-y") is False
+
+
+class TestResolveGitDir:
+    def test_regular_repo(self, tmp_path):
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "HEAD").write_text("ref: refs/heads/main\n")
+        assert _resolve_git_dir(str(tmp_path)) == git_dir
+
+    def test_worktree_absolute(self, tmp_path):
+        """Worktree .git file with absolute gitdir path."""
+        wt_git_dir = tmp_path / "main" / ".git" / "worktrees" / "feat"
+        wt_git_dir.mkdir(parents=True)
+        wt = tmp_path / "wt" / "feat"
+        wt.mkdir(parents=True)
+        (wt / ".git").write_text(f"gitdir: {wt_git_dir}\n")
+        assert _resolve_git_dir(str(wt)) == wt_git_dir
+
+    def test_worktree_relative(self, tmp_path):
+        """Worktree .git file with relative gitdir path."""
+        main_git = tmp_path / "repo" / ".git"
+        main_git.mkdir(parents=True)
+        wt_git_dir = main_git / "worktrees" / "wt1"
+        wt_git_dir.mkdir(parents=True)
+        wt = tmp_path / "repo" / "git-worktrees" / "wt1"
+        wt.mkdir(parents=True)
+        # Relative path from worktree to its git dir
+        (wt / ".git").write_text(f"gitdir: {wt_git_dir}\n")
+        assert _resolve_git_dir(str(wt)) == wt_git_dir
+
+    def test_non_git_dir(self, tmp_path):
+        assert _resolve_git_dir(str(tmp_path)) is None
+
+    def test_nonexistent_dir(self, tmp_path):
+        assert _resolve_git_dir(str(tmp_path / "nope")) is None
+
+    def test_git_file_bad_content(self, tmp_path):
+        """Malformed .git file returns None."""
+        (tmp_path / ".git").write_text("not a gitdir line\n")
+        assert _resolve_git_dir(str(tmp_path)) is None
+
+    def test_git_file_missing_target(self, tmp_path):
+        """gitdir points to nonexistent directory returns None."""
+        (tmp_path / ".git").write_text("gitdir: /nonexistent/path/abc\n")
+        assert _resolve_git_dir(str(tmp_path)) is None
+
+
+class TestResolveCommonDir:
+    def test_regular_repo(self, tmp_path):
+        assert _resolve_common_dir(tmp_path) == tmp_path
+
+    def test_worktree(self, tmp_path):
+        main_git = tmp_path / "main_git"
+        main_git.mkdir()
+        wt_git = tmp_path / "wt_git"
+        wt_git.mkdir()
+        (wt_git / "commondir").write_text("../main_git\n")
+        assert _resolve_common_dir(wt_git) == main_git.resolve()
+
+    def test_no_commondir_file(self, tmp_path):
+        """No commondir file means git_dir IS the common dir."""
+        assert _resolve_common_dir(tmp_path) == tmp_path
+
+
+class TestReadRemotes:
+    def test_single_remote(self, tmp_path):
+        (tmp_path / "config").write_text(
+            '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@example.com:repo\n'
+        )
+        assert _read_remotes(tmp_path) == ["origin"]
+
+    def test_multiple_remotes(self, tmp_path):
+        (tmp_path / "config").write_text(
+            '[remote "origin"]\n\turl = a\n[remote "upstream"]\n\turl = b\n'
+        )
+        assert _read_remotes(tmp_path) == ["origin", "upstream"]
+
+    def test_no_config(self, tmp_path):
+        assert _read_remotes(tmp_path) == []
+
+    def test_no_remotes_in_config(self, tmp_path):
+        (tmp_path / "config").write_text("[core]\n\tbare = false\n")
+        assert _read_remotes(tmp_path) == []
+
+
+class TestReadSymbolicRef:
+    def test_loose_ref(self, tmp_path):
+        ref_dir = tmp_path / "refs" / "remotes" / "origin"
+        ref_dir.mkdir(parents=True)
+        (ref_dir / "HEAD").write_text("ref: refs/remotes/origin/main\n")
+        result = _read_symbolic_ref(tmp_path, "refs/remotes/origin/HEAD")
+        assert result == "refs/remotes/origin/main"
+
+    def test_sha_ref_returns_none(self, tmp_path):
+        """A ref that's a SHA (not a symref) returns None."""
+        ref_dir = tmp_path / "refs" / "remotes" / "origin"
+        ref_dir.mkdir(parents=True)
+        (ref_dir / "HEAD").write_text("abc123def456789\n")
+        result = _read_symbolic_ref(tmp_path, "refs/remotes/origin/HEAD")
+        assert result is None
+
+    def test_missing_ref(self, tmp_path):
+        assert _read_symbolic_ref(tmp_path, "refs/remotes/origin/HEAD") is None
+
+
+class TestReadUpstream:
+    def test_full_resolution(self, tmp_path):
+        (tmp_path / "config").write_text('[remote "origin"]\n\turl = a\n')
+        ref_dir = tmp_path / "refs" / "remotes" / "origin"
+        ref_dir.mkdir(parents=True)
+        (ref_dir / "HEAD").write_text("ref: refs/remotes/origin/main\n")
+        remote, trunk_ref = _read_upstream(tmp_path)
+        assert remote == "origin"
+        assert trunk_ref == "origin/main"
+
+    def test_no_remote(self, tmp_path):
+        (tmp_path / "config").write_text("[core]\n\tbare = false\n")
+        assert _read_upstream(tmp_path) == ("", "")
+
+    def test_remote_without_head(self, tmp_path):
+        (tmp_path / "config").write_text('[remote "origin"]\n\turl = a\n')
+        assert _read_upstream(tmp_path) == ("", "")
+
+
+class TestReadTrunkInfo:
+    def test_full_resolution(self, tmp_path):
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        (git_dir / "config").write_text('[remote "origin"]\n\turl = a\n')
+        ref_dir = git_dir / "refs" / "remotes" / "origin"
+        ref_dir.mkdir(parents=True)
+        (ref_dir / "HEAD").write_text("ref: refs/remotes/origin/main\n")
+        remote, trunk_ref, trunk_branch = read_trunk_info(cwd=str(tmp_path))
+        assert remote == "origin"
+        assert trunk_ref == "origin/main"
+        assert trunk_branch == "main"
+
+    def test_non_git_dir(self, tmp_path):
+        assert read_trunk_info(cwd=str(tmp_path)) == ("", "", "")
+
+
+class TestDetectBranchWorktree:
+    def test_worktree_reads_from_git_dir(self, tmp_path):
+        """Worktree .git file -> reads HEAD from actual git dir."""
+        main_git = tmp_path / "main" / ".git"
+        main_git.mkdir(parents=True)
+        wt_git_dir = main_git / "worktrees" / "feat"
+        wt_git_dir.mkdir(parents=True)
+        (wt_git_dir / "HEAD").write_text("ref: refs/heads/feat-branch\n")
+        wt = tmp_path / "wt" / "feat"
+        wt.mkdir(parents=True)
+        (wt / ".git").write_text(f"gitdir: {wt_git_dir}\n")
+        assert detect_branch(cwd=str(wt)) == "feat-branch"
+
+    def test_worktree_trunk_filtered(self, tmp_path):
+        """Trunk branch returns empty in worktree."""
+        main_git = tmp_path / "main" / ".git"
+        main_git.mkdir(parents=True)
+        wt_git_dir = main_git / "worktrees" / "main"
+        wt_git_dir.mkdir(parents=True)
+        (wt_git_dir / "HEAD").write_text("ref: refs/heads/main\n")
+        wt = tmp_path / "wt" / "main"
+        wt.mkdir(parents=True)
+        (wt / ".git").write_text(f"gitdir: {wt_git_dir}\n")
+        assert detect_branch(cwd=str(wt), trunk_branch="main") == ""
+
+
+class TestGitCheck:
+    def test_non_git_dir(self, tmp_path):
+        status, merged = git_check(cwd=str(tmp_path))
+        assert status == GitStatus.CLEAN
+        assert merged is False
+
+    def test_unstaged_changes(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=" M file.txt\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            status, merged = git_check(cwd=str(tmp_path))
+        assert status == GitStatus.UNSTAGED_CHANGES
+        assert merged is False
+
+    def test_staged_uncommitted(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout="A  new.txt\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            status, merged = git_check(cwd=str(tmp_path))
+        assert status == GitStatus.STAGED_UNCOMMITTED
+        assert merged is False
+
+    def test_committed_not_pushed(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=""),
+            ("log", "--oneline", "@{u}..HEAD"): _make_run_result(stdout="abc123 feat\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            status, merged = git_check(cwd=str(tmp_path), branch="feat-x")
+        assert status == GitStatus.COMMITTED_NOT_PUSHED
+        assert merged is False
+
+    def test_committed_not_pushed_trunk_fallback(self, tmp_path):
+        """Falls back to trunk ref when upstream tracking is unavailable."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=""),
+            ("log", "--oneline", "@{u}..HEAD"): _make_run_result(returncode=128),
+            ("log", "--oneline", "origin/main..HEAD"): _make_run_result(stdout="abc123 feat\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            status, merged = git_check(cwd=str(tmp_path), branch="feat-x", trunk_ref="origin/main")
+        assert status == GitStatus.COMMITTED_NOT_PUSHED
+
+    def test_pushed_not_merged(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=""),
+            ("log", "--oneline", "@{u}..HEAD"): _make_run_result(stdout=""),
+            ("merge-base", "--is-ancestor"): _make_run_result(returncode=1),
+            ("cherry",): _make_run_result(stdout="+ abc123\n"),
+            ("diff", "--quiet"): _make_run_result(returncode=1),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            status, merged = git_check(cwd=str(tmp_path), branch="feat-x", trunk_ref="origin/main")
+        assert status == GitStatus.PUSHED_NOT_MERGED
+        assert merged is False
+
+    def test_merged_ancestor(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=""),
+            ("log", "--oneline", "@{u}..HEAD"): _make_run_result(stdout=""),
+            ("merge-base", "--is-ancestor"): _make_run_result(returncode=0),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            status, merged = git_check(cwd=str(tmp_path), branch="feat-x", trunk_ref="origin/main")
+        assert merged is True
+
+    def test_merged_rebase(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=""),
+            ("log", "--oneline", "@{u}..HEAD"): _make_run_result(stdout=""),
+            ("merge-base", "--is-ancestor"): _make_run_result(returncode=1),
+            ("cherry",): _make_run_result(stdout="- abc123\n- def456\n"),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            status, merged = git_check(cwd=str(tmp_path), branch="feat-x", trunk_ref="origin/main")
+        assert merged is True
+
+    def test_merged_squash(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=""),
+            ("log", "--oneline", "@{u}..HEAD"): _make_run_result(stdout=""),
+            ("merge-base", "--is-ancestor"): _make_run_result(returncode=1),
+            ("cherry",): _make_run_result(stdout="+ abc123\n"),
+            ("diff", "--quiet"): _make_run_result(returncode=0),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            status, merged = git_check(cwd=str(tmp_path), branch="feat-x", trunk_ref="origin/main")
+        assert merged is True
+
+    def test_no_branch_skips_merge_check(self, tmp_path):
+        """Without a branch, merge detection is skipped entirely."""
+        (tmp_path / ".git").mkdir()
+        responses = {
+            ("status", "--porcelain"): _make_run_result(stdout=""),
+            ("log", "--oneline", "@{u}..HEAD"): _make_run_result(returncode=128),
+        }
+        with patch(
+            "claude_dashboard.session.subprocess.run", side_effect=_git_run_router(responses)
+        ):
+            status, merged = git_check(cwd=str(tmp_path))
+        assert status == GitStatus.CLEAN
+        assert merged is False
+
+    def test_status_failure_returns_clean(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        with patch(
+            "claude_dashboard.session.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="git", timeout=2),
+        ):
+            status, merged = git_check(cwd=str(tmp_path))
+        assert status == GitStatus.CLEAN
+        assert merged is False
