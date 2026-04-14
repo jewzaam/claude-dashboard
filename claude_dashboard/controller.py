@@ -239,6 +239,10 @@ class AppController:
         self._fetch_tick_counter = 0
         self._fetch_tick_interval = max(60 // max(self._settings.poll_interval_seconds, 1), 1)
 
+        # Ghost git rate limiting: check ghost sessions every ~5 min
+        self._ghost_git_tick_counter = 0
+        self._ghost_git_tick_interval = max(300 // max(self._settings.poll_interval_seconds, 1), 1)
+
         # Debounce state (FR-043)
         self._debounce_id: str | None = None
         # Agent permission debounce: agent_id -> after() id
@@ -363,43 +367,51 @@ class AppController:
                 self._sessions.pop(pid, None)
                 logger.info("pruned ghost for deleted directory %s", cwd)
 
-            # 5. Periodic git fetch for pushed-not-merged sessions
+            # 5. Update git state for all sessions.
+            # Live: git_check every tick, fetch every ~60s.
+            # Ghosts: both every ~5 min.
             self._fetch_tick_counter += 1
-            if self._fetch_tick_counter >= self._fetch_tick_interval:
+            fetch_tick = self._fetch_tick_counter >= self._fetch_tick_interval
+            if fetch_tick:
                 self._fetch_tick_counter = 0
-                fetched_cwds: set[str] = set()
-                for entry in self._sessions.values():
-                    if (
-                        not entry.unattached
-                        and entry.git_status == config.GitStatus.PUSHED_NOT_MERGED
-                        and entry.session.cwd not in fetched_cwds
-                    ):
-                        fetched_cwds.add(entry.session.cwd)
-                        if entry.session.cwd not in self._trunk_cache:
-                            self._populate_trunk_cache(entry.session.cwd)
-                        remote = self._trunk_cache[entry.session.cwd].get("remote", "")
-                        if remote:
-                            try:
-                                subprocess.run(
-                                    ["git", "fetch", remote],
-                                    cwd=entry.session.cwd,
-                                    stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL,
-                                    timeout=10,
-                                    creationflags=config.SUBPROCESS_FLAGS,
-                                )
-                            except (OSError, subprocess.TimeoutExpired):
-                                pass
-                # Clear trunk cache after fetch so newly-added remotes are detected
-                self._trunk_cache.clear()
+            self._ghost_git_tick_counter += 1
+            ghost_tick = self._ghost_git_tick_counter >= self._ghost_git_tick_interval
+            if ghost_tick:
+                self._ghost_git_tick_counter = 0
 
-            # 6. Update branch, git status, and merge status for live sessions.
-            # Ghosts are checked once at creation — skip them here to avoid
-            # O(ghosts × git_calls) subprocess overhead every tick (#89).
+            fetched_cwds: set[str] = set()
             for entry in self._sessions.values():
-                if entry.unattached:
+                is_ghost = entry.unattached
+                if is_ghost and not ghost_tick:
                     continue
+
                 cwd = entry.session.cwd
+
+                # Fetch remote refs on the appropriate tick (deduplicated by CWD)
+                should_fetch = ghost_tick if is_ghost else fetch_tick
+                if (
+                    should_fetch
+                    and entry.git_status == config.GitStatus.PUSHED_NOT_MERGED
+                    and cwd not in fetched_cwds
+                ):
+                    fetched_cwds.add(cwd)
+                    if cwd not in self._trunk_cache:
+                        self._populate_trunk_cache(cwd)
+                    remote = self._trunk_cache[cwd].get("remote", "")
+                    if remote:
+                        try:
+                            subprocess.run(
+                                ["git", "fetch", remote],
+                                cwd=cwd,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                timeout=10,
+                                creationflags=config.SUBPROCESS_FLAGS,
+                            )
+                        except (OSError, subprocess.TimeoutExpired):
+                            pass
+
+                # Update branch, git status, and merge status
                 trunk_branch = self._trunk_branch(cwd)
                 entry.branch = detect_branch(cwd=cwd, trunk_branch=trunk_branch)
                 trunk_ref = self._trunk_ref(cwd)
@@ -411,6 +423,10 @@ class AppController:
                 if elapsed <= 0.5:
                     entry.git_status = new_git_status
                     entry.merged = new_merged
+
+            if fetched_cwds:
+                # Clear trunk cache after fetch so newly-added remotes are detected
+                self._trunk_cache.clear()
 
             now = time.monotonic()
             if now - self._daily_cost_last_read >= self._settings.poll_interval_seconds * 10:
@@ -552,6 +568,10 @@ class AppController:
             if saved.get("hidden"):
                 entry.hidden = True
             entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
+            trunk_ref = self._trunk_ref(cwd)
+            entry.git_status, entry.merged = git_check(
+                cwd=cwd, trunk_ref=trunk_ref, branch=entry.branch
+            )
             self._sessions[synthetic_pid] = entry
             logger.debug("created unattached placeholder for %s pid=%d", cwd, synthetic_pid)
 
@@ -575,6 +595,10 @@ class AppController:
         entry.unattached = True
         entry.flagged = flagged
         entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
+        trunk_ref = self._trunk_ref(cwd)
+        entry.git_status, entry.merged = git_check(
+            cwd=cwd, trunk_ref=trunk_ref, branch=entry.branch
+        )
         self._sessions[synthetic_pid] = entry
         logger.info("created ghost for %s pid=%d", cwd, synthetic_pid)
 
