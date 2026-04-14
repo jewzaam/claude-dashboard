@@ -31,10 +31,9 @@ from claude_dashboard.session import (
     cwd_basename,
     cwd_relative_to_home,
     detect_branch,
-    detect_git_status,
-    detect_merged,
-    detect_upstream,
     discover_sessions,
+    git_check,
+    read_trunk_info,
     validate_pid,
 )
 from claude_dashboard.settings import Settings, load_settings, save_settings
@@ -233,8 +232,8 @@ class AppController:
         self._pending_hook_states: dict[str, StatusState] = {}
         self._first_tick_done = False
 
-        # Cached trunk branch name per CWD (e.g. "main"), populated from detect_upstream
-        self._trunk_cache: dict[str, str] = {}
+        # Cached trunk info per CWD, populated from file reads via read_trunk_info
+        self._trunk_cache: dict[str, dict[str, str]] = {}
 
         # Git fetch rate limiting: fetch every N ticks for pushed-not-merged sessions
         self._fetch_tick_counter = 0
@@ -376,7 +375,9 @@ class AppController:
                         and entry.session.cwd not in fetched_cwds
                     ):
                         fetched_cwds.add(entry.session.cwd)
-                        remote, _ = detect_upstream(cwd=entry.session.cwd)
+                        if entry.session.cwd not in self._trunk_cache:
+                            self._populate_trunk_cache(entry.session.cwd)
+                        remote = self._trunk_cache[entry.session.cwd].get("remote", "")
                         if remote:
                             try:
                                 subprocess.run(
@@ -389,24 +390,27 @@ class AppController:
                                 )
                             except (OSError, subprocess.TimeoutExpired):
                                 pass
+                # Clear trunk cache after fetch so newly-added remotes are detected
+                self._trunk_cache.clear()
 
-            # 6. Clear trunk cache so newly-added remotes are detected
-            self._trunk_cache.clear()
-
-            # 7. Update branch, git status, and merge status for live sessions.
+            # 6. Update branch, git status, and merge status for live sessions.
             # Ghosts are checked once at creation — skip them here to avoid
             # O(ghosts × git_calls) subprocess overhead every tick (#89).
             for entry in self._sessions.values():
                 if entry.unattached:
                     continue
                 cwd = entry.session.cwd
-                entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
+                trunk_branch = self._trunk_branch(cwd)
+                entry.branch = detect_branch(cwd=cwd, trunk_branch=trunk_branch)
+                trunk_ref = self._trunk_ref(cwd)
                 start = time.monotonic()
-                new_git_status = detect_git_status(cwd=cwd)
+                new_git_status, new_merged = git_check(
+                    cwd=cwd, trunk_ref=trunk_ref, branch=entry.branch
+                )
                 elapsed = time.monotonic() - start
                 if elapsed <= 0.5:
                     entry.git_status = new_git_status
-                entry.merged = bool(entry.branch and detect_merged(cwd=cwd, branch=entry.branch))
+                    entry.merged = new_merged
 
             now = time.monotonic()
             if now - self._daily_cost_last_read >= self._settings.poll_interval_seconds * 10:
@@ -428,12 +432,26 @@ class AppController:
     # Session lifecycle
     # ------------------------------------------------------------------
 
+    def _populate_trunk_cache(self, cwd: str) -> None:
+        """Populate trunk cache for a CWD using file reads (no subprocess)."""
+        remote, trunk_ref, trunk_branch = read_trunk_info(cwd=cwd)
+        self._trunk_cache[cwd] = {
+            "branch": trunk_branch,
+            "ref": trunk_ref,
+            "remote": remote,
+        }
+
     def _trunk_branch(self, cwd: str) -> str:
         """Return cached trunk branch name for a CWD, populating on first access."""
         if cwd not in self._trunk_cache:
-            _, trunk_ref = detect_upstream(cwd=cwd)
-            self._trunk_cache[cwd] = trunk_ref.split("/", 1)[-1] if trunk_ref else ""
-        return self._trunk_cache[cwd]
+            self._populate_trunk_cache(cwd)
+        return self._trunk_cache[cwd].get("branch", "")
+
+    def _trunk_ref(self, cwd: str) -> str:
+        """Return cached trunk ref (e.g. 'origin/main') for a CWD."""
+        if cwd not in self._trunk_cache:
+            self._populate_trunk_cache(cwd)
+        return self._trunk_cache[cwd].get("ref", "")
 
     def _is_ignored(self, cwd: str) -> bool:
         """Check if a CWD matches the ignore regex setting."""
@@ -453,13 +471,17 @@ class AppController:
         # All new sessions start as IDLE until a hook event updates them.
         entry.container = detect_container(session.pid)
         entry.container = find_window_for_session(session.cwd, entry.container)
-        entry.branch = detect_branch(cwd=session.cwd, trunk_branch=self._trunk_branch(session.cwd))
+        trunk_branch = self._trunk_branch(session.cwd)
+        entry.branch = detect_branch(cwd=session.cwd, trunk_branch=trunk_branch)
+        trunk_ref = self._trunk_ref(session.cwd)
         start = time.monotonic()
-        entry.git_status = detect_git_status(cwd=session.cwd)
+        entry.git_status, entry.merged = git_check(
+            cwd=session.cwd, trunk_ref=trunk_ref, branch=entry.branch
+        )
         elapsed = time.monotonic() - start
         if elapsed > 0.5:
             logger.warning(
-                "pid=%d git status took %.1fs on first detection",
+                "pid=%d git check took %.1fs on first detection",
                 session.pid,
                 elapsed,
             )
