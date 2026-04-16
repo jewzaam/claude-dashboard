@@ -42,7 +42,7 @@ from claude_dashboard.config import GitStatus, StatusState
 from claude_dashboard.models import SessionRow
 from claude_dashboard.tray import create_tray_icon, update_tray_icon
 from claude_dashboard.ui.cost_popup import CostPopup
-from claude_dashboard.ui.main_window import MainWindow, MainWindowCallbacks
+from claude_dashboard.ui.main_window import MainWindow, MainWindowCallbacks, popup_menu_clamped
 from claude_dashboard.ui.settings_window import SettingsWindow
 
 logger = logging.getLogger(__name__)
@@ -189,18 +189,32 @@ def write_vscode_tasks_json(*, cwd: str) -> None:
 class AppController:
     """Central controller — discovers sessions, receives hook events, updates UI."""
 
-    def __init__(self, *, debug: bool = False, quiet: bool = False, ttl_seconds: int = 0):
+    def __init__(
+        self,
+        *,
+        debug: bool = False,
+        quiet: bool = False,
+        ttl_seconds: int = 0,
+        dpi_scale: float | None = None,
+    ):
         self._debug = debug
         self._quiet = quiet
         self._ttl_seconds = ttl_seconds
         self._settings = load_settings()
 
         self._root = tk.Tk()
+
+        # Apply DPI scaling before creating any widgets.
+        from claude_dashboard.dpi import apply_dpi_scaling
+
+        self._dpi_scale = apply_dpi_scaling(self._root, override=dpi_scale)
+
         self._root.withdraw()
 
         self._main_window = MainWindow(
             self._root,
             self._settings,
+            dpi_scale=self._dpi_scale,
             callbacks=MainWindowCallbacks(
                 on_row_left_click=self._on_row_left_click,
                 on_row_double_click=self._on_row_double_click,
@@ -969,7 +983,7 @@ class AppController:
         self._context_menu.add_command(label="Clear State", command=clear_state)
 
         self._context_menu_open = True
-        self._context_menu.tk_popup(x, y)
+        popup_menu_clamped(self._context_menu, x=x, y=y)
 
     def _show_ghost_context_menu(self, session: SessionInfo, x: int, y: int):
         """Show context menu for ghost (unattached) sessions."""
@@ -1011,7 +1025,7 @@ class AppController:
         self._context_menu.add_command(label="Dismiss", command=dismiss)
 
         self._context_menu_open = True
-        self._context_menu.tk_popup(x, y)
+        popup_menu_clamped(self._context_menu, x=x, y=y)
 
     def _launch_vscode(self, *, folder: str):
         """Launch VS Code for the given folder."""
@@ -1149,7 +1163,7 @@ class AppController:
         self._build_sessions_menu(self._context_menu)
 
         self._context_menu_open = True
-        self._context_menu.tk_popup(x, y)
+        popup_menu_clamped(self._context_menu, x=x, y=y)
 
     # ------------------------------------------------------------------
     # Tray hidden sessions
