@@ -21,6 +21,7 @@ class TestGrowUpPositionSave:
                 win = MainWindow.__new__(MainWindow)
                 win._window = toplevel
                 win._settings = settings
+                win._dpi_scale = 1.0
                 win._grow_up_bottom_y = bottom_y
                 win._tracked_x = x
                 win._tracked_y = y
@@ -107,6 +108,7 @@ class TestTrackedBottomEdge:
             toplevel = MagicMock()
             win._window = toplevel
             win._settings = settings
+            win._dpi_scale = 1.0
             win._shaded = False
             win._dragged = False
             win._rows = {"fake": {"frame": MagicMock()}}
@@ -162,6 +164,7 @@ class TestTrackedBottomEdge:
             toplevel = MagicMock()
             win._window = toplevel
             win._settings = settings
+            win._dpi_scale = 1.0
             win._shaded = True
             win._dragged = False
             win._rows = {
@@ -217,6 +220,7 @@ class TestTrackedBottomEdge:
             toplevel = MagicMock()
             win._window = toplevel
             win._settings = settings
+            win._dpi_scale = 1.0
             win._drag_start_x = 0
             win._drag_start_y = 0
             win._dragged = True
@@ -261,6 +265,7 @@ class TestGeometryBeforePacking:
             toplevel = MagicMock()
             win._window = toplevel
             win._settings = settings
+            win._dpi_scale = 1.0
             win._shaded = False
             win._rows = {}
             win._row_order = []

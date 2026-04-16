@@ -44,6 +44,12 @@ def main():
         "--ttl", type=int, default=0, help="auto-quit after N seconds (0 = run forever)"
     )
     parser.add_argument("--log-file", type=str, default=None, help="write log output to file")
+    parser.add_argument(
+        "--scale",
+        type=float,
+        default=None,
+        help="DPI scale factor (default: auto-detect, or set CLAUDE_DASHBOARD_SCALE env var)",
+    )
     args = parser.parse_args()
 
     log_fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -89,7 +95,9 @@ def main():
     # Controller import deferred until args are parsed
     from claude_dashboard.controller import AppController
 
-    app = AppController(debug=args.debug, quiet=args.quiet, ttl_seconds=args.ttl)
+    app = AppController(
+        debug=args.debug, quiet=args.quiet, ttl_seconds=args.ttl, dpi_scale=args.scale
+    )
     app.run()
 
 

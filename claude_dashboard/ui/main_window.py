@@ -124,6 +124,135 @@ def _contrast_text_for_bg(bg_hex: str) -> str:
     return _TEXT_LIGHT if ratio_light > ratio_dark else _TEXT_DARK
 
 
+def _detect_monitor_bounds() -> list[tuple[int, int, int, int]]:
+    """Detect per-monitor logical bounds from xrandr.
+
+    With Mutter's ``xwayland-native-scaling``, XWayland outputs report native
+    resolution but are positioned at logical coordinates.  The actual visible
+    area per monitor is the logical resolution, not the native one.
+
+    Returns a list of (x, y, right, bottom) tuples in the coordinate space
+    used by Tkinter events.  Returns an empty list if detection fails.
+    """
+    import re
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["xrandr"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            creationflags=config.SUBPROCESS_FLAGS,
+        )
+        if result.returncode != 0:
+            return []
+    except Exception:
+        return []
+
+    # Parse connected outputs: "DP-7 connected 5120x2880+0+0"
+    outputs: list[tuple[int, int, int, int]] = []  # (x, y, native_w, native_h)
+    for line in result.stdout.splitlines():
+        m = re.match(r"\S+ connected.*?(\d+)x(\d+)\+(\d+)\+(\d+)", line)
+        if m:
+            nw, nh = int(m.group(1)), int(m.group(2))
+            ox, oy = int(m.group(3)), int(m.group(4))
+            outputs.append((ox, oy, nw, nh))
+
+    if not outputs:
+        return []
+
+    # Sort by x position to detect gaps between adjacent monitors.
+    outputs.sort()
+
+    # Detect native scaling: if outputs overlap (position gap < native width),
+    # XWayland native scaling is active.  The logical width of a monitor is
+    # the gap to the next monitor's position.
+    bounds: list[tuple[int, int, int, int]] = []
+    for i, (ox, oy, nw, nh) in enumerate(outputs):
+        if i + 1 < len(outputs):
+            next_ox = outputs[i + 1][0]
+            logical_w = next_ox - ox
+        else:
+            # Last (or only) monitor: infer from first monitor if possible
+            if len(outputs) > 1:
+                first_gap = outputs[1][0] - outputs[0][0]
+                scale = outputs[0][2] / first_gap if first_gap > 0 else 1
+                logical_w = round(nw / scale) if scale > 1 else nw
+            else:
+                # Single monitor: check if native > position span
+                logical_w = nw  # default: no scaling
+
+        if logical_w > 0 and logical_w < nw:
+            scale = nw / logical_w
+            logical_h = round(nh / scale)
+        else:
+            logical_h = nh
+            logical_w = nw
+
+        bounds.append((ox, oy, ox + logical_w, oy + logical_h))
+
+    if bounds:
+        logger.debug("monitor logical bounds: %s", bounds)
+    return bounds
+
+
+# Module-level cache — populated on first popup_menu_clamped call
+_monitor_bounds: list[tuple[int, int, int, int]] | None = None
+
+
+def _get_screen_bounds(x: int, y: int, *, fallback_w: int, fallback_h: int) -> tuple[int, int]:
+    """Return (right, bottom) boundary for the monitor containing (x, y)."""
+    global _monitor_bounds
+    if _monitor_bounds is None:
+        _monitor_bounds = _detect_monitor_bounds() if config.IS_LINUX else []
+
+    for mx, my, mr, mb in _monitor_bounds:
+        if mx <= x < mr and my <= y < mb:
+            return mr, mb
+
+    # Fallback: use winfo screen dimensions
+    return fallback_w, fallback_h
+
+
+def popup_menu_clamped(menu: tk.Menu, *, x: int, y: int) -> None:
+    """Post a popup menu, clamped to the monitor containing the click point.
+
+    On XWayland with native scaling, ``winfo_screenwidth/height()`` returns
+    the total native virtual screen, which is larger than any single
+    monitor's visible area.  We detect per-monitor logical bounds from
+    xrandr and clamp to those instead.
+    """
+    menu.update_idletasks()
+    try:
+        mw = menu.winfo_reqwidth()
+        mh = menu.winfo_reqheight()
+    except tk.TclError:
+        mw, mh = 0, 0
+
+    sr, sb = _get_screen_bounds(
+        x, y, fallback_w=menu.winfo_screenwidth(), fallback_h=menu.winfo_screenheight()
+    )
+
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "popup_menu: click=(%d,%d) menu=(%d,%d) bounds=(%d,%d)",
+            x,
+            y,
+            mw,
+            mh,
+            sr,
+            sb,
+        )
+
+    if mw > 0 and x + mw > sr:
+        x = max(0, sr - mw)
+    if mh > 0 and y + mh > sb:
+        y = max(0, sb - mh)
+
+    menu.tk_popup(x, y)
+
+
 class MainWindow:
     """Dashboard window with a vertical stack of session rows."""
 
@@ -133,10 +262,12 @@ class MainWindow:
         settings: Settings,
         *,
         callbacks: MainWindowCallbacks | None = None,
+        dpi_scale: float = 1.0,
     ):
         cb = callbacks or MainWindowCallbacks()
         self._root = root
         self._settings = settings
+        self._dpi_scale = dpi_scale
         self._on_row_left_click = cb.on_row_left_click
         self._on_row_double_click = cb.on_row_double_click
         self._on_row_middle_click = cb.on_row_middle_click
@@ -241,6 +372,12 @@ class MainWindow:
         self._icon_size = max(line_height, _ICON_MIN_SIZE)
         self._emoji_img_size = max(line_height, _EMOJI_MIN_SIZE)
 
+    def _s(self, px: int) -> int:
+        """Scale a pixel value by the DPI scale factor."""
+        if self._dpi_scale == 1.0:
+            return px
+        return round(px * self._dpi_scale)
+
     # ------------------------------------------------------------------
     # Title bar
     # ------------------------------------------------------------------
@@ -255,7 +392,7 @@ class MainWindow:
         frame = tk.Frame(
             self._frame,
             bg=bg,
-            height=self._settings.row_height,
+            height=self._s(self._settings.row_height),
             cursor="hand2",
             highlightbackground="#555555",
             highlightthickness=_HIGHLIGHT_THICKNESS,
@@ -469,13 +606,14 @@ class MainWindow:
         position (never stale winfo), and sets the geometry.
         """
         self._window.update_idletasks()
-        title_bar_height = self._settings.row_height + _ROW_PAD_Y * 2
+        row_h = self._s(self._settings.row_height)
+        title_bar_height = row_h + _ROW_PAD_Y * 2
         if self._shaded:
             new_height = title_bar_height
         elif row_count > 0:
-            new_height = title_bar_height + row_count * (self._settings.row_height + _ROW_PAD_Y * 2)
+            new_height = title_bar_height + row_count * (row_h + _ROW_PAD_Y * 2)
         else:
-            new_height = title_bar_height + self._settings.row_height + _ROW_PAD_Y * 2
+            new_height = title_bar_height + row_h + _ROW_PAD_Y * 2
 
         x = self._tracked_x if self._tracked_x is not None else self._window.winfo_x()
         if self._settings.grow_up and self._grow_up_bottom_y is not None:
@@ -486,7 +624,7 @@ class MainWindow:
             if self._settings.grow_up and old_height > 0:
                 y = y + old_height - new_height
 
-        geom = f"{self._settings.row_width}x{new_height}+{x}+{y}"
+        geom = f"{self._s(self._settings.row_width)}x{new_height}+{x}+{y}"
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "apply_geometry: shaded=%s rows=%d tracked=(%s,%s) bottom=%s"
@@ -542,14 +680,12 @@ class MainWindow:
             self._cost_popup = None
 
     def _on_title_bar_right_click(self, event: Any):
-        """Show Sessions submenu + Settings / Restart / Quit on title bar right-click."""
+        """Show session visibility toggles + Settings / Restart / Quit on title bar right-click."""
         self._title_menu.delete(0, tk.END)
 
-        # Sessions submenu with visibility checkboxes
-        sessions_submenu = tk.Menu(self._title_menu, tearoff=0)
+        # Session visibility checkboxes (flat — cascades bypass popup clamping)
         if self._on_build_sessions_menu:
-            self._on_build_sessions_menu(sessions_submenu)
-        self._title_menu.add_cascade(label="Sessions", menu=sessions_submenu)
+            self._on_build_sessions_menu(self._title_menu)
 
         self._title_menu.add_separator()
         self._title_menu.add_command(
@@ -569,7 +705,7 @@ class MainWindow:
             label="Quit",
             command=self._on_quit if self._on_quit else lambda: None,
         )
-        self._title_menu.tk_popup(event.x_root, event.y_root)
+        popup_menu_clamped(self._title_menu, x=event.x_root, y=event.y_root)
         return "break"
 
     def update_title_bar(
@@ -617,7 +753,7 @@ class MainWindow:
 
         # Update title bar height
         try:
-            self._title_bar.configure(height=self._settings.row_height)
+            self._title_bar.configure(height=self._s(self._settings.row_height))
         except tk.TclError:
             pass
 
@@ -678,9 +814,9 @@ class MainWindow:
                         x,
                         y,
                     )
-                self._set_geometry(f"{settings.row_width}x1+{x}+{y}")
+                self._set_geometry(f"{self._s(settings.row_width)}x1+{x}+{y}")
             else:
-                self._window.geometry(f"{settings.row_width}x1")
+                self._window.geometry(f"{self._s(settings.row_width)}x1")
 
     # ------------------------------------------------------------------
     # Window visibility
@@ -767,7 +903,7 @@ class MainWindow:
 
     def _on_resize_start(self, event: Any):
         self._resize_start_x_root = event.x_root
-        self._resize_start_width = self._settings.row_width
+        self._resize_start_width = self._s(self._settings.row_width)
         self._dragged = False
         return "break"
 
@@ -776,8 +912,11 @@ class MainWindow:
         if abs(dx) > self._DRAG_THRESHOLD:
             self._dragged = True
         if self._dragged:
-            new_width = max(self._MIN_WIDTH, self._resize_start_width + dx)
-            self._settings.row_width = new_width
+            new_width = max(self._s(self._MIN_WIDTH), self._resize_start_width + dx)
+            # Store unscaled value for persistence
+            self._settings.row_width = (
+                round(new_width / self._dpi_scale) if self._dpi_scale != 1.0 else new_width
+            )
             x = self._tracked_x if self._tracked_x is not None else self._window.winfo_x()
             y = self._tracked_y if self._tracked_y is not None else self._window.winfo_y()
             h = self._window.winfo_height()
@@ -990,7 +1129,9 @@ class MainWindow:
             emoji_state = state
             container_text = self._container_label(container)
 
-        row_frame = tk.Frame(self._frame, bg=bg, height=self._settings.row_height, cursor="hand2")
+        row_frame = tk.Frame(
+            self._frame, bg=bg, height=self._s(self._settings.row_height), cursor="hand2"
+        )
         row_frame.pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
         row_frame.pack_propagate(False)
 
@@ -1159,7 +1300,7 @@ class MainWindow:
 
         # Update row height if settings changed
         try:
-            row["frame"].configure(height=self._settings.row_height)
+            row["frame"].configure(height=self._s(self._settings.row_height))
         except tk.TclError:
             pass
 
