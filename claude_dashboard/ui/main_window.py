@@ -378,6 +378,18 @@ class MainWindow:
             return px
         return round(px * self._dpi_scale)
 
+    def _row_height(self) -> int:
+        """Effective row height in pixels, guaranteed to fit rendered content.
+
+        When the system already applies DPI scaling (e.g. GNOME 200% on
+        Wayland), tk scaling is high but _dpi_scale is 1.0 — so _s() is a
+        no-op while fonts render large.  This method ensures the row height
+        is at least as tall as the largest content element plus padding.
+        """
+        scaled = self._s(self._settings.row_height)
+        content_min = max(self._icon_size, self._emoji_img_size) + 6
+        return max(scaled, content_min)
+
     # ------------------------------------------------------------------
     # Title bar
     # ------------------------------------------------------------------
@@ -392,7 +404,7 @@ class MainWindow:
         frame = tk.Frame(
             self._frame,
             bg=bg,
-            height=self._s(self._settings.row_height),
+            height=self._row_height(),
             cursor="hand2",
             highlightbackground="#555555",
             highlightthickness=_HIGHLIGHT_THICKNESS,
@@ -606,7 +618,7 @@ class MainWindow:
         position (never stale winfo), and sets the geometry.
         """
         self._window.update_idletasks()
-        row_h = self._s(self._settings.row_height)
+        row_h = self._row_height()
         title_bar_height = row_h + _ROW_PAD_Y * 2
         if self._shaded:
             new_height = title_bar_height
@@ -753,7 +765,7 @@ class MainWindow:
 
         # Update title bar height
         try:
-            self._title_bar.configure(height=self._s(self._settings.row_height))
+            self._title_bar.configure(height=self._row_height())
         except tk.TclError:
             pass
 
@@ -1129,9 +1141,7 @@ class MainWindow:
             emoji_state = state
             container_text = self._container_label(container)
 
-        row_frame = tk.Frame(
-            self._frame, bg=bg, height=self._s(self._settings.row_height), cursor="hand2"
-        )
+        row_frame = tk.Frame(self._frame, bg=bg, height=self._row_height(), cursor="hand2")
         row_frame.pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
         row_frame.pack_propagate(False)
 
@@ -1300,7 +1310,7 @@ class MainWindow:
 
         # Update row height if settings changed
         try:
-            row["frame"].configure(height=self._s(self._settings.row_height))
+            row["frame"].configure(height=self._row_height())
         except tk.TclError:
             pass
 

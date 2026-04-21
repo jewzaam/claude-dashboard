@@ -3,20 +3,35 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from claude_dashboard.dpi import (
+    _BASELINE_DPI,
     _screen_physical_dpi,
     _xft_dpi,
     apply_dpi_scaling,
     detect_scale_factor,
 )
 
+_BASELINE_SCALING = _BASELINE_DPI / 72.0
 
-def _mock_root(*, screen_px=1920, screen_mm=508, tk_scaling=1.333):
-    """Create a mock Tk root with screen metrics."""
+
+def _mock_root(*, screen_px=1920, screen_mm=508, tk_scaling=_BASELINE_SCALING):
+    """Create a mock Tk root with screen metrics and stateful tk scaling."""
     root = MagicMock()
     root.winfo_screenwidth.return_value = screen_px
     root.winfo_screenmmwidth.return_value = screen_mm
-    root.tk.call.return_value = tk_scaling
+    state = {"scaling": tk_scaling}
+
+    def _tk_call(*args):
+        if args == ("tk", "scaling"):
+            return state["scaling"]
+        if len(args) == 3 and args[:2] == ("tk", "scaling"):
+            state["scaling"] = args[2]
+            return None
+        return None
+
+    root.tk.call = MagicMock(side_effect=_tk_call)
     return root
 
 
@@ -96,7 +111,7 @@ class TestDetectScaleFactor:
     @patch("claude_dashboard.dpi._screen_physical_dpi", return_value=192.0)
     @patch("claude_dashboard.dpi._xft_dpi", return_value=None)
     def test_hidpi_screen_triggers_scaling(self, _xft, _screen):
-        root = _mock_root(tk_scaling=1.333)  # 96 DPI
+        root = _mock_root()  # 96 DPI baseline
         factor = detect_scale_factor(root)
         assert factor == 2.0
 
@@ -105,7 +120,7 @@ class TestDetectScaleFactor:
     @patch("claude_dashboard.dpi._screen_physical_dpi", return_value=96.0)
     @patch("claude_dashboard.dpi._xft_dpi", return_value=None)
     def test_normal_dpi_no_scaling(self, _xft, _screen):
-        root = _mock_root(tk_scaling=1.333)
+        root = _mock_root()
         assert detect_scale_factor(root) == 1.0
 
     @patch.dict("os.environ", {}, clear=True)
@@ -131,31 +146,73 @@ class TestDetectScaleFactor:
     @patch("claude_dashboard.dpi._xft_dpi", return_value=None)
     def test_below_threshold_no_scaling(self, _xft, _screen):
         """DPI just slightly above baseline should not trigger scaling."""
-        root = _mock_root(tk_scaling=1.333)
+        root = _mock_root()
         assert detect_scale_factor(root) == 1.0
 
 
 class TestApplyDpiScaling:
     def test_override_applied(self):
-        root = _mock_root(tk_scaling=1.333)
+        root = _mock_root()
         factor = apply_dpi_scaling(root, override=2.0)
-        assert factor == 2.0
-        root.tk.call.assert_any_call("tk", "scaling", 1.333 * 2.0)
+        assert factor == pytest.approx(2.0)
+        root.tk.call.assert_any_call("tk", "scaling", _BASELINE_SCALING * 2.0)
 
     def test_near_unity_skipped(self):
-        root = _mock_root(tk_scaling=1.333)
+        root = _mock_root()
         factor = apply_dpi_scaling(root, override=1.02)
         assert factor == 1.0
 
     @patch("claude_dashboard.dpi.detect_scale_factor", return_value=1.5)
     def test_auto_detect_applied(self, _detect):
-        root = _mock_root(tk_scaling=1.333)
+        root = _mock_root()
         factor = apply_dpi_scaling(root)
-        assert factor == 1.5
-        root.tk.call.assert_any_call("tk", "scaling", 1.333 * 1.5)
+        assert factor == pytest.approx(1.5)
+        root.tk.call.assert_any_call("tk", "scaling", _BASELINE_SCALING * 1.5)
 
     @patch("claude_dashboard.dpi.detect_scale_factor", return_value=1.0)
     def test_no_scaling_needed(self, _detect):
-        root = _mock_root(tk_scaling=1.333)
+        root = _mock_root()
         factor = apply_dpi_scaling(root)
         assert factor == 1.0
+
+    @patch("claude_dashboard.dpi.detect_scale_factor", return_value=1.0)
+    def test_system_already_scaled(self, _detect):
+        """System set tk scaling high (e.g. GNOME 200%) — detect returns 1.0
+        but effective factor must reflect actual scaling."""
+        root = _mock_root(tk_scaling=_BASELINE_SCALING * 2.0)
+        factor = apply_dpi_scaling(root)
+        assert factor == pytest.approx(2.0)
+
+
+class TestRowHeightScaling:
+    """Verify _row_height() ensures rows fit content when system DPI is high."""
+
+    def _make_window(self, *, dpi_scale, icon_size, emoji_size, row_height=28):
+        win = MagicMock()
+        win._dpi_scale = dpi_scale
+        win._settings = MagicMock()
+        win._settings.row_height = row_height
+        win._icon_size = icon_size
+        win._emoji_img_size = emoji_size
+        from claude_dashboard.ui.main_window import MainWindow
+
+        win._s = MainWindow._s.__get__(win)
+        win._row_height = MainWindow._row_height.__get__(win)
+        return win
+
+    def test_normal_dpi_uses_settings(self):
+        win = self._make_window(dpi_scale=1.0, icon_size=16, emoji_size=12, row_height=28)
+        assert win._row_height() == 28
+
+    def test_scaled_dpi_uses_scaled_settings(self):
+        win = self._make_window(dpi_scale=2.0, icon_size=24, emoji_size=24, row_height=28)
+        assert win._row_height() == 56
+
+    def test_system_scaled_fonts_expand_row(self):
+        """System DPI high, _dpi_scale=1.0 — row must grow to fit large content."""
+        win = self._make_window(dpi_scale=1.0, icon_size=36, emoji_size=36, row_height=28)
+        assert win._row_height() == 42  # 36 + 6 padding
+
+    def test_content_min_never_shrinks_row(self):
+        win = self._make_window(dpi_scale=1.0, icon_size=10, emoji_size=10, row_height=28)
+        assert win._row_height() == 28
