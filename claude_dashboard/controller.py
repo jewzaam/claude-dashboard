@@ -15,7 +15,7 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
-from typing import Callable
+
 
 from claude_dashboard import config
 from claude_dashboard.file_utils import atomic_write_json
@@ -276,10 +276,6 @@ class AppController:
         # Tray
         self._tray_icon = create_tray_icon(
             on_toggle=lambda icon, item: self._root.after(0, self._toggle_window),
-            on_settings=lambda icon, item: self._root.after(0, self._open_settings),
-            on_restart=lambda icon, item: self._root.after(0, self._restart),
-            on_quit=lambda icon, item: self._root.after(0, self._quit),
-            get_hidden_sessions=self._get_hidden_sessions,
         )
         self._tray_state: StatusState | None = None
 
@@ -1129,10 +1125,12 @@ class AppController:
     # ------------------------------------------------------------------
 
     def _build_sessions_menu(self, menu: tk.Menu):
-        """Populate a menu with session visibility checkboxes."""
+        """Populate a menu with session visibility checkboxes (live sessions only)."""
         self._session_vars.clear()
         all_entries = self._sorted_entries()
         for entry in all_entries:
+            if entry.unattached:
+                continue
             var = tk.BooleanVar(value=not entry.hidden)
             self._session_vars.append(var)
             display_name = cwd_relative_to_home(cwd=entry.session.cwd)
@@ -1164,31 +1162,6 @@ class AppController:
 
         self._context_menu_open = True
         popup_menu_clamped(self._context_menu, x=x, y=y)
-
-    # ------------------------------------------------------------------
-    # Tray hidden sessions
-    # ------------------------------------------------------------------
-
-    def _unhide_session(self, pid: int):
-        entry = self._sessions.get(pid)
-        if entry:
-            entry.hidden = False
-            logger.info("pid=%d unhidden via tray menu", pid)
-            self._save_session_state()
-            self._root.after(0, self._refresh_ui)
-
-    def _get_hidden_sessions(self) -> list[tuple[str, Callable]]:
-        """Return (display_name, unhide_callback) for each hidden session."""
-        result = []
-        for entry in list(self._sessions.values()):
-            if entry.hidden:
-                name = cwd_relative_to_home(cwd=entry.session.cwd)
-
-                def unhide(icon, item, p=entry.session.pid):
-                    self._unhide_session(p)
-
-                result.append((name, unhide))
-        return result
 
     # ------------------------------------------------------------------
     # Session state persistence (restart continuity)

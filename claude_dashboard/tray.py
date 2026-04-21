@@ -64,42 +64,23 @@ def generate_icon_image(
 def create_tray_icon(
     *,
     on_toggle: Callable,
-    on_settings: Callable,
-    on_restart: Callable,
-    on_quit: Callable,
-    get_hidden_sessions: Callable[[], list[tuple[str, Callable]]],
 ) -> Any:
     """Create and return a pystray Icon (not yet running).
 
     on_toggle is called on left-click to toggle dashboard visibility.
-    get_hidden_sessions returns a list of (display_name, unhide_callback) tuples.
+    No menu — on Linux/Wayland AppIndicator, menus are unreliable.
     """
     import pystray
 
     icon_image = generate_icon_image()
 
-    def _build_menu():
-        items: list = [
-            pystray.MenuItem("Toggle", on_toggle, default=True),
-        ]
-        hidden = get_hidden_sessions()
-        if hidden:
-            items.append(pystray.Menu.SEPARATOR)
-            for name, cb in hidden:
-                items.append(pystray.MenuItem(f"Unhide: {name}", cb))
-        items.append(pystray.Menu.SEPARATOR)
-        items.append(pystray.MenuItem("Settings", on_settings))
-        items.append(pystray.MenuItem("Restart", on_restart))
-        items.append(pystray.MenuItem("Quit", on_quit))
-        return items
-
-    menu = pystray.Menu(lambda: _build_menu())
-
     icon = pystray.Icon(
         name=TRAY_ICON_NAME,
         icon=icon_image,
         title=TRAY_ICON_NAME,
-        menu=menu,
+        menu=pystray.Menu(
+            pystray.MenuItem("Toggle", on_toggle, default=True, visible=False),
+        ),
     )
     return icon
 

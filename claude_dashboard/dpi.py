@@ -121,24 +121,33 @@ def apply_dpi_scaling(root: tk.Tk, *, override: float | None = None) -> float:
 
     Must be called after ``tk.Tk()`` but before creating widgets.
 
-    Returns the applied scale factor (1.0 if no adjustment was made).
+    Returns the effective scale factor — the ratio of the final tk scaling
+    to the 96 DPI baseline (1.333).  This accounts for BOTH system-level
+    scaling (e.g. GNOME 200% on Wayland setting tk scaling high before we
+    run) and any additional correction we apply.
     """
     current = float(root.tk.call("tk", "scaling"))
     logger.debug("default tk scaling: %.3f (%.0f DPI)", current, current * 72)
 
     factor = override if override is not None else detect_scale_factor(root)
 
-    if abs(factor - 1.0) < 0.05:
-        logger.debug("scale factor ~1.0, no adjustment needed")
+    if abs(factor - 1.0) >= 0.05:
+        new_scaling = current * factor
+        root.tk.call("tk", "scaling", new_scaling)
+        logger.info(
+            "applied DPI scale %.2fx (tk scaling %.3f → %.3f, effective DPI %.0f)",
+            factor,
+            current,
+            new_scaling,
+            new_scaling * 72,
+        )
+
+    baseline = _BASELINE_DPI / 72.0
+    final_scaling = float(root.tk.call("tk", "scaling"))
+    effective = final_scaling / baseline
+    if effective < _SCALE_THRESHOLD:
+        logger.debug("effective scale %.2f below threshold, treating as 1.0", effective)
         return 1.0
 
-    new_scaling = current * factor
-    root.tk.call("tk", "scaling", new_scaling)
-    logger.info(
-        "applied DPI scale %.2fx (tk scaling %.3f → %.3f, effective DPI %.0f)",
-        factor,
-        current,
-        new_scaling,
-        new_scaling * 72,
-    )
-    return factor
+    logger.info("effective pixel scale factor: %.2f", effective)
+    return effective
