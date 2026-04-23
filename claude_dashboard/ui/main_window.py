@@ -297,6 +297,7 @@ class MainWindow:
         self._force_resize = False
         self._shaded = False
         self._last_highest_state_color: str = ""
+        self._last_highest_git_status: GitStatus | None = None
         self._icon_cache: dict[tuple, tk.PhotoImage] = {}
         self._emoji_image_cache: dict[tuple, tk.PhotoImage] = {}
         self._icon_size = _ICON_MIN_SIZE  # updated by _update_icon_size()
@@ -558,9 +559,6 @@ class MainWindow:
     def _apply_title_bar_style(self):
         """Apply title bar bg/fg/icon based on current shade state and last known priority."""
         color = self._last_highest_state_color
-        # When shaded, suppress "ready" — only show states requiring user action
-        if color and color.lower() == self._settings.color_ready.lower():
-            color = ""
         if self._shaded and color:
             self._title_bg = color
         else:
@@ -588,16 +586,17 @@ class MainWindow:
         self._title_5h_label.configure(fg=fg)
         self._title_7d_label.configure(fg=fg)
 
-        # Eye icon: hidden when shaded, always green when expanded
+        # Eye icon: reflects highest-priority git status across all visible rows
         icon_size = self._icon_size
-        if self._shaded:
-            blank = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
-            self._title_icon_image = _pil_to_photoimage(blank)
-        else:
-            icon_rgb = config.hex_to_rgb(hex_color=config.DEFAULT_COLOR_READY)
+        git_color = self._title_git_status_color()
+        if git_color:
+            icon_rgb = config.hex_to_rgb(hex_color=git_color)
             self._title_icon_image = _pil_to_photoimage(
                 generate_icon_image(color=icon_rgb).resize((icon_size, icon_size))
             )
+        else:
+            blank = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
+            self._title_icon_image = _pil_to_photoimage(blank)
         self._title_icon.configure(image=self._title_icon_image)
 
         # Update emoji image bg if using PNG
@@ -729,9 +728,11 @@ class MainWindow:
         hidden_live: int = 0,
         hidden_ghost: int = 0,
         highest_state_color: str = "",
+        highest_git_status: "GitStatus | None" = None,
     ):
         """Update the title bar with current cost, limit data, and state icon."""
         self._last_highest_state_color = highest_state_color
+        self._last_highest_git_status = highest_git_status
         self._apply_title_bar_style()
         fg = self._title_fg
 
@@ -1115,15 +1116,23 @@ class MainWindow:
 
     def _git_status_color(self, row: SessionRow) -> str | None:
         """Return color for git working tree status (excludes manual flag)."""
-        if row.git_status == GitStatus.UNSTAGED_CHANGES:
+        return self._git_status_color_for(row.git_status)
+
+    def _git_status_color_for(self, git_status: GitStatus | None) -> str | None:
+        """Return color hex for a GitStatus value, or None if clean/absent."""
+        if git_status == GitStatus.UNSTAGED_CHANGES:
             return self._settings.color_flag_unstaged
-        if row.git_status == GitStatus.STAGED_UNCOMMITTED:
+        if git_status == GitStatus.STAGED_UNCOMMITTED:
             return self._settings.color_flag_staged
-        if row.git_status == GitStatus.COMMITTED_NOT_PUSHED:
+        if git_status == GitStatus.COMMITTED_NOT_PUSHED:
             return self._settings.color_flag_unpushed
-        if row.git_status == GitStatus.PUSHED_NOT_MERGED:
+        if git_status == GitStatus.PUSHED_NOT_MERGED:
             return self._settings.color_flag_unmerged
         return None
+
+    def _title_git_status_color(self) -> str | None:
+        """Return color for the title bar git status eye icon."""
+        return self._git_status_color_for(self._last_highest_git_status)
 
     def _add_row(self, row: SessionRow):
         session = row.session

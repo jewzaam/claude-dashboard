@@ -65,6 +65,14 @@ _ACTIONABLE_STATES = frozenset(
     }
 )
 
+_TITLE_GIT_PRIORITY = {
+    GitStatus.UNSTAGED_CHANGES: 4,
+    GitStatus.STAGED_UNCOMMITTED: 3,
+    GitStatus.PUSHED_NOT_MERGED: 2,
+    GitStatus.COMMITTED_NOT_PUSHED: 1,
+    GitStatus.CLEAN: 5,
+}
+
 _DEBOUNCE_MS = 300  # Debounce window for state display updates (FR-043)
 
 
@@ -875,6 +883,7 @@ class AppController:
         active = sum(1 for e in all_entries if not e.hidden and not e.unattached)
         hidden_live = sum(1 for e in all_entries if e.hidden and not e.unattached)
         hidden_ghost = sum(1 for e in all_entries if e.hidden and e.unattached)
+        highest_git = self._highest_title_git_status(visible_states)
         self._main_window.update_title_bar(
             daily_cost=self._daily_cost,
             limits=self._usage_limits,
@@ -882,6 +891,7 @@ class AppController:
             hidden_live=hidden_live,
             hidden_ghost=hidden_ghost,
             highest_state_color=self._tray_color_hex_for_state(highest),
+            highest_git_status=highest_git,
         )
 
         self._save_session_state()
@@ -1352,6 +1362,23 @@ class AppController:
             p = _STATE_PRIORITY.get(state, 999)
             if p < best_priority:
                 best = state
+                best_priority = p
+        return best
+
+    @staticmethod
+    def _highest_title_git_status(
+        session_states: list[SessionRow],
+    ) -> GitStatus | None:
+        """Pick the highest-priority git status across visible rows for the title bar."""
+        best = None
+        best_priority = 999
+        for row in session_states:
+            gs = row.git_status
+            if gs is None or gs == GitStatus.CLEAN:
+                continue
+            p = _TITLE_GIT_PRIORITY.get(gs, 999)
+            if p < best_priority:
+                best = gs
                 best_priority = p
         return best
 
