@@ -114,6 +114,7 @@ class TestTrackedBottomEdge:
             win._rows = {"fake": {"frame": MagicMock()}}
             win._empty_label = MagicMock()
             win._last_highest_state_color = ""
+            win._last_highest_git_status = None
             win._title_bg = "#333333"
             win._title_fg = "#ffffff"
             win._title_bar = MagicMock()
@@ -175,6 +176,7 @@ class TestTrackedBottomEdge:
             win._row_order = [1, 2, 3]
             win._empty_label = MagicMock()
             win._last_highest_state_color = ""
+            win._last_highest_git_status = None
             win._title_bg = "#333333"
             win._title_fg = "#ffffff"
             win._title_bar = MagicMock()
