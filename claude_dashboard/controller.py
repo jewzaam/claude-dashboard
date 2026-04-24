@@ -319,7 +319,7 @@ class AppController:
             except Exception:
                 logger.exception("tray icon crashed")
 
-        tray_thread = threading.Thread(target=_run_tray, daemon=True)
+        tray_thread = threading.Thread(target=_run_tray, daemon=True, name="tray")
         tray_thread.start()
 
         if self._ttl_seconds > 0:
