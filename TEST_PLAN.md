@@ -298,7 +298,7 @@ Denial flow is implicit in hook-based detection — when a user denies a tool, C
 ## Running Tests
 
 ```bash
-make test          # Run all tests
-make coverage      # Run with coverage report (80% threshold enforced)
-make check         # Full suite: format-check, lint, typecheck, test, coverage
+make test-unit     # Run all tests
+make test-coverage # Run with coverage report (80% threshold enforced)
+make check         # Full suite: test-format, test-lint, test-typecheck, test-unit, test-coverage
 ```

@@ -2,9 +2,10 @@
 
 -include make/run.mk
 
-.PHONY: check help install install-dev install-no-deps install-hooks uninstall clean format format-check lint typecheck test test-verbose coverage markdown-lint links mutation mutation-report complexity
+.PHONY: check help install install-dev install-no-deps install-hooks install-pipx uninstall uninstall-pipx clean format test-format test-lint test-typecheck test-unit test-verbose test-coverage test-markdown test-links test-mutation test-mutation-report test-complexity
 
 PACKAGE_NAME ?= claude_dashboard
+PY_SYS ?= python3
 
 ifeq ($(OS),Windows_NT)
     VENV_DIR ?= .venv
@@ -16,7 +17,7 @@ endif
 
 $(info venv: $(VENV_DIR))
 
-check: format lint typecheck markdown-lint links test coverage  ## Run all checks (default)
+check: test-format test-lint test-typecheck test-markdown test-links test-unit test-coverage  ## Run all checks (default)
 
 .DEFAULT_GOAL := check
 
@@ -24,7 +25,7 @@ help:  ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 $(PYTHON):
-	python3 -m venv $(VENV_DIR)
+	$(PY_SYS) -m venv $(VENV_DIR)
 
 install: $(PYTHON)  ## Install package
 	$(PYTHON) -m pip install .
@@ -41,6 +42,12 @@ install-hooks: $(PYTHON)  ## Merge hook config into ~/.claude/settings.json
 uninstall: $(PYTHON)  ## Uninstall package
 	$(PYTHON) -m pip uninstall -y claude-dashboard
 
+install-pipx:  ## Install globally via pipx
+	$(PY_SYS) -m pipx install . --force
+
+uninstall-pipx:  ## Uninstall the pipx install
+	$(PY_SYS) -m pipx uninstall claude-dashboard
+
 clean:  ## Remove build artifacts and caches
 	rm -rf build/ dist/ *.egg-info
 	find . -type d -name __pycache__ -exec rm -r {} + 2>/dev/null || true
@@ -50,36 +57,35 @@ clean:  ## Remove build artifacts and caches
 format: install-dev  ## Format code with black
 	$(PYTHON) -m black $(PACKAGE_NAME) tests
 
-format-check: install-dev  ## Check formatting without modifying files
+test-format: install-dev  ## Check formatting without modifying files
 	$(PYTHON) -m black --check $(PACKAGE_NAME) tests
 
-lint: install-dev  ## Lint with flake8
+test-lint: install-dev  ## Lint with flake8
 	$(PYTHON) -m flake8 $(PACKAGE_NAME) tests
 
-typecheck: install-dev  ## Type check with mypy
+test-typecheck: install-dev  ## Type check with mypy
 	$(PYTHON) -m mypy $(PACKAGE_NAME)
 
-test: install-dev  ## Run pytest
+test-unit: install-dev  ## Run pytest
 	$(PYTHON) -m pytest
 
 test-verbose: install-dev  ## Run pytest with verbose output
 	$(PYTHON) -m pytest -v
 
-coverage: install-dev  ## Run pytest with coverage
+test-coverage: install-dev  ## Run pytest with coverage
 	$(PYTHON) -m pytest --cov=$(PACKAGE_NAME) --cov-report=term
 
-markdown-lint: install-dev  ## Lint markdown files
+test-markdown: install-dev  ## Lint markdown files
 	$(PYTHON) -m pymarkdown --disable-rules MD013,MD024,MD031,MD036 scan README.md CLAUDE.md docs/ specs/
 
-links: $(PYTHON)  ## Validate local markdown links and anchors
+test-links: $(PYTHON)  ## Validate local markdown links and anchors
 	$(PYTHON) scripts/check-links.py
 
-mutation: install-dev  ## Run mutation testing (not part of check — run in CI or on-demand)
+test-mutation: install-dev  ## Run mutation testing (not part of check — local on-demand)
 	$(PYTHON) -m mutmut run --CI --paths-to-mutate "$(PACKAGE_NAME)"
 
-mutation-report: $(PYTHON)  ## Show results of last mutation run
+test-mutation-report: $(PYTHON)  ## Show results of last mutation run
 	$(PYTHON) -m mutmut results
 
-complexity: install-dev  ## Check cyclomatic complexity (xenon, max-absolute C)
+test-complexity: install-dev  ## Check cyclomatic complexity (xenon, max-absolute C)
 	$(PYTHON) -m xenon $(PACKAGE_NAME) --max-absolute B --max-modules B --max-average A
-
