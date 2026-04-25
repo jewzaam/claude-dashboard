@@ -1,6 +1,8 @@
 # claude-dashboard
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/) [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black) [![Mutation Testing](https://github.com/jewzaam/claude-dashboard/actions/workflows/mutation.yml/badge.svg?branch=main)](https://github.com/jewzaam/claude-dashboard/actions/workflows/mutation.yml)
+[![test](https://github.com/jewzaam/claude-dashboard/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/jewzaam/claude-dashboard/actions/workflows/test.yml) [![quality](https://github.com/jewzaam/claude-dashboard/actions/workflows/quality.yml/badge.svg?branch=main)](https://github.com/jewzaam/claude-dashboard/actions/workflows/quality.yml)
+
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/) [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 **Docs:** [Getting Started](docs/guide/getting-started.md) | [Visual Guide](docs/guide/visual-guide.md) | [Session Lifecycle](docs/guide/session-lifecycle.md) | [Interactions](docs/guide/interactions.md) | [Settings](docs/guide/settings.md)
 

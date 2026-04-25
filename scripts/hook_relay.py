@@ -10,36 +10,57 @@ Also logs raw payloads to a JSONL file for debugging/research.
 Use --marker TEXT to inject a labeled boundary line into the log.
 """
 
+import argparse
 import json
 import logging
 import logging.handlers
+import os
 import sys
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-_LOG_DIR = Path.home() / ".claude" / "claude-dashboard" / "logs"
-_LOG_FILE = _LOG_DIR / "hook-payloads.jsonl"
+EXIT_SUCCESS = 0
+EXIT_ERROR = 1
+
+_PAYLOAD_LOG_DIR = Path.home() / ".claude" / "claude-dashboard" / "logs"
+_PAYLOAD_LOG_FILE = _PAYLOAD_LOG_DIR / "hook-payloads.jsonl"
 
 logger = logging.getLogger(__name__)
 
 
-def _configure_logging(*, debug: bool) -> None:
+def _configure_logging(*, debug: bool, quiet: bool, log_file: str | None) -> None:
     """Set up logging. In debug mode, also log raw payloads to a JSONL file."""
-    logging.basicConfig(level=logging.WARNING, format="%(message)s", stream=sys.stderr)
+    if quiet:
+        level = logging.WARNING
+    elif debug:
+        level = logging.DEBUG
+    else:
+        level = logging.WARNING
+    log_fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    if log_file:
+        log_path = str(Path(log_file).expanduser().resolve())
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        handler: logging.Handler = logging.handlers.RotatingFileHandler(
+            log_path, maxBytes=2 * 1024 * 1024, backupCount=1, encoding="utf-8"
+        )
+        handler.setFormatter(logging.Formatter(log_fmt))
+        logging.basicConfig(level=level, handlers=[handler])
+    else:
+        logging.basicConfig(level=level, format=log_fmt, stream=sys.stderr)
     if debug:
         logger.setLevel(logging.DEBUG)
         try:
-            _LOG_DIR.mkdir(parents=True, exist_ok=True)
-            handler = logging.handlers.RotatingFileHandler(
-                _LOG_FILE,
+            _PAYLOAD_LOG_DIR.mkdir(parents=True, exist_ok=True)
+            payload_handler = logging.handlers.RotatingFileHandler(
+                _PAYLOAD_LOG_FILE,
                 maxBytes=2 * 1024 * 1024,
                 backupCount=1,
                 encoding="utf-8",
             )
-            handler.setLevel(logging.DEBUG)
-            handler.setFormatter(logging.Formatter("%(message)s"))
-            logger.addHandler(handler)
+            payload_handler.setLevel(logging.DEBUG)
+            payload_handler.setFormatter(logging.Formatter("%(message)s"))
+            logger.addHandler(payload_handler)
         except OSError:
             pass
 
@@ -48,24 +69,41 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def main():
-    debug = "--debug" in sys.argv
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Relay Claude Code hook events to the dashboard HTTP server."
+    )
+    parser.add_argument("--debug", action="store_true", help="enable debug logging")
+    parser.add_argument(
+        "--quiet", "-q", action="store_true", help="suppress non-essential output"
+    )
+    parser.add_argument(
+        "--log-file", type=str, default=None, help="write log output to file"
+    )
+    parser.add_argument(
+        "--marker",
+        nargs="*",
+        default=None,
+        help="inject a labeled boundary line into the payload log and exit",
+    )
+    return parser
 
-    # --marker flag: inject a labeled boundary line and exit
-    if len(sys.argv) >= 2 and sys.argv[1] == "--marker":
-        _configure_logging(debug=True)  # markers always log
-        marker_text = " ".join(sys.argv[2:]) if len(sys.argv) >= 3 else ""
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    debug = bool(args.debug or args.marker is not None)
+    _configure_logging(debug=debug, quiet=args.quiet, log_file=args.log_file)
+
+    if args.marker is not None:
+        marker_text = " ".join(args.marker)
         logger.debug(json.dumps({"_marker": marker_text, "_ts": _now_iso()}))
-        return
-
-    _configure_logging(debug=debug)
+        return EXIT_SUCCESS
 
     try:
         data = sys.stdin.read()
         if not data:
-            return
+            return EXIT_SUCCESS
 
-        # Log raw payload with timestamp (debug only)
         if debug:
             try:
                 payload = json.loads(data)
@@ -84,7 +122,8 @@ def main():
     except Exception:
         if debug:
             logger.debug("relay failed", exc_info=True)
+    return EXIT_SUCCESS
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

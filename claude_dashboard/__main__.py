@@ -7,8 +7,12 @@ import logging.handlers
 import os
 import socket
 import sys
+from pathlib import Path
 
 from claude_dashboard import config
+
+EXIT_SUCCESS = 0
+EXIT_ERROR = 1
 
 
 def _is_already_running() -> bool:
@@ -59,9 +63,10 @@ def main():
         level = logging.DEBUG if args.debug else logging.INFO
         if args.quiet:
             level = logging.WARNING
-        os.makedirs(os.path.dirname(os.path.abspath(args.log_file)), exist_ok=True)
+        log_path = str(Path(args.log_file).expanduser().resolve())
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
         handler = logging.handlers.RotatingFileHandler(
-            args.log_file,
+            log_path,
             maxBytes=2 * 1024 * 1024,
             backupCount=1,
             encoding="utf-8",
@@ -80,7 +85,7 @@ def main():
         logging.getLogger(__name__).error(
             "Claude Dashboard is already running (port %d in use)", config.HOOK_PORT
         )
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
 
     # Enable DPI awareness on Windows before creating the Tk root.
     # Without this, Windows bitmap-scales the entire window, making it blurry and oversized.

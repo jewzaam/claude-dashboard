@@ -44,7 +44,7 @@ def set_run_on_startup(*, enabled: bool) -> None:
     elif IS_LINUX:
         _set_linux(enabled)
     else:
-        logger.warning("Auto-start not supported on platform=%s", sys.platform)
+        logger.warning("Auto-start not supported on this platform")
 
 
 def get_run_on_startup() -> bool:
