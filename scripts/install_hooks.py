@@ -8,11 +8,17 @@ Deep merge strategy (matching ~/source/my-claude-stuff/scripts/reconcile.py):
 - Dest-only keys: preserved
 """
 
+import argparse
 import json
 import logging
+import logging.handlers
+import os
 import shutil
 import sys
 from pathlib import Path
+
+EXIT_SUCCESS = 0
+EXIT_ERROR = 1
 
 logger = logging.getLogger(__name__)
 
@@ -122,8 +128,51 @@ def install_hooks(
     return True
 
 
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Install dashboard hooks into ~/.claude/settings.json."
+    )
+    parser.add_argument(
+        "--dryrun",
+        action="store_true",
+        help="print the merged settings to stdout instead of writing",
+    )
+    parser.add_argument("--debug", action="store_true", help="enable debug logging")
+    parser.add_argument(
+        "--quiet", "-q", action="store_true", help="suppress non-essential output"
+    )
+    parser.add_argument(
+        "--log-file", type=str, default=None, help="write log output to file"
+    )
+    return parser
+
+
+def _configure_logging(*, debug: bool, quiet: bool, log_file: str | None) -> None:
+    if quiet:
+        level = logging.WARNING
+    elif debug:
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+    log_fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    if log_file:
+        log_path = str(Path(log_file).expanduser().resolve())
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        handler: logging.Handler = logging.handlers.RotatingFileHandler(
+            log_path, maxBytes=2 * 1024 * 1024, backupCount=1, encoding="utf-8"
+        )
+        handler.setFormatter(logging.Formatter(log_fmt))
+        logging.basicConfig(level=level, handlers=[handler])
+    else:
+        logging.basicConfig(level=level, format=log_fmt, stream=sys.stderr)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    _configure_logging(debug=args.debug, quiet=args.quiet, log_file=args.log_file)
+    success = install_hooks(dry_run=args.dryrun)
+    return EXIT_SUCCESS if success else EXIT_ERROR
+
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    dry_run = "--dryrun" in sys.argv or "--dry-run" in sys.argv
-    success = install_hooks(dry_run=dry_run)
-    sys.exit(0 if success else 1)
+    sys.exit(main())

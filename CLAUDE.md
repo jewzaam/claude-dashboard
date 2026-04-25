@@ -111,6 +111,16 @@ The relay script always runs with `--debug` in hooks-settings.json, logging raw 
 | `docs/document-dependencies.md` | Cascade rules for doc updates |
 | `docs/raw-prompt.md` | Original voice transcript |
 
+### User Guides
+
+| File | Content |
+|------|---------|
+| `docs/guide/getting-started.md` | Installation and first-run walkthrough |
+| `docs/guide/visual-guide.md` | Annotated screenshots of the dashboard UI |
+| `docs/guide/session-lifecycle.md` | How sessions are discovered and tracked |
+| `docs/guide/interactions.md` | Click/hover/menu interactions reference |
+| `docs/guide/settings.md` | Settings dialog and configuration options |
+
 ## Do Not
 
 - Run git write operations (add, commit, push) — user handles git

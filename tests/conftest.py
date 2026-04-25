@@ -3,6 +3,7 @@
 
 import json
 import subprocess
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,7 +14,7 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 @pytest.fixture(autouse=True)
 def _block_subprocess():
-    """Block subprocess.run/Popen globally to prevent real command execution.
+    """Block subprocess entry points globally to prevent real command execution.
 
     All tests must mock subprocess calls — no real git, no real shell commands.
     """
@@ -22,9 +23,60 @@ def _block_subprocess():
         cmd = args[0] if args else kwargs.get("args", "?")
         raise RuntimeError(f"subprocess blocked by conftest: {cmd!r}. Mock it instead.")
 
-    with patch.object(subprocess, "run", side_effect=_blocked):
-        with patch.object(subprocess, "Popen", side_effect=_blocked):
-            yield
+    with (
+        patch.object(subprocess, "run", side_effect=_blocked),
+        patch.object(subprocess, "Popen", side_effect=_blocked),
+        patch.object(subprocess, "call", side_effect=_blocked),
+        patch.object(subprocess, "check_call", side_effect=_blocked),
+        patch.object(subprocess, "check_output", side_effect=_blocked),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _block_real_filesystem(tmp_path):
+    """Block pathlib mutations outside tmp_path / the system tempdir.
+
+    Prevents tests from accidentally writing to real user files (e.g. ~/.claude/...).
+    Tests that need filesystem writes must direct them through tmp_path.
+    """
+    tmp_root = Path(tempfile.gettempdir()).resolve()
+    test_tmp = tmp_path.resolve()
+
+    orig_write_text = Path.write_text
+    orig_write_bytes = Path.write_bytes
+    orig_rename = Path.rename
+
+    def _is_safe(path: Path) -> bool:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path.parent.resolve() / path.name
+        s = str(resolved)
+        return s.startswith(str(tmp_root)) or s.startswith(str(test_tmp))
+
+    def _wrapped_write_text(self, *args, **kwargs):
+        if not _is_safe(self):
+            raise RuntimeError(f"filesystem write blocked: {self}. Use tmp_path instead.")
+        return orig_write_text(self, *args, **kwargs)
+
+    def _wrapped_write_bytes(self, *args, **kwargs):
+        if not _is_safe(self):
+            raise RuntimeError(f"filesystem write blocked: {self}. Use tmp_path instead.")
+        return orig_write_bytes(self, *args, **kwargs)
+
+    def _wrapped_rename(self, target):
+        target_path = Path(target)
+        if not _is_safe(target_path):
+            raise RuntimeError(f"filesystem rename blocked: {self} -> {target}.")
+        return orig_rename(self, target)
+
+    with (
+        patch.object(Path, "write_text", _wrapped_write_text),
+        patch.object(Path, "write_bytes", _wrapped_write_bytes),
+        patch.object(Path, "rename", _wrapped_rename),
+    ):
+        yield
 
 
 @pytest.fixture()
