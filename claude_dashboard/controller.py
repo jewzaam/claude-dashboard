@@ -76,6 +76,11 @@ _TITLE_GIT_PRIORITY = {
 _DEBOUNCE_MS = 300  # Debounce window for state display updates (FR-043)
 
 
+def _now_epoch() -> float:
+    """Return current time as Unix epoch seconds."""
+    return time.time()
+
+
 def read_daily_cost() -> float:
     """Sum today's session costs from the session tracker.
 
@@ -146,6 +151,7 @@ class _SessionEntry:
         "merged",
         "agents",
         "unattached",
+        "last_active",
     )
 
     def __init__(self, session: SessionInfo):
@@ -159,6 +165,7 @@ class _SessionEntry:
         self.merged: bool = False
         self.agents: dict[str, _AgentEntry] = {}
         self.unattached: bool = False
+        self.last_active: float = 0.0
 
     @property
     def effective_state(self) -> StatusState:
@@ -367,8 +374,9 @@ class AppController:
                 if entry and not entry.unattached:
                     cwd = entry.session.cwd
                     flagged = entry.flagged
+                    last_active = entry.last_active
                     self._remove_session(pid)
-                    self._create_ghost(cwd=cwd, flagged=flagged)
+                    self._create_ghost(cwd=cwd, flagged=flagged, last_active=last_active)
 
             # 3. On first tick, create unattached placeholders from state file
             if not self._first_tick_done:
@@ -502,6 +510,7 @@ class AppController:
             logger.debug("pid=%d ignored (cwd=%s matches ignore_regex)", session.pid, session.cwd)
             return
         entry = _SessionEntry(session)
+        entry.last_active = _now_epoch()
         # All new sessions start as IDLE until a hook event updates them.
         entry.container = detect_container(session.pid)
         entry.container = find_window_for_session(session.cwd, entry.container)
@@ -585,6 +594,9 @@ class AppController:
                 entry.flagged = True
             if saved.get("hidden"):
                 entry.hidden = True
+            last_active = saved.get("last_active")
+            if isinstance(last_active, (int, float)):
+                entry.last_active = float(last_active)
             entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
             trunk_ref = self._trunk_ref(cwd)
             entry.git_status, entry.merged = git_check(
@@ -592,8 +604,9 @@ class AppController:
             )
             self._sessions[synthetic_pid] = entry
             logger.debug("created unattached placeholder for %s pid=%d", cwd, synthetic_pid)
+        self._evict_oldest_ghosts()
 
-    def _create_ghost(self, *, cwd: str, flagged: bool = False):
+    def _create_ghost(self, *, cwd: str, flagged: bool = False, last_active: float = 0.0):
         """Create an unattached ghost for a CWD if no live session or ghost exists for it."""
         # Skip if another live session still uses this CWD
         for entry in self._sessions.values():
@@ -612,6 +625,7 @@ class AppController:
         entry = _SessionEntry(session)
         entry.unattached = True
         entry.flagged = flagged
+        entry.last_active = last_active or _now_epoch()
         entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
         trunk_ref = self._trunk_ref(cwd)
         entry.git_status, entry.merged = git_check(
@@ -619,6 +633,32 @@ class AppController:
         )
         self._sessions[synthetic_pid] = entry
         logger.info("created ghost for %s pid=%d", cwd, synthetic_pid)
+        self._evict_oldest_ghosts()
+
+    def _evict_oldest_ghosts(self):
+        """Remove oldest non-flagged ghosts to keep total sessions at max_sessions."""
+        max_sessions = self._settings.max_sessions
+        total = len(self._sessions)
+        if total <= max_sessions:
+            return
+        candidates = [
+            (pid, entry)
+            for pid, entry in self._sessions.items()
+            if entry.unattached and not entry.flagged
+        ]
+        if not candidates:
+            return
+        candidates.sort(key=lambda pair: pair[1].last_active)
+        evict_count = min(len(candidates), total - max_sessions)
+        for pid, entry in candidates[:evict_count]:
+            logger.info(
+                "evicting ghost pid=%d cwd=%s last_active=%s",
+                pid,
+                entry.session.cwd,
+                entry.last_active,
+            )
+            self._sessions.pop(pid, None)
+        self._save_session_state()
 
     def _remove_session(self, pid: int):
         entry = self._sessions.pop(pid, None)
@@ -689,6 +729,8 @@ class AppController:
         entry = self._sessions.get(pid)
         if not entry:
             return
+
+        entry.last_active = _now_epoch()
 
         if agent_id:
             # Agent event — register or update agent
@@ -807,8 +849,9 @@ class AppController:
             if entry and not entry.unattached:
                 cwd = entry.session.cwd
                 flagged = entry.flagged
+                last_active = entry.last_active
                 self._remove_session(pid)
-                self._create_ghost(cwd=cwd, flagged=flagged)
+                self._create_ghost(cwd=cwd, flagged=flagged, last_active=last_active)
             self._refresh_ui()
 
     # ------------------------------------------------------------------
@@ -1204,12 +1247,15 @@ class AppController:
                     state[cwd]["hidden"] = False
                 # Merge agents and prefer highest-priority state
                 state[cwd]["agents"].update(agents)
+                if entry.last_active > state[cwd].get("last_active", 0.0):
+                    state[cwd]["last_active"] = entry.last_active
             else:
                 state[cwd] = {
                     "state": entry.state.value,
                     "hidden": entry.hidden,
                     "flagged": entry.flagged,
                     "agents": agents,
+                    "last_active": entry.last_active,
                 }
 
         try:
@@ -1226,6 +1272,9 @@ class AppController:
             entry.flagged = True
         if saved.get("hidden"):
             entry.hidden = True
+        last_active = saved.get("last_active")
+        if isinstance(last_active, (int, float)):
+            entry.last_active = float(last_active)
         state_val = saved.get("state")
         if state_val:
             try:

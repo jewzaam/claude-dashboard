@@ -86,6 +86,10 @@ Text color is computed per-row from the background color using W3C sRGB contrast
 
 `config.IS_WINDOWS` and `config.IS_LINUX` are the single source of truth. Do not add `platform.system()` or `sys.platform` checks in other modules — import from config instead.
 
+### Ghost eviction — capacity-based, not TTL
+
+Ghost sessions are evicted when total session count exceeds `max_sessions` (default 40). Only non-flagged ghosts are eviction candidates — live sessions and flagged ghosts are never removed. Oldest ghosts (by `last_active` epoch timestamp) are evicted first. Eviction happens lazily on ghost creation and startup. There is no TTL — a ghost with recent activity is always retained if under the cap. **Do not add time-based ghost expiration.**
+
 ### Hook relay `--debug` flag
 
 The relay script always runs with `--debug` in hooks-settings.json, logging raw payloads to `~/.claude/claude-dashboard/logs/hook-payloads.jsonl`. This is safe because both the relay log and the dashboard log use `RotatingFileHandler` (2 MB, 1 backup).
