@@ -189,3 +189,21 @@ class TestSettingsBoundaryValues:
         tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
         settings = load_settings(path=tmp_settings_path)
         assert settings.row_height == Settings().row_height
+
+
+class TestMaxSessions:
+    def test_default_value(self):
+        settings = Settings()
+        assert settings.max_sessions == 40
+
+    def test_roundtrip(self, tmp_settings_path):
+        original = Settings(max_sessions=25)
+        save_settings(original, path=tmp_settings_path)
+        loaded = load_settings(path=tmp_settings_path)
+        assert loaded.max_sessions == 25
+
+    def test_zero_allowed(self, tmp_settings_path):
+        data = {"max_sessions": 0}
+        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
+        settings = load_settings(path=tmp_settings_path)
+        assert settings.max_sessions == 0

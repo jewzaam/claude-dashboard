@@ -96,6 +96,13 @@ class SettingsWindow:
         row = self._add_text_field(
             frame, "Ignore CWD (regex)", "ignore_regex", settings.ignore_regex, row
         )
+        row = self._add_int_field(
+            frame,
+            "Max ghost sessions (0=none)",
+            "max_sessions",
+            settings.max_sessions,
+            row,
+        )
 
         self._section_label(frame, "Status Colors", row)
         row += 1

@@ -284,3 +284,16 @@ class TestStatePriority:
     def test_idle_is_lowest(self):
         highest_val = max(_STATE_PRIORITY.values())
         assert _STATE_PRIORITY[StatusState.IDLE] == highest_val
+
+
+class TestLastActive:
+    """Test _SessionEntry.last_active timestamp tracking."""
+
+    def test_default_is_zero(self):
+        entry = _SessionEntry(_make_session())
+        assert entry.last_active == 0.0
+
+    def test_last_active_can_be_set(self):
+        entry = _SessionEntry(_make_session())
+        entry.last_active = 1_700_000_000.0
+        assert entry.last_active == 1_700_000_000.0

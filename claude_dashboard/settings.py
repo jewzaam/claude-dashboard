@@ -56,6 +56,7 @@ class Settings:
 
     # Session filtering
     ignore_regex: str = config.DEFAULT_IGNORE_REGEX
+    max_sessions: int = config.DEFAULT_MAX_SESSIONS
 
 
 def _is_valid_value(*, value: object, default: object) -> bool:
