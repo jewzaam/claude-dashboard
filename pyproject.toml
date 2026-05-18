@@ -24,7 +24,7 @@ dev = [
     "mypy>=1.11",
     "mutmut>=2.0,<3.0",
     "xenon>=0.9",
-    "pymarkdownlnt>=0.9.36,<1.0",
+    "pymarkdownlnt>=0.9.37,<1.0",
 ]
 
 [project.scripts]

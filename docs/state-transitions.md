@@ -128,6 +128,7 @@ Agents are removed on `SubagentStop`. After removal, Claude Code auto-fires a `U
 ### Agent Clearing
 
 All tracked agents for a session are cleared when:
+
 1. **`UserPromptSubmit` arrives (no `agent_id`)** — new user turn. Any agents from prior turns are wiped. If a cleared agent fires a hook later, it is re-registered as new.
 2. **Parent session PID dies** — detected by discovery poll, removes session and all its agents.
 
@@ -178,6 +179,7 @@ When a session is resumed, hooks may fire with the original session ID rather th
 ### Row Context Menu (Right-Click)
 
 Right-clicking a session row opens a context menu with:
+
 - **Hide** — hides the session from the dashboard (transient, not persisted)
 - **Clear agents** — visible only if the session has active agents; clears all tracked agents
 - **Flag** / **Unflag** — toggles the flag state (sticky, survives restart via state persistence)
@@ -193,6 +195,7 @@ Flag state persists across dashboard restarts via `~/.claude/claude-dashboard/se
 ### Tray Icon Menu
 
 The tray icon right-click menu is fully dynamic:
+
 - **Show** / **Hide** — toggles dashboard visibility
 - **Unhide: (session)** — one item per hidden session (flat list, no submenus due to pystray limitations on Linux)
 - **Settings** — opens settings dialog
