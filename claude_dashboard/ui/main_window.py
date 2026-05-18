@@ -556,6 +556,25 @@ class MainWindow:
                 self._empty_label.pack(pady=10)
         self._apply_geometry(row_count=len(self._rows))
 
+    def _repack_layout(self):
+        """Re-pack title bar and rows for current grow direction."""
+        self._title_bar.pack_forget()
+        for row_data in self._rows.values():
+            row_data["frame"].pack_forget()
+        self._empty_label.pack_forget()
+
+        if self._settings.grow_up:
+            self._title_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
+        else:
+            self._title_bar.pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
+
+        if not self._shaded:
+            for pid in self._row_order:
+                if pid in self._rows:
+                    self._rows[pid]["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
+            if not self._rows:
+                self._empty_label.pack(pady=10)
+
     def _apply_title_bar_style(self):
         """Apply title bar bg/fg/icon based on current shade state and last known priority."""
         color = self._last_highest_state_color
@@ -782,6 +801,9 @@ class MainWindow:
         self._force_resize = True
         self._icon_cache.clear()
         self._emoji_image_cache.clear()
+
+        # Re-pack title bar and rows for correct grow direction
+        self._repack_layout()
 
         # Update title bar emoji (image or font)
         new_emoji_image = _load_title_emoji(
