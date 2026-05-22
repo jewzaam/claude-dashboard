@@ -150,26 +150,33 @@ def enumerate_vscode_windows() -> list[tuple[int, int, str]]:
 def detect_container_windows(pid: int) -> ContainerInfo:
     """Walk the parent process chain to identify the containing application."""
     container = ContainerInfo()
+    chain: list[tuple[int, str]] = []  # for diagnostic logging on UNKNOWN
+    walk_error: str = ""
+    term_program: str = ""
 
     try:
         claude_proc = psutil.Process(pid)
         bash_proc = claude_proc.parent()
         if not bash_proc:
+            logger.info("detect_container: claude pid=%d has no parent", pid)
             return container
 
-        # Extract only needed env vars
-        term_program = ""
         try:
             full_env = bash_proc.environ()
             term_program = full_env.get("TERM_PROGRAM", "").lower()
             del full_env
-        except (psutil.AccessDenied, psutil.NoSuchProcess):
-            pass
+        except (psutil.AccessDenied, psutil.NoSuchProcess) as exc:
+            logger.debug("environ failed for pid=%d: %s", bash_proc.pid, exc)
 
         # Walk up the process chain
         current = bash_proc
         while current:
-            name = current.name().lower()
+            try:
+                name = current.name().lower()
+                chain.append((current.pid, name))
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+                walk_error = f"name() failed pid={current.pid}: {exc}"
+                break
 
             if "code" in name and name.endswith(".exe"):
                 container.process_name = current.name()
@@ -189,17 +196,41 @@ def detect_container_windows(pid: int) -> ContainerInfo:
                 container.container_type = ContainerType.GITBASH
                 break
 
+            prev_pid = current.pid
+            try:
+                ppid = current.ppid()
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+                walk_error = f"ppid() failed pid={prev_pid}: {exc}"
+                break
             try:
                 current = current.parent()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+                walk_error = f"parent() failed pid={prev_pid}: {exc}"
+                break
+            if current is None and ppid > 0:
+                walk_error = (
+                    f"parent() returned None pid={prev_pid} ppid={ppid} "
+                    f"(launcher exited — zombie EPROCESS)"
+                )
                 break
 
         # Fallback from env
         if container.container_type == ContainerType.UNKNOWN and term_program == "vscode":
             container.container_type = ContainerType.VSCODE
+            logger.info("detect_container pid=%d resolved via TERM_PROGRAM=vscode", pid)
 
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        pass
+    except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+        walk_error = f"top-level psutil error: {exc}"
+
+    if container.container_type == ContainerType.UNKNOWN:
+        chain_str = " -> ".join(f"{name}({p})" for p, name in chain) or "<empty>"
+        logger.info(
+            "detect_container UNKNOWN pid=%d chain=%s term_program=%r walk_error=%r",
+            pid,
+            chain_str,
+            term_program,
+            walk_error,
+        )
 
     return container
 
@@ -219,9 +250,79 @@ def _find_main_vscode_pid(start_pid: int) -> int:
         return start_pid
 
 
+_VSCODE_TITLE_SUFFIX = " - Visual Studio Code"
+
+
+def _foldername_from_vscode_title(title: str) -> str:
+    """Extract the folder segment from a VS Code window title.
+
+    Title shapes handled:
+      `<filename> - <foldername> - Visual Studio Code`
+      `<foldername> - Visual Studio Code`
+      `<foldername> [Administrator] - Visual Studio Code`  (no filename)
+    Returns empty string for titles that don't match the expected pattern.
+    """
+    if not title.endswith(_VSCODE_TITLE_SUFFIX):
+        return ""
+    stem = title[: -len(_VSCODE_TITLE_SUFFIX)]
+    # Last " - " separated segment is the folder name when an editor file is open.
+    # When no file is open, the entire stem is the folder name.
+    parts = stem.rsplit(" - ", 1)
+    folder = parts[-1].strip()
+    # Strip a trailing `[Administrator]` or similar bracketed tag.
+    if folder.endswith("]") and " [" in folder:
+        folder = folder.rsplit(" [", 1)[0].strip()
+    return folder
+
+
+def _upgrade_unknown_via_vscode_title(cwd: str, container: ContainerInfo) -> ContainerInfo:
+    """Fabricate a Code.exe link for an UNKNOWN session by matching cwd basename.
+
+    Orphaned sessions (launcher exited, parent chain dead-ends) get classified
+    as UNKNOWN despite the user having the folder open in VS Code. This walks
+    enumerated VS Code windows and adopts the one whose title's folder segment
+    equals `Path(cwd).name`. No-op when zero or multiple windows match.
+    """
+    basename = Path(cwd).name
+    if not basename:
+        return container
+    matches = []
+    for hwnd, pid, title in enumerate_vscode_windows():
+        if _foldername_from_vscode_title(title).lower() == basename.lower():
+            matches.append((hwnd, pid, title))
+    if len(matches) == 1:
+        hwnd, pid, title = matches[0]
+        container.container_type = ContainerType.VSCODE
+        container.process_name = "Code.exe"
+        container.process_pid = pid
+        container.window_handle = hwnd
+        container.window_title = title
+        logger.info(
+            "UNKNOWN upgraded to VSCODE via title match cwd=%s hwnd=%d pid=%d title=%r",
+            cwd,
+            hwnd,
+            pid,
+            title[:120],
+        )
+    elif len(matches) > 1:
+        logger.info(
+            "UNKNOWN title match ambiguous cwd=%s candidates=%d — skipping upgrade",
+            cwd,
+            len(matches),
+        )
+    return container
+
+
 def match_window_by_cwd(cwd: str, container: ContainerInfo) -> ContainerInfo:
     """Find the VS Code window matching a session's CWD by title matching."""
+    if container.container_type == ContainerType.UNKNOWN and cwd:
+        container = _upgrade_unknown_via_vscode_title(cwd, container)
+
     if container.container_type != ContainerType.VSCODE or container.process_pid == 0:
+        return container
+
+    # Skip the main-PID-filtered scan if the title-match upgrade already set hwnd.
+    if container.window_handle:
         return container
 
     try:
