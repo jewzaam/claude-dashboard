@@ -966,10 +966,34 @@ class AppController:
             if entry:
                 entry.container = container
 
-        if container and (container.window_handle or container.process_pid):
-            success = foreground_window(container, cwd=session.cwd)
+        has_handle = bool(container and (container.window_handle or container.process_pid))
+        # Even with no detected container, Windows can fall back to `code <cwd>`
+        # when the session is hosted outside VS Code's integrated terminal.
+        if has_handle or (config.IS_WINDOWS and session.cwd):
+            target = container if container else ContainerInfo()
+            logger.info(
+                "row click pid=%d container_type=%s has_handle=%s",
+                session.pid,
+                target.container_type.value,
+                has_handle,
+            )
+            success = foreground_window(target, cwd=session.cwd)
             if not success:
                 logger.warning("failed to foreground pid=%d", session.pid)
+            if config.IS_WINDOWS:
+                self._root.after(500, self._log_post_click_foreground, session.pid)
+                self._root.after(1500, self._log_post_click_foreground, session.pid)
+
+    def _log_post_click_foreground(self, pid: int) -> None:
+        """Diagnostic: log which window is foreground after a click."""
+        if not config.IS_WINDOWS:
+            return
+        try:
+            from claude_dashboard.platform.windows import log_foreground_state
+
+            log_foreground_state(f"post-click pid={pid}")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("post-click foreground check failed: %s", exc)
 
     def _on_row_double_click(self, session: SessionInfo):
         """Double-click opens PR if branch is pushed-not-merged."""

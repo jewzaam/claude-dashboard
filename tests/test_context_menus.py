@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 from claude_dashboard import config
 from claude_dashboard.config import GitStatus, StatusState
 from claude_dashboard.controller import _AgentEntry, _SessionEntry
+from claude_dashboard.platform.base import ContainerInfo
 from claude_dashboard.session import SessionInfo
 
 
@@ -353,6 +354,7 @@ class TestLeftClickGhost:
             mock_open.assert_called_once_with(cwd="/tmp/ghost-project")
 
     def test_live_left_click_does_not_open_vscode(self):
+        """Live click never goes through the ghost `_open_in_vscode` path."""
         from claude_dashboard.controller import AppController
 
         session = _make_session(cwd="/tmp/live-project")
@@ -361,7 +363,16 @@ class TestLeftClickGhost:
 
         stub = object.__new__(AppController)
         stub._sessions = {session.pid: entry}
-        with patch.object(stub, "_open_in_vscode") as mock_open:
+        stub._root = MagicMock()
+        with (
+            patch.object(stub, "_open_in_vscode") as mock_open,
+            patch("claude_dashboard.controller.detect_container", return_value=ContainerInfo()),
+            patch(
+                "claude_dashboard.controller.find_window_for_session",
+                return_value=ContainerInfo(),
+            ),
+            patch("claude_dashboard.controller.foreground_window", return_value=True),
+        ):
             stub._on_row_left_click(session)
             mock_open.assert_not_called()
 
