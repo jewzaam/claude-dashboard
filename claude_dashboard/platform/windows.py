@@ -6,7 +6,7 @@ import logging
 import shutil
 import subprocess
 import threading
-from pathlib import Path
+from pathlib import PureWindowsPath
 
 import psutil
 
@@ -281,9 +281,11 @@ def _upgrade_unknown_via_vscode_title(cwd: str, container: ContainerInfo) -> Con
     Orphaned sessions (launcher exited, parent chain dead-ends) get classified
     as UNKNOWN despite the user having the folder open in VS Code. This walks
     enumerated VS Code windows and adopts the one whose title's folder segment
-    equals `Path(cwd).name`. No-op when zero or multiple windows match.
+    equals `PureWindowsPath(cwd).name`. No-op when zero or multiple windows match.
     """
-    basename = Path(cwd).name
+    # Use PureWindowsPath so backslash-delimited cwds parse correctly when this
+    # runs on Linux under cross-platform tests. Production calls are Windows-only.
+    basename = PureWindowsPath(cwd).name
     if not basename:
         return container
     matches = []
@@ -331,7 +333,7 @@ def match_window_by_cwd(cwd: str, container: ContainerInfo) -> ContainerInfo:
         user32 = ctypes.windll.user32
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
-        folder_name = Path(cwd).name.lower()
+        folder_name = PureWindowsPath(cwd).name.lower()
         main_pid = _find_main_vscode_pid(container.process_pid)
 
         best_match = None
