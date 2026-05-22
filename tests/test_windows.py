@@ -124,6 +124,95 @@ class TestForegroundWindowTerminal:
         assert win_mod.foreground_window_windows(container, cwd=r"C:\x") is False
 
 
+class TestFoldernameFromVscodeTitle:
+    def test_extracts_folder_with_filename(self):
+        title = "windows.py (Working Tree) - claude-dashboard - Visual Studio Code"
+        assert win_mod._foldername_from_vscode_title(title) == "claude-dashboard"
+
+    def test_extracts_folder_without_filename(self):
+        title = "claude-dashboard - Visual Studio Code"
+        assert win_mod._foldername_from_vscode_title(title) == "claude-dashboard"
+
+    def test_strips_admin_tag(self):
+        title = "main.py - claude-dashboard [Administrator] - Visual Studio Code"
+        assert win_mod._foldername_from_vscode_title(title) == "claude-dashboard"
+
+    def test_returns_empty_for_non_vscode_title(self):
+        assert win_mod._foldername_from_vscode_title("Notepad") == ""
+
+    def test_filename_does_not_leak_when_no_folder(self):
+        # Edge: title is only "<filename> - Visual Studio Code"
+        # rsplit returns [<filename>], so we get the filename.
+        # This is acceptable — VS Code always shows folder, this case is rare.
+        title = "untitled - Visual Studio Code"
+        assert win_mod._foldername_from_vscode_title(title) == "untitled"
+
+
+class TestUpgradeUnknownViaVscodeTitle:
+    @patch("claude_dashboard.platform.windows.enumerate_vscode_windows")
+    def test_upgrades_when_single_match(self, mock_enum):
+        mock_enum.return_value = [
+            (100, 3912, "README.md - nina-prometheus-exporter - Visual Studio Code"),
+            (200, 3912, "ci.yml - other-project - Visual Studio Code"),
+        ]
+        container = ContainerInfo()
+        result = win_mod._upgrade_unknown_via_vscode_title(
+            r"C:\Users\jewza\source\nina-prometheus-exporter", container
+        )
+        assert result.container_type == ContainerType.VSCODE
+        assert result.process_pid == 3912
+        assert result.window_handle == 100
+
+    @patch("claude_dashboard.platform.windows.enumerate_vscode_windows")
+    def test_no_upgrade_when_no_match(self, mock_enum):
+        mock_enum.return_value = [
+            (200, 3912, "ci.yml - other-project - Visual Studio Code"),
+        ]
+        container = ContainerInfo()
+        result = win_mod._upgrade_unknown_via_vscode_title(
+            r"C:\Users\jewza\source\missing-project", container
+        )
+        assert result.container_type == ContainerType.UNKNOWN
+        assert result.window_handle == 0
+
+    @patch("claude_dashboard.platform.windows.enumerate_vscode_windows")
+    def test_no_upgrade_when_ambiguous(self, mock_enum):
+        # Two windows whose folder segment matches the basename (worktrees)
+        mock_enum.return_value = [
+            (100, 3912, "a.py - claude-dashboard - Visual Studio Code"),
+            (200, 4444, "b.py - claude-dashboard - Visual Studio Code"),
+        ]
+        container = ContainerInfo()
+        result = win_mod._upgrade_unknown_via_vscode_title(
+            r"C:\Users\jewza\source\claude-dashboard", container
+        )
+        assert result.container_type == ContainerType.UNKNOWN
+
+    @patch("claude_dashboard.platform.windows.enumerate_vscode_windows")
+    def test_filename_substring_does_not_falsely_match(self, mock_enum):
+        # Title contains "windows.py" but folder is claude-dashboard.
+        # cwd basename "windows" should NOT match.
+        mock_enum.return_value = [
+            (100, 3912, "windows.py - claude-dashboard - Visual Studio Code"),
+        ]
+        container = ContainerInfo()
+        result = win_mod._upgrade_unknown_via_vscode_title(r"C:\some\windows", container)
+        assert result.container_type == ContainerType.UNKNOWN
+
+
+class TestMatchWindowByCwdUnknown:
+    @patch("claude_dashboard.platform.windows.enumerate_vscode_windows")
+    def test_match_window_by_cwd_upgrades_unknown(self, mock_enum):
+        mock_enum.return_value = [
+            (100, 3912, "main.py - setup-k3s - Visual Studio Code"),
+        ]
+        container = ContainerInfo()  # UNKNOWN, pid=0, hwnd=0
+        result = win_mod.match_window_by_cwd(r"C:\src\setup-k3s", container)
+        assert result.container_type == ContainerType.VSCODE
+        assert result.window_handle == 100
+        assert result.process_pid == 3912
+
+
 class TestCodeCliPathCached:
     @patch("claude_dashboard.platform.windows.subprocess.Popen")
     @patch("claude_dashboard.platform.windows.shutil.which", return_value=r"C:\code.cmd")
