@@ -3,6 +3,9 @@
 
 import ctypes
 import logging
+import shutil
+import subprocess
+import threading
 from pathlib import Path
 
 import psutil
@@ -10,6 +13,138 @@ import psutil
 from claude_dashboard.platform.base import ContainerInfo, ContainerType
 
 logger = logging.getLogger(__name__)
+
+# CreateProcess flag to suppress console window when spawning .cmd shims
+_CREATE_NO_WINDOW = 0x08000000
+
+# Module-level cache: shutil.which("code") result and fallback log gate
+_code_cli_path: str | None = None
+_code_cli_resolved: bool = False
+_code_fallback_logged: bool = False
+
+
+def _resolve_code_cli() -> str | None:
+    """Return cached path to the `code` CLI, or None if not on PATH."""
+    global _code_cli_path, _code_cli_resolved
+    if not _code_cli_resolved:
+        _code_cli_path = shutil.which("code")
+        _code_cli_resolved = True
+        logger.info("code CLI resolved path=%s", _code_cli_path)
+    return _code_cli_path
+
+
+def _drain_code_proc(proc: subprocess.Popen, cwd: str) -> None:
+    """Background thread: wait for `code` CLI to exit and log result."""
+    try:
+        _, stderr = proc.communicate(timeout=10)
+        stderr_text = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+        if proc.returncode == 0:
+            logger.info("code CLI exited rc=0 cwd=%s", cwd)
+        else:
+            logger.warning(
+                "code CLI exited rc=%d cwd=%s stderr=%r",
+                proc.returncode,
+                cwd,
+                stderr_text[:500],
+            )
+    except subprocess.TimeoutExpired:
+        logger.warning("code CLI still running after 10s cwd=%s", cwd)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("code CLI drain failed: %s", exc)
+
+
+def _foreground_vscode_cli(cwd: str) -> bool:
+    """Foreground a VS Code window using the `code <cwd>` CLI.
+
+    Mirrors the Linux strategy: VS Code activates the existing window with
+    that folder open, or opens a new one. Runs hidden (no cmd flicker) and
+    does not wait synchronously — a background thread drains stderr and
+    logs the exit status. Returns False when the CLI is unavailable so
+    callers can fall back.
+    """
+    path = _resolve_code_cli()
+    if not path:
+        return False
+    try:
+        proc = subprocess.Popen(
+            [path, cwd],
+            creationflags=_CREATE_NO_WINDOW,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            shell=False,
+        )
+        logger.info("code CLI spawned pid=%d cwd=%s", proc.pid, cwd)
+        threading.Thread(target=_drain_code_proc, args=(proc, cwd), daemon=True).start()
+        return True
+    except OSError as exc:
+        logger.warning("code CLI spawn failed: %s", exc)
+        return False
+
+
+def _get_foreground_info() -> tuple[int, str, int]:
+    """Return (hwnd, title, pid) of the current foreground window."""
+    try:
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return (0, "", 0)
+        length = user32.GetWindowTextLengthW(hwnd)
+        title = ""
+        if length > 0:
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            title = buf.value
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return (int(hwnd), title, int(pid.value))
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("GetForegroundWindow failed: %s", exc)
+        return (0, "", 0)
+
+
+def enumerate_vscode_windows() -> list[tuple[int, int, str]]:
+    """Enumerate all visible windows owned by Code.exe processes.
+
+    Returns a list of (hwnd, pid, title) for diagnostics.
+    """
+    results: list[tuple[int, int, str]] = []
+    try:
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+        # Build PID -> name map for Code.exe processes only
+        code_pids: dict[int, str] = {}
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                name = (proc.info.get("name") or "").lower()
+                if name == "code.exe":
+                    code_pids[proc.info["pid"]] = name
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+        def enum_cb(hwnd, _):
+            if user32.IsWindowVisible(hwnd):
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value in code_pids:
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    title = ""
+                    if length > 0:
+                        buf = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, buf, length + 1)
+                        title = buf.value
+                    if title:
+                        results.append((int(hwnd), int(pid.value), title))
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(enum_cb), 0)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("enumerate_vscode_windows failed: %s", exc)
+    return results
 
 
 def detect_container_windows(pid: int) -> ContainerInfo:
@@ -133,17 +268,78 @@ def match_window_by_cwd(cwd: str, container: ContainerInfo) -> ContainerInfo:
     return container
 
 
-def foreground_window_windows(hwnd: int) -> bool:
+def foreground_window_windows(container: ContainerInfo, *, cwd: str = "") -> bool:
+    """Bring a container's window to the foreground on Windows.
+
+    VS Code: prefer `code <cwd>` CLI (reliable even when the window is
+    buried), fall back to hwnd activation if the CLI is unavailable.
+    Other containers (terminal, mintty): hwnd activation.
+    """
+    global _code_fallback_logged
+
+    fg_before = _get_foreground_info()
+    logger.info(
+        "foreground start container=%s pid=%d hwnd=%d cwd=%s fg_before=(hwnd=%d,pid=%d,title=%r)",
+        container.container_type.value,
+        container.process_pid,
+        container.window_handle,
+        cwd,
+        fg_before[0],
+        fg_before[2],
+        fg_before[1][:80],
+    )
+
+    # Treat UNKNOWN containers as VS Code candidates — sessions hosted outside
+    # VS Code's integrated terminal (separate shell, wrapper script) don't show
+    # Code.exe in their parent chain but the user may still have the folder
+    # open in VS Code. `code <cwd>` is idempotent — activates an existing
+    # window for that folder or opens a new one. On UNKNOWN with no hwnd, this
+    # is the only path that can do anything useful on click.
+    vscode_candidate = container.container_type in (
+        ContainerType.VSCODE,
+        ContainerType.UNKNOWN,
+    )
+
+    if vscode_candidate:
+        vscode_windows = enumerate_vscode_windows()
+        logger.info("vscode windows open count=%d", len(vscode_windows))
+        for hwnd, pid, title in vscode_windows:
+            logger.info("  vscode hwnd=%d pid=%d title=%r", hwnd, pid, title[:120])
+
+    if vscode_candidate and cwd:
+        if _foreground_vscode_cli(cwd):
+            logger.info(
+                "foreground strategy=code_cli result=spawned container=%s",
+                container.container_type.value,
+            )
+            return True
+        if not _code_fallback_logged:
+            logger.info("`code` CLI not on PATH; falling back to hwnd activation")
+            _code_fallback_logged = True
+
+    if container.window_handle == 0:
+        logger.info("foreground aborted: no hwnd for container pid=%d", container.process_pid)
+        return False
+    result = _foreground_hwnd(container.window_handle)
+    logger.info("foreground strategy=hwnd hwnd=%d result=%s", container.window_handle, result)
+    return result
+
+
+def _foreground_hwnd(hwnd: int) -> bool:
     """Bring a window to the foreground using SetForegroundWindow."""
     user32 = ctypes.windll.user32
 
     # Restore if minimized
     SW_RESTORE = 9
-    if user32.IsIconic(hwnd):
+    iconic = bool(user32.IsIconic(hwnd))
+    logger.info("hwnd=%d IsIconic=%s", hwnd, iconic)
+    if iconic:
         user32.ShowWindow(hwnd, SW_RESTORE)
+        logger.info("hwnd=%d restored from minimized", hwnd)
 
     # Try direct foreground
     result = user32.SetForegroundWindow(hwnd)
+    logger.info("SetForegroundWindow hwnd=%d direct result=%s", hwnd, bool(result))
     if result:
         return True
 
@@ -155,5 +351,12 @@ def foreground_window_windows(hwnd: int) -> bool:
     user32.keybd_event(VK_ALT, 0, KEYEVENTF_EXTENDEDKEY, 0)
     result = user32.SetForegroundWindow(hwnd)
     user32.keybd_event(VK_ALT, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0)
+    logger.info("SetForegroundWindow hwnd=%d alt-trick result=%s", hwnd, bool(result))
 
     return bool(result)
+
+
+def log_foreground_state(label: str) -> None:
+    """Log the current foreground window — used by controller for post-click checks."""
+    hwnd, title, pid = _get_foreground_info()
+    logger.info("foreground %s hwnd=%d pid=%d title=%r", label, hwnd, pid, title[:120])
