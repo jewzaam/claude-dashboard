@@ -52,7 +52,7 @@ _EMOJI_MIN_SIZE = 12  # minimum emoji dimension in pixels
 _MARGIN_LEFT = 6  # left margin for first element in a row
 _MARGIN_RIGHT = 6  # right margin for last element in a row
 _ELEMENT_GAP = 2  # horizontal gap between adjacent elements
-_USAGE_LABEL_GAP = 4  # gap between usage labels (5h, 7d)
+_COUNTS_RIGHT_PAD = 6  # right padding for counts label
 _HIGHLIGHT_THICKNESS = 1  # title bar border thickness
 _CLICK_DELAY_MS = 200  # delay before single-click fires (allows double-click)
 
@@ -76,7 +76,6 @@ class MainWindowCallbacks:
     on_quit: Callable[[], None] | None = None
     on_build_sessions_menu: Callable[[tk.Menu], None] | None = None
     on_open_folder: Callable[[], None] | None = None
-    on_cost_click: Callable[[int, int], None] | None = None
     on_ghost_toggle: Callable[..., None] | None = None
     on_width_save: Callable[[int], None] | None = None
 
@@ -279,10 +278,8 @@ class MainWindow:
         self._on_quit = cb.on_quit
         self._on_build_sessions_menu = cb.on_build_sessions_menu
         self._on_open_folder = cb.on_open_folder
-        self._on_cost_click = cb.on_cost_click
         self._on_ghost_toggle = cb.on_ghost_toggle
         self._on_width_save = cb.on_width_save
-        self._cost_popup: Any = None
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._rows: dict[int, dict[str, Any]] = {}
         self._row_order: list[int] = []
@@ -473,8 +470,8 @@ class MainWindow:
         )
         self._title_text_label.pack(side=tk.LEFT, padx=(_ELEMENT_GAP, 0))
 
-        # Right side (pack order: daily cost first, then 7d, then 5h — rightmost first)
-        self._title_cost_label = tk.Label(
+        # Right side: session counts ({active} (+hidden) [+ghost])
+        self._title_counts_label = tk.Label(
             frame,
             text="",
             bg=bg,
@@ -482,27 +479,7 @@ class MainWindow:
             font=self._font_body,
             anchor=tk.E,
         )
-        self._title_cost_label.pack(side=tk.RIGHT, padx=(0, _MARGIN_RIGHT))
-
-        self._title_7d_label = tk.Label(
-            frame,
-            text="",
-            bg=bg,
-            fg=fg,
-            font=self._font_body,
-            anchor=tk.E,
-        )
-        self._title_7d_label.pack(side=tk.RIGHT, padx=(0, _USAGE_LABEL_GAP))
-
-        self._title_5h_label = tk.Label(
-            frame,
-            text="",
-            bg=bg,
-            fg=fg,
-            font=self._font_body,
-            anchor=tk.E,
-        )
-        self._title_5h_label.pack(side=tk.RIGHT, padx=(0, _USAGE_LABEL_GAP))
+        self._title_counts_label.pack(side=tk.RIGHT, padx=(0, _COUNTS_RIGHT_PAD))
 
         # Bind drag (window move) on non-cost title bar widgets
         move_widgets = [
@@ -522,15 +499,12 @@ class MainWindow:
             w.bind("<ButtonRelease-1>", self._on_shade_toggle)
             w.bind("<Button-2>", self._on_ghost_toggle_click)
 
-        # Cost/usage labels: drag to resize width, click for cost popup
-        cost_widgets = [self._title_cost_label, self._title_7d_label, self._title_5h_label]
-        for w in cost_widgets:
-            w.configure(cursor="sb_h_double_arrow")
-            w.bind("<Button-1>", self._on_resize_start)
-            w.bind("<B1-Motion>", self._on_resize_motion)
-            w.bind("<ButtonRelease-1>", self._on_resize_end)
-            w.bind("<Button-3>", self._on_title_bar_right_click)
-            w.bind("<Leave>", self._on_cost_label_leave)
+        # Counts label: drag to resize width
+        self._title_counts_label.configure(cursor="sb_h_double_arrow")
+        self._title_counts_label.bind("<Button-1>", self._on_resize_start)
+        self._title_counts_label.bind("<B1-Motion>", self._on_resize_motion)
+        self._title_counts_label.bind("<ButtonRelease-1>", self._on_resize_end)
+        self._title_counts_label.bind("<Button-3>", self._on_title_bar_right_click)
 
         return frame
 
@@ -591,9 +565,7 @@ class MainWindow:
             self._title_icon,
             self._title_emoji_label,
             self._title_text_label,
-            self._title_cost_label,
-            self._title_7d_label,
-            self._title_5h_label,
+            self._title_counts_label,
         ]:
             try:
                 w["background"] = bg
@@ -601,9 +573,7 @@ class MainWindow:
                 pass
 
         self._title_text_label.configure(fg=fg)
-        self._title_cost_label.configure(fg=fg)
-        self._title_5h_label.configure(fg=fg)
-        self._title_7d_label.configure(fg=fg)
+        self._title_counts_label.configure(fg=fg)
 
         # Eye icon: reflects highest-priority git status across all visible rows
         icon_size = self._icon_size
@@ -703,12 +673,6 @@ class MainWindow:
             if self._on_ghost_toggle:
                 self._on_ghost_toggle()
 
-    def _on_cost_label_leave(self, event: Any):
-        """Mouse left the cost label area — dismiss any open cost popup."""
-        if self._cost_popup is not None:
-            self._cost_popup.dismiss()
-            self._cost_popup = None
-
     def _on_title_bar_right_click(self, event: Any):
         """Show session visibility toggles + Settings / Restart / Quit on title bar right-click."""
         self._title_menu.delete(0, tk.END)
@@ -741,47 +705,29 @@ class MainWindow:
     def update_title_bar(
         self,
         *,
-        daily_cost: float,
-        limits: dict,
         active: int = 0,
         hidden_live: int = 0,
         hidden_ghost: int = 0,
         highest_state_color: str = "",
         highest_git_status: "GitStatus | None" = None,
     ):
-        """Update the title bar with current cost, limit data, and state icon."""
+        """Update the title bar with session counts and state icon."""
         self._last_highest_state_color = highest_state_color
         self._last_highest_git_status = highest_git_status
         self._apply_title_bar_style()
         fg = self._title_fg
 
-        suffix = ""
+        self._title_text_label.configure(text=config.TITLE_TEXT)
+
+        # Right-side counts
+        counts = ""
         if active > 0:
-            suffix += f" {{{active}}}"
+            counts += f" {{{active}}}"
         if hidden_live > 0:
-            suffix += f" (+{hidden_live})"
+            counts += f" (+{hidden_live})"
         if hidden_ghost > 0:
-            suffix += f" [+{hidden_ghost}]"
-        self._title_text_label.configure(text=f"{config.TITLE_TEXT}{suffix}")
-
-        # Right-side info
-        cost_text = f"${daily_cost:.2f}" if daily_cost > 0 else ""
-        self._title_cost_label.configure(text=cost_text, fg=fg)
-
-        five_hour = limits.get("five_hour", {})
-        seven_day = limits.get("seven_day", {})
-
-        five_util = five_hour.get("utilization") if isinstance(five_hour, dict) else None
-        seven_util = seven_day.get("utilization") if isinstance(seven_day, dict) else None
-
-        self._title_5h_label.configure(
-            text=f"5h: {five_util:.0f}%" if five_util is not None else "",
-            fg=fg,
-        )
-        self._title_7d_label.configure(
-            text=f"7d: {seven_util:.0f}%" if seven_util is not None else "",
-            fg=fg,
-        )
+            counts += f" [+{hidden_ghost}]"
+        self._title_counts_label.configure(text=counts.strip(), fg=fg)
 
         # Update title bar height
         try:
@@ -817,9 +763,7 @@ class MainWindow:
         else:
             self._title_emoji_label.configure(font=self._font_emoji)
         self._title_text_label.configure(font=self._font_body)
-        self._title_cost_label.configure(font=self._font_body)
-        self._title_7d_label.configure(font=self._font_body)
-        self._title_5h_label.configure(font=self._font_body)
+        self._title_counts_label.configure(font=self._font_body)
 
         # Window attributes
         self._window.wm_attributes("-topmost", bool(settings.always_on_top))
@@ -962,9 +906,6 @@ class MainWindow:
         if self._dragged:
             if self._on_width_save:
                 self._on_width_save(self._settings.row_width)
-        else:
-            if self._on_cost_click:
-                self._on_cost_click(event.x_root, event.y_root)
         return "break"
 
     # ------------------------------------------------------------------

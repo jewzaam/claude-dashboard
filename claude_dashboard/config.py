@@ -131,11 +131,6 @@ VSCODE_TASKS_JSON_TEMPLATE = json.dumps(
 
 VSCODE_TASKS_JSON_HASH = hashlib.sha256(VSCODE_TASKS_JSON_TEMPLATE.encode("utf-8")).hexdigest()
 
-# External data paths (my-claude-stuff-data)
-STATUSLINE_DATA_DIR = CLAUDE_HOME / "my-claude-stuff-data"
-SESSION_TRACKER_DIR = STATUSLINE_DATA_DIR / "session-tracker"
-OAUTH_USAGE_CACHE = STATUSLINE_DATA_DIR / "statusline-cache" / "oauth_usage.json"
-
 # Status emoji images (Noto Color Emoji, Apache 2.0)
 _ASSETS = Path(__file__).parent / "assets"
 EMOJI_IMAGES: dict[StatusState | None, Path] = {
