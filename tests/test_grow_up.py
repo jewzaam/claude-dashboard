@@ -123,9 +123,7 @@ class TestTrackedBottomEdge:
             win._title_emoji_label = MagicMock()
             win._title_emoji_image = None
             win._title_text_label = MagicMock()
-            win._title_cost_label = MagicMock()
-            win._title_5h_label = MagicMock()
-            win._title_7d_label = MagicMock()
+            win._title_counts_label = MagicMock()
             win._icon_size = 20
             win._emoji_img_size = 16
             win._tracked_x = 100
@@ -185,9 +183,7 @@ class TestTrackedBottomEdge:
             win._title_emoji_label = MagicMock()
             win._title_emoji_image = None
             win._title_text_label = MagicMock()
-            win._title_cost_label = MagicMock()
-            win._title_5h_label = MagicMock()
-            win._title_7d_label = MagicMock()
+            win._title_counts_label = MagicMock()
             win._icon_size = 20
             win._emoji_img_size = 16
             win._tracked_x = 100
