@@ -106,7 +106,10 @@ class _HookHandler(BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"{}")
+        try:
+            self.wfile.write(b"{}")
+        except BrokenPipeError:
+            pass
 
     def _dispatch(self, *, session_id, event, state, agent_id, body):
         """Route a parsed hook event to the appropriate server callback."""
