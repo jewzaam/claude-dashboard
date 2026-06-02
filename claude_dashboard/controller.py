@@ -1058,9 +1058,11 @@ class AppController:
             self._refresh_ui()
 
     def _on_row_right_click(self, session: SessionInfo, x: int, y: int):
-        """Per-row right-click: ghost gets Dismiss/Open, live gets Hide/Clear State."""
+        """Per-row right-click: sandbox/ghost/live get distinct menus."""
         entry = self._sessions.get(session.pid)
-        if entry and entry.unattached:
+        if entry and entry.sandbox:
+            self._show_sandbox_context_menu(session, x, y)
+        elif entry and entry.unattached:
             self._show_ghost_context_menu(session, x, y)
         else:
             self._show_live_context_menu(session, x, y)
@@ -1104,6 +1106,71 @@ class AppController:
 
         self._context_menu_open = True
         popup_menu_clamped(self._context_menu, x=x, y=y)
+
+    def _show_sandbox_context_menu(self, session: SessionInfo, x: int, y: int):
+        """Show context menu for sandbox sessions: Open, Hide, Delete."""
+        if self._context_menu_open:
+            self._context_menu.unpost()
+            self._context_menu_open = False
+            return
+        self._context_menu.unpost()
+        self._context_menu.delete(0, tk.END)
+
+        cwd_display = cwd_relative_to_home(cwd=session.cwd)
+        entry = self._sessions.get(session.pid)
+
+        def open_in_vscode():
+            self._launch_vscode(folder=session.cwd)
+
+        def hide():
+            if entry:
+                entry.hidden = True
+                logger.info("sandbox %s hidden via context menu", cwd_display)
+                self._save_session_state()
+                self._refresh_ui()
+
+        def delete_sandbox():
+            sandbox_name = Path(session.cwd).name
+            self._sessions.pop(session.pid, None)
+            self._session_id_to_pid.pop(session.session_id, None)
+            logger.info("sandbox %s delete requested", sandbox_name)
+            self._refresh_ui()
+            threading.Thread(
+                target=self._run_sandbox_delete,
+                args=(sandbox_name,),
+                daemon=True,
+            ).start()
+
+        self._context_menu.add_command(label=f"Sandbox: {cwd_display}", state=tk.DISABLED)
+        self._context_menu.add_separator()
+        if entry and entry.git_status == config.GitStatus.PUSHED_NOT_MERGED:
+            self._context_menu.add_command(
+                label="Open PR",
+                command=lambda: self._open_pr(session),
+            )
+        self._context_menu.add_command(label="Open in VS Code", command=open_in_vscode)
+        self._context_menu.add_command(label="Hide", command=hide)
+        self._context_menu.add_command(label="Delete", command=delete_sandbox)
+
+        self._context_menu_open = True
+        popup_menu_clamped(self._context_menu, x=x, y=y)
+
+    def _run_sandbox_delete(self, sandbox_name: str):
+        """Run sandbox.sh --delete <name> in a background thread."""
+        sandbox_sh = shutil.which("sandbox.sh")
+        if not sandbox_sh:
+            logger.warning("sandbox.sh not found on PATH, cannot delete %s", sandbox_name)
+            return
+        try:
+            subprocess.run(
+                [sandbox_sh, "--delete", sandbox_name],
+                capture_output=True,
+                timeout=30,
+                creationflags=config.SUBPROCESS_FLAGS,
+            )
+            logger.info("sandbox delete completed name=%s", sandbox_name)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning("sandbox delete failed name=%s error=%s", sandbox_name, exc)
 
     def _show_ghost_context_menu(self, session: SessionInfo, x: int, y: int):
         """Show context menu for ghost (unattached) sessions."""
