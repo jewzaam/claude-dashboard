@@ -13,6 +13,7 @@ class ContainerType(str, Enum):
     VSCODE = "VSCode"
     TERMINAL = "Terminal"
     GITBASH = "GitBash"
+    SANDBOX = "Sandbox"
     SCREEN = "Screen"
     UNKNOWN = "Unknown"
 

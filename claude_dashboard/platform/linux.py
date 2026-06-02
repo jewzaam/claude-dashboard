@@ -266,7 +266,7 @@ def foreground_window_linux(container: ContainerInfo, *, cwd: str = "") -> bool:
     VS Code: `code /path` CLI — reliable, no ambiguity with multiple windows.
     Terminal: window-calls GNOME extension via D-Bus (Wayland-native).
     """
-    if container.container_type == ContainerType.VSCODE and cwd:
+    if container.container_type in (ContainerType.VSCODE, ContainerType.SANDBOX) and cwd:
         return _foreground_code_cli(cwd)
 
     # Terminal windows: D-Bus window activation
