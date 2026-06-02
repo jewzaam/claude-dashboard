@@ -487,7 +487,64 @@ def cwd_relative_to_home(*, cwd: str) -> str:
     return cwd_normalized
 
 
+_GIT_STATUS_PRIORITY = {
+    GitStatus.UNSTAGED_CHANGES: 0,
+    GitStatus.STAGED_UNCOMMITTED: 1,
+    GitStatus.COMMITTED_NOT_PUSHED: 2,
+    GitStatus.PUSHED_NOT_MERGED: 3,
+    GitStatus.CLEAN: 4,
+}
+
 SANDBOXES_DIR = Path.home() / "sandboxes"
+
+
+def read_sandbox_repos(*, sandbox_dir: str) -> list[str]:
+    """Read manifest.json and return paths to repo subdirs that exist."""
+    manifest = Path(sandbox_dir) / "manifest.json"
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+    repos = data.get("repos")
+    if not isinstance(repos, dict):
+        return []
+    result = []
+    for repo_name in repos:
+        repo_dir = Path(sandbox_dir) / repo_name
+        if repo_dir.is_dir():
+            result.append(str(repo_dir))
+    return result
+
+
+def sandbox_git_check(*, sandbox_dir: str) -> tuple[GitStatus, bool, str]:
+    """Aggregate git status across all repos in a sandbox.
+
+    Returns ``(highest_priority_status, any_merged, first_non_trunk_branch)``.
+    """
+    repos = read_sandbox_repos(sandbox_dir=sandbox_dir)
+    if not repos:
+        return (GitStatus.CLEAN, False, "")
+
+    best_status = GitStatus.CLEAN
+    best_priority = _GIT_STATUS_PRIORITY[GitStatus.CLEAN]
+    any_merged = False
+    first_branch = ""
+
+    for repo_path in repos:
+        remote, trunk_ref, trunk_branch = read_trunk_info(cwd=repo_path)
+        branch = detect_branch(cwd=repo_path, trunk_branch=trunk_branch)
+        status, merged = git_check(cwd=repo_path, trunk_ref=trunk_ref, branch=branch)
+
+        priority = _GIT_STATUS_PRIORITY.get(status, 4)
+        if priority < best_priority:
+            best_status = status
+            best_priority = priority
+        if merged:
+            any_merged = True
+        if branch and not first_branch:
+            first_branch = branch
+
+    return (best_status, any_merged, first_branch)
 
 
 def discover_sandbox_sessions() -> list[SessionInfo]:

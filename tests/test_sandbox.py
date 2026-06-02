@@ -5,8 +5,13 @@ import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
+from claude_dashboard.config import GitStatus
 from claude_dashboard.platform.base import ContainerInfo, ContainerType
-from claude_dashboard.session import discover_sandbox_sessions
+from claude_dashboard.session import (
+    discover_sandbox_sessions,
+    read_sandbox_repos,
+    sandbox_git_check,
+)
 
 
 def _make_sandbox_json(sandboxes):
@@ -180,6 +185,130 @@ class TestDiscoverSandboxSessions:
             sessions = discover_sandbox_sessions()
 
         assert sessions == []
+
+
+class TestReadSandboxRepos:
+    def test_reads_repos_from_manifest(self, tmp_path):
+        manifest = {
+            "name": "test",
+            "repos": {
+                "repo-a": {"url": "git@example.com:a.git", "ref": "main"},
+                "repo-b": {"url": "git@example.com:b.git", "ref": "main"},
+            },
+        }
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (tmp_path / "repo-a").mkdir()
+        (tmp_path / "repo-b").mkdir()
+
+        repos = read_sandbox_repos(sandbox_dir=str(tmp_path))
+        assert len(repos) == 2
+        assert any("repo-a" in r for r in repos)
+        assert any("repo-b" in r for r in repos)
+
+    def test_skips_missing_repo_dir(self, tmp_path):
+        manifest = {"name": "test", "repos": {"exists": {}, "missing": {}}}
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (tmp_path / "exists").mkdir()
+
+        repos = read_sandbox_repos(sandbox_dir=str(tmp_path))
+        assert len(repos) == 1
+        assert "exists" in repos[0]
+
+    def test_no_manifest(self, tmp_path):
+        repos = read_sandbox_repos(sandbox_dir=str(tmp_path))
+        assert repos == []
+
+    def test_invalid_manifest(self, tmp_path):
+        (tmp_path / "manifest.json").write_text("not json{", encoding="utf-8")
+        repos = read_sandbox_repos(sandbox_dir=str(tmp_path))
+        assert repos == []
+
+    def test_no_repos_key(self, tmp_path):
+        (tmp_path / "manifest.json").write_text('{"name": "test"}', encoding="utf-8")
+        repos = read_sandbox_repos(sandbox_dir=str(tmp_path))
+        assert repos == []
+
+
+class TestSandboxGitCheck:
+    def test_no_repos_returns_clean(self, tmp_path):
+        status, merged, branch = sandbox_git_check(sandbox_dir=str(tmp_path))
+        assert status == GitStatus.CLEAN
+        assert merged is False
+        assert branch == ""
+
+    def test_aggregates_highest_priority(self, tmp_path):
+        manifest = {"name": "test", "repos": {"a": {}, "b": {}}}
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        repo_a = tmp_path / "a"
+        repo_b = tmp_path / "b"
+        repo_a.mkdir()
+        repo_b.mkdir()
+
+        with (
+            patch(
+                "claude_dashboard.session.read_trunk_info",
+                return_value=("origin", "origin/main", "main"),
+            ),
+            patch("claude_dashboard.session.detect_branch", return_value=""),
+            patch(
+                "claude_dashboard.session.git_check",
+                side_effect=[
+                    (GitStatus.CLEAN, False),
+                    (GitStatus.UNSTAGED_CHANGES, False),
+                ],
+            ),
+        ):
+            status, merged, branch = sandbox_git_check(sandbox_dir=str(tmp_path))
+
+        assert status == GitStatus.UNSTAGED_CHANGES
+
+    def test_any_merged_propagates(self, tmp_path):
+        manifest = {"name": "test", "repos": {"a": {}, "b": {}}}
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+
+        with (
+            patch(
+                "claude_dashboard.session.read_trunk_info",
+                return_value=("origin", "origin/main", "main"),
+            ),
+            patch("claude_dashboard.session.detect_branch", return_value="feature"),
+            patch(
+                "claude_dashboard.session.git_check",
+                side_effect=[
+                    (GitStatus.PUSHED_NOT_MERGED, False),
+                    (GitStatus.PUSHED_NOT_MERGED, True),
+                ],
+            ),
+        ):
+            status, merged, branch = sandbox_git_check(sandbox_dir=str(tmp_path))
+
+        assert merged is True
+
+    def test_first_branch_returned(self, tmp_path):
+        manifest = {"name": "test", "repos": {"a": {}, "b": {}}}
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+
+        with (
+            patch(
+                "claude_dashboard.session.read_trunk_info",
+                return_value=("origin", "origin/main", "main"),
+            ),
+            patch(
+                "claude_dashboard.session.detect_branch",
+                side_effect=["", "feature-x"],
+            ),
+            patch(
+                "claude_dashboard.session.git_check",
+                return_value=(GitStatus.CLEAN, False),
+            ),
+        ):
+            status, merged, branch = sandbox_git_check(sandbox_dir=str(tmp_path))
+
+        assert branch == "feature-x"
 
 
 class TestSandboxContainerType:
