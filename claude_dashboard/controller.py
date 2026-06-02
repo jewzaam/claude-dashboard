@@ -21,6 +21,7 @@ from claude_dashboard.file_utils import atomic_write_json
 from claude_dashboard.hook_server import HookServer
 from claude_dashboard.platform.base import (
     ContainerInfo,
+    ContainerType,
     detect_container,
     find_window_for_session,
     foreground_window,
@@ -30,6 +31,7 @@ from claude_dashboard.session import (
     cwd_basename,
     cwd_relative_to_home,
     detect_branch,
+    discover_sandbox_sessions,
     discover_sessions,
     git_check,
     read_trunk_info,
@@ -114,6 +116,7 @@ class _SessionEntry:
         "merged",
         "agents",
         "unattached",
+        "sandbox",
         "last_active",
     )
 
@@ -128,6 +131,7 @@ class _SessionEntry:
         self.merged: bool = False
         self.agents: dict[str, _AgentEntry] = {}
         self.unattached: bool = False
+        self.sandbox: bool = False
         self.last_active: float = 0.0
 
     @property
@@ -229,6 +233,12 @@ class AppController:
         self._ghost_git_tick_counter = 0
         self._ghost_git_tick_interval = max(300 // max(self._settings.poll_interval_seconds, 1), 1)
 
+        # Sandbox VS Code detection: check every ~30s
+        self._sandbox_vscode_tick_counter = 0
+        self._sandbox_vscode_tick_interval = max(
+            30 // max(self._settings.poll_interval_seconds, 1), 1
+        )
+
         # Debounce state (FR-043)
         self._debounce_id: str | None = None
         # Agent permission debounce: agent_id -> after() id
@@ -324,16 +334,47 @@ class AppController:
                 if session.pid not in self._sessions:
                     self._add_session(session)
 
-            # 2. Convert dead sessions to ghosts
+            # 2. Convert dead sessions to ghosts (skip sandbox entries)
             dead_pids = set(self._sessions.keys()) - alive_pids
             for pid in dead_pids:
                 entry = self._sessions.get(pid)
-                if entry and not entry.unattached:
+                if entry and not entry.unattached and not entry.sandbox:
                     cwd = entry.session.cwd
                     flagged = entry.flagged
                     last_active = entry.last_active
                     self._remove_session(pid)
                     self._create_ghost(cwd=cwd, flagged=flagged, last_active=last_active)
+
+            # 2b. Discover and reconcile sandbox sessions
+            sandbox_sessions = discover_sandbox_sessions()
+            sandbox_ids = {s.session_id for s in sandbox_sessions}
+            # Register new sandboxes
+            for sb_session in sandbox_sessions:
+                if sb_session.session_id not in self._session_id_to_pid:
+                    self._add_sandbox_session(sb_session)
+            # Ghost sandboxes that disappeared from openshell list
+            gone_sandbox_pids = [
+                pid
+                for pid, entry in self._sessions.items()
+                if entry.sandbox and entry.session.session_id not in sandbox_ids
+            ]
+            for pid in gone_sandbox_pids:
+                entry = self._sessions[pid]
+                cwd = entry.session.cwd
+                flagged = entry.flagged
+                last_active = entry.last_active
+                self._remove_session(pid)
+                self._create_ghost(cwd=cwd, flagged=flagged, last_active=last_active)
+
+            # 2c. Update sandbox VS Code connection state
+            self._sandbox_vscode_tick_counter += 1
+            sandbox_vscode_tick = (
+                not self._first_tick_done
+                or self._sandbox_vscode_tick_counter >= self._sandbox_vscode_tick_interval
+            )
+            if sandbox_vscode_tick:
+                self._sandbox_vscode_tick_counter = 0
+                self._update_sandbox_vscode_state()
 
             # 3. On first tick, create unattached placeholders from state file
             if not self._first_tick_done:
@@ -514,6 +555,79 @@ class AppController:
             cwd_short,
             entry.state.value,
         )
+
+    def _add_sandbox_session(self, session: SessionInfo):
+        """Register a sandbox session (no host PID, no container detection)."""
+        if self._is_ignored(session.cwd):
+            logger.debug("sandbox ignored (cwd=%s matches ignore_regex)", session.cwd)
+            return
+        self._next_synthetic_pid -= 1
+        synthetic_pid = self._next_synthetic_pid
+        session = SessionInfo(
+            pid=synthetic_pid,
+            session_id=session.session_id,
+            cwd=session.cwd,
+            started_at=session.started_at,
+            entrypoint=session.entrypoint,
+        )
+        entry = _SessionEntry(session)
+        entry.sandbox = True
+        entry.unattached = True
+        entry.last_active = _now_epoch()
+        entry.container = ContainerInfo(container_type=ContainerType.SANDBOX)
+        entry.branch = detect_branch(cwd=session.cwd, trunk_branch=self._trunk_branch(session.cwd))
+        trunk_ref = self._trunk_ref(session.cwd)
+        entry.git_status, entry.merged = git_check(
+            cwd=session.cwd, trunk_ref=trunk_ref, branch=entry.branch
+        )
+
+        # Replace unattached placeholder if one exists for this CWD
+        unattached_pid = self._find_unattached_pid(session.cwd)
+        if unattached_pid is not None:
+            old = self._sessions.pop(unattached_pid, None)
+            if old:
+                entry.flagged = old.flagged
+                entry.hidden = False
+        else:
+            self._apply_saved_state(entry)
+
+        self._sessions[synthetic_pid] = entry
+        self._session_id_to_pid[session.session_id] = synthetic_pid
+        logger.debug(
+            "sandbox session project=%s pid=%d",
+            cwd_basename(cwd=session.cwd),
+            synthetic_pid,
+        )
+
+    def _update_sandbox_vscode_state(self):
+        """Check which sandboxes have VS Code connected and update unattached state."""
+        sandbox_entries = [e for e in self._sessions.values() if e.sandbox]
+        if not sandbox_entries:
+            return
+
+        if config.IS_LINUX:
+            from claude_dashboard.platform.linux import _list_windows_dbus
+
+            windows = _list_windows_dbus()
+        else:
+            windows = []
+
+        vscode_titles = set()
+        for w in windows:
+            wm_class = (w.get("wm_class") or "").lower()
+            if "code" in wm_class or "cursor" in wm_class:
+                vscode_titles.add((w.get("title") or "").lower())
+
+        for entry in sandbox_entries:
+            folder_name = Path(entry.session.cwd).name.lower()
+            has_vscode = any(folder_name in title for title in vscode_titles)
+            if entry.unattached == has_vscode:
+                entry.unattached = not has_vscode
+                logger.debug(
+                    "sandbox %s vscode_connected=%s",
+                    folder_name,
+                    has_vscode,
+                )
 
     def _find_unattached_pid(self, cwd: str) -> int | None:
         """Find an unattached placeholder PID for the given CWD."""
@@ -896,7 +1010,12 @@ class AppController:
         logger.info("row clicked pid=%d cwd=%s", session.pid, session.cwd)
         entry = self._sessions.get(session.pid)
 
-        # Unattached sessions open in VS Code on left-click
+        # Sandbox sessions open in VS Code without touching tasks.json
+        if entry and entry.sandbox:
+            self._launch_vscode(folder=session.cwd)
+            return
+
+        # Unattached sessions open in VS Code (with tasks.json for Claude launch)
         if entry and entry.unattached:
             self._open_in_vscode(cwd=session.cwd)
             return

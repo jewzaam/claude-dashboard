@@ -6,6 +6,7 @@ import logging
 import subprocess
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import psutil
@@ -484,3 +485,76 @@ def cwd_relative_to_home(*, cwd: str) -> str:
         relative = cwd_normalized[len(home_normalized) :]
         return "~" + relative
     return cwd_normalized
+
+
+SANDBOXES_DIR = Path.home() / "sandboxes"
+
+
+def discover_sandbox_sessions() -> list[SessionInfo]:
+    """Discover Claude sessions running in OpenShell sandboxes.
+
+    Runs ``openshell sandbox list --output json``, filters to Ready phase,
+    and returns a SessionInfo per sandbox whose host directory exists.
+    Returns an empty list if ``openshell`` is not installed or fails.
+    """
+    try:
+        result = subprocess.run(
+            ["openshell", "sandbox", "list", "--output", "json"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=config.SUBPROCESS_FLAGS,
+        )
+        if result.returncode != 0:
+            logger.debug("openshell sandbox list failed rc=%d", result.returncode)
+            return []
+    except FileNotFoundError:
+        logger.debug("openshell not installed, skipping sandbox discovery")
+        return []
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.debug("openshell sandbox list error: %s", exc)
+        return []
+
+    try:
+        sandboxes = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        logger.debug("openshell sandbox list returned invalid JSON")
+        return []
+
+    if not isinstance(sandboxes, list):
+        return []
+
+    sessions: list[SessionInfo] = []
+    for sb in sandboxes:
+        if not isinstance(sb, dict):
+            continue
+        if sb.get("phase") != "Ready":
+            continue
+        name = sb.get("name", "")
+        if not name:
+            continue
+        sandbox_dir = SANDBOXES_DIR / name
+        if not sandbox_dir.is_dir():
+            continue
+
+        started_at = 0
+        created_at = sb.get("created_at", "")
+        if created_at:
+            try:
+                dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+                dt = dt.replace(tzinfo=timezone.utc)
+                started_at = int(dt.timestamp() * 1000)
+            except ValueError:
+                pass
+
+        sessions.append(
+            SessionInfo(
+                pid=0,
+                session_id=f"sandbox-{name}",
+                cwd=str(sandbox_dir),
+                started_at=started_at,
+                entrypoint="sandbox",
+            )
+        )
+
+    return sorted(sessions, key=lambda s: cwd_relative_to_home(cwd=s.cwd).lower())
