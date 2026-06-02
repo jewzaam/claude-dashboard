@@ -35,6 +35,7 @@ from claude_dashboard.session import (
     discover_sessions,
     git_check,
     read_trunk_info,
+    sandbox_git_check,
     validate_pid,
 )
 from claude_dashboard.settings import Settings, load_settings, save_settings
@@ -377,7 +378,9 @@ class AppController:
             fetched_cwds: set[str] = set()
             for entry in self._sessions.values():
                 is_ghost = entry.unattached
-                if is_ghost and not ghost_tick:
+                if is_ghost and entry.sandbox and not sandbox_vscode_tick:
+                    continue
+                if is_ghost and not entry.sandbox and not ghost_tick:
                     continue
 
                 cwd = entry.session.cwd
@@ -407,17 +410,26 @@ class AppController:
                             pass
 
                 # Update branch, git status, and merge status
-                trunk_branch = self._trunk_branch(cwd)
-                entry.branch = detect_branch(cwd=cwd, trunk_branch=trunk_branch)
-                trunk_ref = self._trunk_ref(cwd)
-                start = time.monotonic()
-                new_git_status, new_merged = git_check(
-                    cwd=cwd, trunk_ref=trunk_ref, branch=entry.branch
-                )
-                elapsed = time.monotonic() - start
-                if elapsed <= 0.5:
-                    entry.git_status = new_git_status
-                    entry.merged = new_merged
+                if entry.sandbox:
+                    start = time.monotonic()
+                    new_git_status, new_merged, new_branch = sandbox_git_check(sandbox_dir=cwd)
+                    elapsed = time.monotonic() - start
+                    if elapsed <= 2.0:
+                        entry.git_status = new_git_status
+                        entry.merged = new_merged
+                        entry.branch = new_branch
+                else:
+                    trunk_branch = self._trunk_branch(cwd)
+                    entry.branch = detect_branch(cwd=cwd, trunk_branch=trunk_branch)
+                    trunk_ref = self._trunk_ref(cwd)
+                    start = time.monotonic()
+                    new_git_status, new_merged = git_check(
+                        cwd=cwd, trunk_ref=trunk_ref, branch=entry.branch
+                    )
+                    elapsed = time.monotonic() - start
+                    if elapsed <= 0.5:
+                        entry.git_status = new_git_status
+                        entry.merged = new_merged
 
             if fetched_cwds:
                 # Clear trunk cache after fetch so newly-added remotes are detected
@@ -546,11 +558,7 @@ class AppController:
         entry.unattached = True
         entry.last_active = _now_epoch()
         entry.container = ContainerInfo(container_type=ContainerType.SANDBOX)
-        entry.branch = detect_branch(cwd=session.cwd, trunk_branch=self._trunk_branch(session.cwd))
-        trunk_ref = self._trunk_ref(session.cwd)
-        entry.git_status, entry.merged = git_check(
-            cwd=session.cwd, trunk_ref=trunk_ref, branch=entry.branch
-        )
+        entry.git_status, entry.merged, entry.branch = sandbox_git_check(sandbox_dir=session.cwd)
 
         # Replace unattached placeholder if one exists for this CWD
         unattached_pid = self._find_unattached_pid(session.cwd)
