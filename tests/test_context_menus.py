@@ -315,32 +315,32 @@ class TestLaunchVscode:
 
 
 class TestOpenFolderAction:
-    """Test the _open_folder folder picker delegates to _open_in_vscode."""
+    """Test the _open_folder folder picker delegates to _launch_vscode."""
 
     @patch("claude_dashboard.controller.filedialog.askdirectory", return_value="/tmp/chosen")
-    def test_open_folder_delegates_to_open_in_vscode(self, mock_dialog):
+    def test_open_folder_delegates_to_launch_vscode(self, mock_dialog):
         from claude_dashboard.controller import AppController
 
         stub = object.__new__(AppController)
-        with patch.object(stub, "_open_in_vscode") as mock_open:
+        with patch.object(stub, "_launch_vscode") as mock_launch:
             stub._open_folder()
             mock_dialog.assert_called_once_with(title="Open folder in VS Code")
-            mock_open.assert_called_once_with(cwd="/tmp/chosen")
+            mock_launch.assert_called_once_with(folder="/tmp/chosen")
 
     @patch("claude_dashboard.controller.filedialog.askdirectory", return_value="")
     def test_open_folder_cancelled_does_nothing(self, mock_dialog):
         from claude_dashboard.controller import AppController
 
         stub = object.__new__(AppController)
-        with patch.object(stub, "_open_in_vscode") as mock_open:
+        with patch.object(stub, "_launch_vscode") as mock_launch:
             stub._open_folder()
-            mock_open.assert_not_called()
+            mock_launch.assert_not_called()
 
 
 class TestLeftClickGhost:
     """Test that left-click on ghost sessions opens in VS Code."""
 
-    def test_ghost_left_click_opens_in_vscode(self):
+    def test_ghost_left_click_launches_vscode(self):
         from claude_dashboard.controller import AppController
 
         session = _make_session(cwd="/tmp/ghost-project")
@@ -349,12 +349,12 @@ class TestLeftClickGhost:
 
         stub = object.__new__(AppController)
         stub._sessions = {session.pid: entry}
-        with patch.object(stub, "_open_in_vscode") as mock_open:
+        with patch.object(stub, "_launch_vscode") as mock_launch:
             stub._on_row_left_click(session)
-            mock_open.assert_called_once_with(cwd="/tmp/ghost-project")
+            mock_launch.assert_called_once_with(folder="/tmp/ghost-project")
 
-    def test_live_left_click_does_not_open_vscode(self):
-        """Live click never goes through the ghost `_open_in_vscode` path."""
+    def test_live_left_click_does_not_launch_vscode_ghost_path(self):
+        """Live click never goes through the ghost launch path."""
         from claude_dashboard.controller import AppController
 
         session = _make_session(cwd="/tmp/live-project")
@@ -365,7 +365,7 @@ class TestLeftClickGhost:
         stub._sessions = {session.pid: entry}
         stub._root = MagicMock()
         with (
-            patch.object(stub, "_open_in_vscode") as mock_open,
+            patch.object(stub, "_launch_vscode") as mock_launch,
             patch("claude_dashboard.controller.detect_container", return_value=ContainerInfo()),
             patch(
                 "claude_dashboard.controller.find_window_for_session",
@@ -374,7 +374,7 @@ class TestLeftClickGhost:
             patch("claude_dashboard.controller.foreground_window", return_value=True),
         ):
             stub._on_row_left_click(session)
-            mock_open.assert_not_called()
+            mock_launch.assert_not_called()
 
 
 class TestDoubleClickOpenPr:

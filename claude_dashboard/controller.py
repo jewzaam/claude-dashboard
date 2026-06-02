@@ -147,27 +147,6 @@ class _SessionEntry:
         return best
 
 
-def write_vscode_tasks_json(*, cwd: str) -> None:
-    """Write the VS Code tasks.json template to <cwd>/.vscode/tasks.json.
-
-    Skips if the file already exists (whether ours or user-modified).
-    The file is kept permanently and globally gitignored.
-    """
-    cwd_path = Path(cwd)
-    if not cwd_path.is_dir():
-        logger.warning("cwd does not exist, skipping tasks.json write cwd=%s", cwd)
-        return
-
-    tasks_path = cwd_path / ".vscode" / "tasks.json"
-    if tasks_path.exists():
-        logger.debug("tasks.json already exists cwd=%s", cwd)
-        return
-
-    tasks_path.parent.mkdir(parents=True, exist_ok=True)
-    tasks_path.write_text(config.VSCODE_TASKS_JSON_TEMPLATE, encoding="utf-8")
-    logger.info("wrote tasks.json cwd=%s", cwd)
-
-
 class AppController:
     """Central controller — discovers sessions, receives hook events, updates UI."""
 
@@ -353,18 +332,10 @@ class AppController:
                 if sb_session.session_id not in self._session_id_to_pid:
                     self._add_sandbox_session(sb_session)
             # Ghost sandboxes that disappeared from openshell list
-            gone_sandbox_pids = [
-                pid
-                for pid, entry in self._sessions.items()
-                if entry.sandbox and entry.session.session_id not in sandbox_ids
-            ]
-            for pid in gone_sandbox_pids:
-                entry = self._sessions[pid]
-                cwd = entry.session.cwd
-                flagged = entry.flagged
-                last_active = entry.last_active
-                self._remove_session(pid)
-                self._create_ghost(cwd=cwd, flagged=flagged, last_active=last_active)
+            for entry in self._sessions.values():
+                if entry.sandbox and entry.session.session_id not in sandbox_ids:
+                    entry.sandbox = False
+                    entry.unattached = True
 
             # 2c. Update sandbox VS Code connection state
             self._sandbox_vscode_tick_counter += 1
@@ -1015,9 +986,9 @@ class AppController:
             self._launch_vscode(folder=session.cwd)
             return
 
-        # Unattached sessions open in VS Code (with tasks.json for Claude launch)
+        # Unattached sessions open in VS Code
         if entry and entry.unattached:
-            self._open_in_vscode(cwd=session.cwd)
+            self._launch_vscode(folder=session.cwd)
             return
 
         container = entry.container if entry else None
@@ -1143,7 +1114,7 @@ class AppController:
             self._refresh_ui()
 
         def open_in_vscode():
-            self._open_in_vscode(cwd=session.cwd)
+            self._launch_vscode(folder=session.cwd)
 
         def hide():
             entry = self._sessions.get(session.pid)
@@ -1188,17 +1159,12 @@ class AppController:
         except OSError as exc:
             logger.warning("failed to launch VS Code for folder=%s error=%s", folder, exc)
 
-    def _open_in_vscode(self, *, cwd: str):
-        """Write tasks.json and launch VS Code for a directory."""
-        write_vscode_tasks_json(cwd=cwd)
-        self._launch_vscode(folder=cwd)
-
     def _open_folder(self):
         """Show a folder picker and open the selected folder in VS Code."""
         folder = filedialog.askdirectory(title="Open folder in VS Code")
         if not folder:
             return
-        self._open_in_vscode(cwd=folder)
+        self._launch_vscode(folder=folder)
 
     def _open_pr(self, session: SessionInfo):
         """Open the GitHub PR for the session's branch, or create-PR page if none exists."""
