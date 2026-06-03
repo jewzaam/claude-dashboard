@@ -332,6 +332,7 @@ class AppController:
             for sb_session in sandbox_sessions:
                 if sb_session.session_id not in self._session_id_to_pid:
                     self._add_sandbox_session(sb_session)
+                    logger.info("registered sandbox %s", sb_session.session_id)
             # Ghost sandboxes that disappeared from openshell list
             for entry in self._sessions.values():
                 if entry.sandbox and entry.session.session_id not in sandbox_ids:
@@ -1281,12 +1282,12 @@ class AppController:
             hide = False
         else:
             any_visible = any(
-                entry.unattached and not entry.hidden and not entry.flagged
+                entry.unattached and not entry.hidden and not entry.flagged and not entry.sandbox
                 for entry in self._sessions.values()
             )
             hide = any_visible
         for entry in self._sessions.values():
-            if entry.unattached and not entry.flagged:
+            if entry.unattached and not entry.flagged and not entry.sandbox:
                 entry.hidden = hide
         self._ghosts_hidden = hide
         logger.info("ghosts %s via title bar", "hidden" if hide else "shown")

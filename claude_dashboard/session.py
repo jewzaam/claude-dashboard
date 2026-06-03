@@ -563,19 +563,23 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
             creationflags=config.SUBPROCESS_FLAGS,
         )
         if result.returncode != 0:
-            logger.debug("openshell sandbox list failed rc=%d", result.returncode)
+            logger.info(
+                "openshell sandbox list failed rc=%d stderr=%s",
+                result.returncode,
+                result.stderr[:200],
+            )
             return []
     except FileNotFoundError:
         logger.debug("openshell not installed, skipping sandbox discovery")
         return []
     except (OSError, subprocess.TimeoutExpired) as exc:
-        logger.debug("openshell sandbox list error: %s", exc)
+        logger.info("openshell sandbox list error: %s", exc)
         return []
 
     try:
         sandboxes = json.loads(result.stdout)
     except json.JSONDecodeError:
-        logger.debug("openshell sandbox list returned invalid JSON")
+        logger.info("openshell sandbox list returned invalid JSON: %s", result.stdout[:200])
         return []
 
     if not isinstance(sandboxes, list):
@@ -592,6 +596,7 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
             continue
         sandbox_dir = SANDBOXES_DIR / name
         if not sandbox_dir.is_dir():
+            logger.info("sandbox %s skipped: dir %s not found", name, sandbox_dir)
             continue
 
         started_at = 0
@@ -614,4 +619,10 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
             )
         )
 
+    if sessions:
+        logger.info(
+            "sandbox discovery found %d: %s",
+            len(sessions),
+            [s.session_id for s in sessions],
+        )
     return sorted(sessions, key=lambda s: cwd_relative_to_home(cwd=s.cwd).lower())
