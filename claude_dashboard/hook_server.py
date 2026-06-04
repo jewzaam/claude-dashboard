@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from typing import Callable
 
+from claude_dashboard import config
 from claude_dashboard.config import StatusState
 
 logger = logging.getLogger(__name__)
@@ -171,7 +172,7 @@ class HookServer:
 
     def start(self):
         """Start serving on a daemon thread."""
-        self._server = _ReusableHTTPServer(("127.0.0.1", self._requested_port), _HookHandler)
+        self._server = _ReusableHTTPServer((config.HOOK_BIND, self._requested_port), _HookHandler)
         self._server.on_hook_event = self._on_hook_event  # type: ignore[attr-defined]
         self._server.on_session_end = self._on_session_end  # type: ignore[attr-defined]
         self._server.on_agent_stop = self._on_agent_stop  # type: ignore[attr-defined]
