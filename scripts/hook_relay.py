@@ -74,12 +74,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Relay Claude Code hook events to the dashboard HTTP server."
     )
     parser.add_argument("--debug", action="store_true", help="enable debug logging")
-    parser.add_argument(
-        "--quiet", "-q", action="store_true", help="suppress non-essential output"
-    )
-    parser.add_argument(
-        "--log-file", type=str, default=None, help="write log output to file"
-    )
+    parser.add_argument("--quiet", "-q", action="store_true", help="suppress non-essential output")
+    parser.add_argument("--log-file", type=str, default=None, help="write log output to file")
     parser.add_argument(
         "--marker",
         nargs="*",
@@ -112,8 +108,10 @@ def main(argv: list[str] | None = None) -> int:
             except (json.JSONDecodeError, TypeError):
                 logger.debug(json.dumps({"_raw": data, "_ts": _now_iso()}))
 
+        host = os.environ.get("CLAUDE_DASHBOARD_HOST", "127.0.0.1")
+        port = os.environ.get("CLAUDE_DASHBOARD_PORT", "17384")
         req = urllib.request.Request(
-            "http://127.0.0.1:17384/hook",
+            f"http://{host}:{port}/hook",
             data=data.encode(),
             headers={"Content-Type": "application/json"},
             method="POST",

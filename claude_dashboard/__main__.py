@@ -20,7 +20,7 @@ def _is_already_running() -> bool:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind(("127.0.0.1", config.HOOK_PORT))
+        sock.bind((config.HOOK_BIND, config.HOOK_PORT))
         return False
     except OSError:
         return True

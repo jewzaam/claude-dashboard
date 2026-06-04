@@ -72,6 +72,48 @@ class TestHookRelayStdinPath:
         assert req.full_url == "http://127.0.0.1:17384/hook"
         assert req.data == payload.encode()
 
+    def test_custom_host_from_env(self):
+        payload = json.dumps({"event": "Stop"})
+        with (
+            patch("sys.stdin", io.StringIO(payload)),
+            patch("urllib.request.urlopen") as mock_urlopen,
+            patch.dict("os.environ", {"CLAUDE_DASHBOARD_HOST": "host.containers.internal"}),
+        ):
+            rc = main([])
+        assert rc == EXIT_SUCCESS
+        req = mock_urlopen.call_args.args[0]
+        assert req.full_url == "http://host.containers.internal:17384/hook"
+
+    def test_custom_port_from_env(self):
+        payload = json.dumps({"event": "Stop"})
+        with (
+            patch("sys.stdin", io.StringIO(payload)),
+            patch("urllib.request.urlopen") as mock_urlopen,
+            patch.dict("os.environ", {"CLAUDE_DASHBOARD_PORT": "9999"}),
+        ):
+            rc = main([])
+        assert rc == EXIT_SUCCESS
+        req = mock_urlopen.call_args.args[0]
+        assert req.full_url == "http://127.0.0.1:9999/hook"
+
+    def test_custom_host_and_port_from_env(self):
+        payload = json.dumps({"event": "Stop"})
+        with (
+            patch("sys.stdin", io.StringIO(payload)),
+            patch("urllib.request.urlopen") as mock_urlopen,
+            patch.dict(
+                "os.environ",
+                {
+                    "CLAUDE_DASHBOARD_HOST": "host.containers.internal",
+                    "CLAUDE_DASHBOARD_PORT": "8080",
+                },
+            ),
+        ):
+            rc = main([])
+        assert rc == EXIT_SUCCESS
+        req = mock_urlopen.call_args.args[0]
+        assert req.full_url == "http://host.containers.internal:8080/hook"
+
     def test_network_failure_is_swallowed(self):
         payload = json.dumps({"event": "Stop"})
         with (
