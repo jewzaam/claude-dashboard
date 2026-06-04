@@ -20,3 +20,4 @@ class SessionRow(NamedTuple):
     merged: bool
     agent_count: int
     unattached: bool
+    sandbox_phase: str = ""

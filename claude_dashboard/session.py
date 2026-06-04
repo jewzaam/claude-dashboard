@@ -27,6 +27,7 @@ class SessionInfo:
     started_at: int
     pid_alive: bool = False
     entrypoint: str = "cli"
+    sandbox_phase: str = ""
 
 
 def discover_sessions(*, sessions_dir: Path | None = None) -> list[SessionInfo]:
@@ -589,8 +590,7 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
     for sb in sandboxes:
         if not isinstance(sb, dict):
             continue
-        if sb.get("phase") != "Ready":
-            continue
+        phase = sb.get("phase", "Unknown")
         name = sb.get("name", "")
         if not name:
             continue
@@ -616,6 +616,7 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
                 cwd=str(sandbox_dir),
                 started_at=started_at,
                 entrypoint="sandbox",
+                sandbox_phase=phase,
             )
         )
 

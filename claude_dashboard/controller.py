@@ -118,6 +118,7 @@ class _SessionEntry:
         "agents",
         "unattached",
         "sandbox",
+        "sandbox_phase",
         "last_active",
     )
 
@@ -133,6 +134,7 @@ class _SessionEntry:
         self.agents: dict[str, _AgentEntry] = {}
         self.unattached: bool = False
         self.sandbox: bool = False
+        self.sandbox_phase: str = ""
         self.last_active: float = 0.0
 
     @property
@@ -328,11 +330,17 @@ class AppController:
             # 2b. Discover and reconcile sandbox sessions
             sandbox_sessions = discover_sandbox_sessions()
             sandbox_ids = {s.session_id for s in sandbox_sessions}
-            # Register new sandboxes
+            # Register new sandboxes and update phase for existing ones
             for sb_session in sandbox_sessions:
                 if sb_session.session_id not in self._session_id_to_pid:
                     self._add_sandbox_session(sb_session)
                     logger.info("registered sandbox %s", sb_session.session_id)
+                else:
+                    pid = self._session_id_to_pid[sb_session.session_id]
+                    entry = self._sessions.get(pid)
+                    if entry and entry.sandbox_phase != sb_session.sandbox_phase:
+                        entry.sandbox_phase = sb_session.sandbox_phase
+                        entry.session.sandbox_phase = sb_session.sandbox_phase
             # Ghost sandboxes that disappeared from openshell list
             for entry in self._sessions.values():
                 if entry.sandbox and entry.session.session_id not in sandbox_ids:
@@ -553,9 +561,11 @@ class AppController:
             cwd=session.cwd,
             started_at=session.started_at,
             entrypoint=session.entrypoint,
+            sandbox_phase=session.sandbox_phase,
         )
         entry = _SessionEntry(session)
         entry.sandbox = True
+        entry.sandbox_phase = session.sandbox_phase
         entry.unattached = True
         entry.last_active = _now_epoch()
         entry.container = ContainerInfo(container_type=ContainerType.SANDBOX)
@@ -591,6 +601,9 @@ class AppController:
             windows = _list_windows_dbus()
         else:
             windows = []
+
+        if not windows:
+            logger.debug("sandbox vscode check: 0 windows from D-Bus")
 
         vscode_titles = set()
         for w in windows:
@@ -957,6 +970,7 @@ class AppController:
                 merged=entry.merged,
                 agent_count=len(entry.agents),
                 unattached=entry.unattached,
+                sandbox_phase=entry.sandbox_phase if entry.sandbox else "",
             )
             for entry in all_entries
             if not entry.hidden
@@ -1271,6 +1285,10 @@ class AppController:
         except OSError as exc:
             logger.warning("failed to open PR for cwd=%s error=%s", session.cwd, exc)
 
+    @staticmethod
+    def _is_error_sandbox(entry: "_SessionEntry") -> bool:
+        return entry.sandbox and entry.sandbox_phase == "Error"
+
     def _on_ghost_toggle(self, *, force_show: bool = False):
         """Middle-click on title bar — toggle ghost session visibility.
 
@@ -1282,12 +1300,15 @@ class AppController:
             hide = False
         else:
             any_visible = any(
-                entry.unattached and not entry.hidden and not entry.flagged and not entry.sandbox
+                entry.unattached
+                and not entry.hidden
+                and not entry.flagged
+                and not self._is_error_sandbox(entry)
                 for entry in self._sessions.values()
             )
             hide = any_visible
         for entry in self._sessions.values():
-            if entry.unattached and not entry.flagged and not entry.sandbox:
+            if entry.unattached and not entry.flagged and not self._is_error_sandbox(entry):
                 entry.hidden = hide
         self._ghosts_hidden = hide
         logger.info("ghosts %s via title bar", "hidden" if hide else "shown")
