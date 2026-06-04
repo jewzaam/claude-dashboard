@@ -5,7 +5,11 @@ import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
-from claude_dashboard.config import GitStatus
+from claude_dashboard.config import (
+    EMOJI_SANDBOX_ERROR_ACTIVE,
+    GitStatus,
+    SandboxPhase,
+)
 from claude_dashboard.platform.base import ContainerInfo, ContainerType
 from claude_dashboard.session import (
     discover_sandbox_sessions,
@@ -48,10 +52,10 @@ class TestDiscoverSandboxSessions:
         assert sessions[0].entrypoint == "sandbox"
         assert sessions[0].pid == 0
 
-    def test_filters_non_ready_phase(self, tmp_path):
-        sandbox_dir = tmp_path / "stopping"
+    def test_returns_non_ready_phases(self, tmp_path):
+        sandbox_dir = tmp_path / "errored"
         sandbox_dir.mkdir()
-        json_out = _make_sandbox_json([{"name": "stopping", "phase": "Stopping"}])
+        json_out = _make_sandbox_json([{"name": "errored", "phase": "Error"}])
         mock_result = MagicMock(returncode=0, stdout=json_out)
 
         with (
@@ -60,7 +64,37 @@ class TestDiscoverSandboxSessions:
         ):
             sessions = discover_sandbox_sessions()
 
-        assert sessions == []
+        assert len(sessions) == 1
+        assert sessions[0].sandbox_phase == "Error"
+
+    def test_phase_propagated_on_session(self, tmp_path):
+        sandbox_dir = tmp_path / "my-sb"
+        sandbox_dir.mkdir()
+        json_out = _make_sandbox_json([{"name": "my-sb", "phase": "Ready"}])
+        mock_result = MagicMock(returncode=0, stdout=json_out)
+
+        with (
+            patch("claude_dashboard.session.SANDBOXES_DIR", tmp_path),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            sessions = discover_sandbox_sessions()
+
+        assert sessions[0].sandbox_phase == "Ready"
+
+    def test_unknown_phase_defaults(self, tmp_path):
+        sandbox_dir = tmp_path / "weird"
+        sandbox_dir.mkdir()
+        json_out = _make_sandbox_json([{"name": "weird", "phase": "SomethingNew"}])
+        mock_result = MagicMock(returncode=0, stdout=json_out)
+
+        with (
+            patch("claude_dashboard.session.SANDBOXES_DIR", tmp_path),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            sessions = discover_sandbox_sessions()
+
+        assert len(sessions) == 1
+        assert sessions[0].sandbox_phase == "SomethingNew"
 
     def test_skips_sandbox_without_host_dir(self, tmp_path):
         json_out = _make_sandbox_json([{"name": "no-dir"}])
@@ -341,3 +375,36 @@ class TestSandboxForeground:
             result = foreground_window_linux(container, cwd="")
 
         assert result is False
+
+
+class TestSandboxEmoji:
+    """Test _sandbox_emoji state selection logic."""
+
+    def _call(self, *, sandbox_phase, unattached):
+        from claude_dashboard.ui.main_window import MainWindow
+
+        return MainWindow._sandbox_emoji(sandbox_phase=sandbox_phase, unattached=unattached)
+
+    def test_ready_unattached_returns_none(self):
+        result = self._call(sandbox_phase="Ready", unattached=True)
+        assert result is None
+
+    def test_ready_attached_returns_none(self):
+        result = self._call(sandbox_phase="Ready", unattached=False)
+        assert result is None
+
+    def test_error_unattached_returns_error_phase(self):
+        result = self._call(sandbox_phase="Error", unattached=True)
+        assert result == SandboxPhase.ERROR
+
+    def test_error_attached_returns_fire_emoji(self):
+        result = self._call(sandbox_phase="Error", unattached=False)
+        assert result == EMOJI_SANDBOX_ERROR_ACTIVE
+
+    def test_unknown_phase_returns_none(self):
+        result = self._call(sandbox_phase="SomethingNew", unattached=True)
+        assert result is None
+
+    def test_creating_phase_returns_none(self):
+        result = self._call(sandbox_phase="Creating", unattached=True)
+        assert result is None

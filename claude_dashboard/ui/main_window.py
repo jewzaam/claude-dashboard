@@ -5,6 +5,7 @@ import logging
 import tkinter as tk
 import tkinter.font as tkfont
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 import io
@@ -13,7 +14,7 @@ from PIL import Image
 
 from claude_dashboard import config
 from claude_dashboard.tray import generate_icon_image
-from claude_dashboard.config import IS_WINDOWS, GitStatus, StatusState
+from claude_dashboard.config import IS_WINDOWS, EmojiKey, GitStatus, SandboxPhase, StatusState
 from claude_dashboard.models import SessionRow
 from claude_dashboard.platform.base import ContainerInfo, ContainerType
 from claude_dashboard.session import SessionInfo, cwd_relative_to_home
@@ -1024,9 +1025,27 @@ class MainWindow:
             return config.DEFAULT_COLOR_BRANCH_MERGED
         return fg
 
-    def _emoji_image(self, state: StatusState | None, *, bg_hex: str) -> tk.PhotoImage:
+    @staticmethod
+    def _sandbox_emoji(*, sandbox_phase: str, unattached: bool) -> EmojiKey | Path | None:
+        """Return sandbox-specific emoji key, or None to use default rendering.
+
+        Only Error-phase sandboxes get distinct emoji.  Ready+idle sandboxes
+        use default ghost rendering so they toggle with other ghosts.
+        """
+        phase = (
+            SandboxPhase(sandbox_phase)
+            if sandbox_phase in SandboxPhase._value2member_map_
+            else SandboxPhase.UNKNOWN
+        )
+        if phase == SandboxPhase.ERROR:
+            if unattached:
+                return SandboxPhase.ERROR
+            return config.EMOJI_SANDBOX_ERROR_ACTIVE
+        return None
+
+    def _emoji_image(self, state: EmojiKey | Path, *, bg_hex: str) -> tk.PhotoImage:
         """Return a cached emoji image for the given state, composited on bg."""
-        png_path = config.EMOJI_IMAGES[state]
+        png_path = state if isinstance(state, Path) else config.EMOJI_IMAGES[state]
         cache_key = (state, bg_hex, self._emoji_img_size, self._emoji_label_width)
         cached = self._emoji_image_cache.get(cache_key)
         if cached is not None:
@@ -1105,13 +1124,22 @@ class MainWindow:
         if row.unattached:
             bg = self._settings.color_unattached
             fg = _COLOR_CONTAINER_FG  # dim text for ghosts
-            emoji_state: StatusState | None = None  # unattached
+            emoji_state_or_path: EmojiKey | Path = None  # unattached
             container_text = ""
         else:
             bg = self._color_for_state(state)
             fg = _contrast_text_for_bg(bg)
-            emoji_state = state
+            emoji_state_or_path = state
             container_text = self._container_label(container)
+
+        sandbox_emoji = (
+            self._sandbox_emoji(sandbox_phase=row.sandbox_phase, unattached=row.unattached)
+            if row.sandbox_phase
+            else None
+        )
+        if sandbox_emoji is not None:
+            emoji_state_or_path = sandbox_emoji
+            container_text = "Sandbox"
 
         row_frame = tk.Frame(self._frame, bg=bg, height=self._row_height(), cursor="hand2")
         row_frame.pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
@@ -1127,7 +1155,7 @@ class MainWindow:
         )
         flag_label.pack(side=tk.LEFT, padx=(_MARGIN_LEFT, 0))
 
-        emoji_image = self._emoji_image(emoji_state, bg_hex=bg)
+        emoji_image = self._emoji_image(emoji_state_or_path, bg_hex=bg)
         status_label = tk.Label(
             row_frame,
             image=emoji_image,
@@ -1255,15 +1283,26 @@ class MainWindow:
         if row_data.unattached:
             bg = self._settings.color_unattached
             fg = _COLOR_CONTAINER_FG
-            emoji_state: StatusState | None = None
+            emoji_state_or_path: EmojiKey | Path = None
             container_text = ""
         else:
             bg = self._color_for_state(row_data.state)
             fg = _contrast_text_for_bg(bg)
-            emoji_state = row_data.state
+            emoji_state_or_path = row_data.state
             container_text = self._container_label(row_data.container)
 
-        emoji_image = self._emoji_image(emoji_state, bg_hex=bg)
+        sandbox_emoji = (
+            self._sandbox_emoji(
+                sandbox_phase=row_data.sandbox_phase, unattached=row_data.unattached
+            )
+            if row_data.sandbox_phase
+            else None
+        )
+        if sandbox_emoji is not None:
+            emoji_state_or_path = sandbox_emoji
+            container_text = "Sandbox"
+
+        emoji_image = self._emoji_image(emoji_state_or_path, bg_hex=bg)
         row["status_image"] = emoji_image  # prevent GC
         row["status_label"].configure(image=emoji_image)
         row["cwd_var"].set(

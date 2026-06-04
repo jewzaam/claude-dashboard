@@ -145,6 +145,8 @@ def _list_windows_dbus() -> list[dict]:
             logger.debug("unexpected gdbus output format: %s", raw[:100])
             return []
 
+        # gdbus double-escapes quotes inside GVariant strings
+        json_str = json_str.replace('\\\\"', '\\"')
         return json.loads(json_str)
     except FileNotFoundError:
         logger.debug("gdbus not found")

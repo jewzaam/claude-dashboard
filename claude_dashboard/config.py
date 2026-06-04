@@ -52,6 +52,16 @@ class StatusState(Enum):
     PERMISSION_REQUIRED = "permission_required"
 
 
+class SandboxPhase(Enum):
+    """OpenShell sandbox infrastructure phase."""
+
+    READY = "Ready"
+    ERROR = "Error"
+    CREATING = "Creating"
+    STOPPING = "Stopping"
+    UNKNOWN = "Unknown"
+
+
 class GitStatus(Enum):
     """Git working tree status for flag dot display."""
 
@@ -92,14 +102,21 @@ DEFAULT_TEXT_COLOR = "#e0e0e0"
 
 # Status emoji images (Noto Color Emoji, Apache 2.0)
 _ASSETS = Path(__file__).parent / "assets"
-EMOJI_IMAGES: dict[StatusState | None, Path] = {
+EmojiKey = StatusState | SandboxPhase | None
+EMOJI_IMAGES: dict[EmojiKey, Path] = {
     StatusState.WORKING: _ASSETS / "emoji_working.png",
     StatusState.READY: _ASSETS / "emoji_ready.png",
     StatusState.IDLE: _ASSETS / "emoji_idle.png",
     StatusState.AWAITING_INPUT: _ASSETS / "emoji_awaiting_input.png",
     StatusState.PERMISSION_REQUIRED: _ASSETS / "emoji_permission_required.png",
+    SandboxPhase.READY: _ASSETS / "emoji_sandbox_idle.png",
+    SandboxPhase.CREATING: _ASSETS / "emoji_sandbox_idle.png",
+    SandboxPhase.STOPPING: _ASSETS / "emoji_sandbox_idle.png",
+    SandboxPhase.UNKNOWN: _ASSETS / "emoji_sandbox_idle.png",
+    SandboxPhase.ERROR: _ASSETS / "emoji_sandbox_error.png",
     None: _ASSETS / "emoji_unattached.png",  # unattached / ghost
 }
+EMOJI_SANDBOX_ERROR_ACTIVE = _ASSETS / "emoji_sandbox_error_active.png"
 
 # Title bar
 TITLE_EMOJI = "\U0001f90c"  # 🤌 (chef's kiss) — fallback if image missing
