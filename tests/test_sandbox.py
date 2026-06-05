@@ -385,9 +385,9 @@ class TestSandboxEmoji:
 
         return MainWindow._sandbox_emoji(sandbox_phase=sandbox_phase, unattached=unattached)
 
-    def test_ready_unattached_returns_none(self):
+    def test_ready_unattached_returns_phase(self):
         result = self._call(sandbox_phase="Ready", unattached=True)
-        assert result is None
+        assert result == SandboxPhase.READY
 
     def test_ready_attached_returns_none(self):
         result = self._call(sandbox_phase="Ready", unattached=False)
@@ -401,10 +401,10 @@ class TestSandboxEmoji:
         result = self._call(sandbox_phase="Error", unattached=False)
         assert result == EMOJI_SANDBOX_ERROR_ACTIVE
 
-    def test_unknown_phase_returns_none(self):
+    def test_unknown_phase_returns_unknown(self):
         result = self._call(sandbox_phase="SomethingNew", unattached=True)
-        assert result is None
+        assert result == SandboxPhase.UNKNOWN
 
-    def test_creating_phase_returns_none(self):
+    def test_creating_phase_returns_creating(self):
         result = self._call(sandbox_phase="Creating", unattached=True)
-        assert result is None
+        assert result == SandboxPhase.CREATING

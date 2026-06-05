@@ -1041,6 +1041,8 @@ class MainWindow:
             if unattached:
                 return SandboxPhase.ERROR
             return config.EMOJI_SANDBOX_ERROR_ACTIVE
+        if unattached:
+            return phase
         return None
 
     def _emoji_image(self, state: EmojiKey | Path, *, bg_hex: str) -> tk.PhotoImage:
