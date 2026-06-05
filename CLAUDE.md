@@ -32,7 +32,7 @@ HTTP hooks are documented by Claude Code but don't work in practice (tested 2026
 
 | File | Purpose |
 |------|---------|
-| `claude_dashboard/config.py` | Constants, StatusState enum, defaults, LOG_FILE, STATE_FILE |
+| `claude_dashboard/config.py` | Constants, StatusState enum, SandboxPhase enum, EmojiKey type alias, defaults, LOG_FILE, STATE_FILE |
 | `claude_dashboard/hook_server.py` | HTTP server on port 17384, event→state mapping, SO_REUSEADDR/SO_REUSEPORT |
 | `claude_dashboard/controller.py` | Session lifecycle, hook wiring, UI coordination, session state persistence |
 | `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()` |
@@ -90,6 +90,18 @@ Text color is computed per-row from the background color using W3C sRGB contrast
 
 Ghost sessions are evicted when total session count exceeds `max_sessions` (default 40). Only non-flagged ghosts are eviction candidates — live sessions and flagged ghosts are never removed. Oldest ghosts (by `last_active` epoch timestamp) are evicted first. Eviction happens lazily on ghost creation and startup. There is no TTL — a ghost with recent activity is always retained if under the cap. **Do not add time-based ghost expiration.**
 
+### Sandbox phase rendering
+
+`SandboxPhase` enum in `config.py` has values READY, ERROR, CREATING, STOPPING, UNKNOWN. All phases flow through discovery — no filtering by openshell phase. Error sandboxes get phase-specific emoji (⚠️ unattached, 🔥 active) via `_sandbox_emoji()` static method in `main_window.py`. Ready+idle sandboxes use default ghost rendering (🏖️). Error sandboxes are excluded from ghost visibility toggle via `_is_error_sandbox()` helper. Ready sandboxes without VS Code toggle with ghosts — they are functionally ghosts.
+
+### EmojiKey type alias
+
+`EmojiKey = StatusState | SandboxPhase | None` in `config.py`. `EMOJI_IMAGES` dict uses this type. `EMOJI_SANDBOX_ERROR_ACTIVE` is a standalone `Path` constant (not in the dict) for the fire emoji.
+
+### D-Bus gdbus quote escaping
+
+`_list_windows_dbus()` in `platform/linux.py` must unescape `\\"` → `\"` in gdbus output before JSON parsing. gdbus double-escapes quotes in GVariant strings. Window titles containing literal quotes (e.g., music player track names) break JSON parse without this fix. This affects ALL D-Bus window features (sandbox VS Code detection, live session foregrounding).
+
 ### Hook relay `--debug` flag
 
 The relay script always runs with `--debug` in hooks-settings.json, logging raw payloads to `~/.claude/claude-dashboard/logs/hook-payloads.jsonl`. This is safe because both the relay log and the dashboard log use `RotatingFileHandler` (2 MB, 1 backup).
@@ -103,6 +115,7 @@ The relay script always runs with `--debug` in hooks-settings.json, logging raw 
 | `specs/001-session-dashboard/` | US1-US5 spec, plan, tasks, session detection research |
 | `specs/002-hide-apply-autostart/` | US6-US8 spec (hide sessions, Apply button, auto-start) |
 | `specs/003-agent-awareness/` | US9 spec, plan, agent hook research |
+| `docs/plan-pivot.md` | OTEL-based state detection pivot plan — full cutover from HTTP hooks to OTEL log entries, recording rules, Prometheus metrics, session source configuration (Layer 4) |
 
 ### Project-Wide Docs
 
