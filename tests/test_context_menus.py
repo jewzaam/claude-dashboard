@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from claude_dashboard import config
 from claude_dashboard.config import GitStatus, StatusState
-from claude_dashboard.controller import _AgentEntry, _SessionEntry
+from claude_dashboard.controller import _SessionEntry
 from claude_dashboard.platform.base import ContainerInfo
 from claude_dashboard.session import SessionInfo
 
@@ -35,12 +35,6 @@ class TestLiveContextMenuHide:
         entry.hidden = True
         assert entry.state == StatusState.PERMISSION_REQUIRED
 
-    def test_hide_preserves_agents(self):
-        entry = _SessionEntry(_make_session())
-        entry.agents["a1"] = _AgentEntry(agent_id="a1", state=StatusState.WORKING)
-        entry.hidden = True
-        assert len(entry.agents) == 1
-
 
 class TestLiveContextMenuClearState:
     """Test Clear State action from live session context menu."""
@@ -49,31 +43,13 @@ class TestLiveContextMenuClearState:
         entry = _SessionEntry(_make_session())
         entry.state = StatusState.PERMISSION_REQUIRED
         entry.state = StatusState.IDLE
-        entry.agents.clear()
         assert entry.state == StatusState.IDLE
-
-    def test_clear_state_removes_all_agents(self):
-        entry = _SessionEntry(_make_session())
-        entry.agents["a1"] = _AgentEntry(agent_id="a1", state=StatusState.WORKING)
-        entry.agents["a2"] = _AgentEntry(agent_id="a2", state=StatusState.PERMISSION_REQUIRED)
-        entry.agents.clear()
-        assert len(entry.agents) == 0
-
-    def test_clear_state_effective_state_becomes_idle(self):
-        entry = _SessionEntry(_make_session())
-        entry.state = StatusState.WORKING
-        entry.agents["a1"] = _AgentEntry(agent_id="a1", state=StatusState.PERMISSION_REQUIRED)
-        assert entry.effective_state == StatusState.PERMISSION_REQUIRED
-        entry.state = StatusState.IDLE
-        entry.agents.clear()
-        assert entry.effective_state == StatusState.IDLE
 
     def test_clear_state_preserves_flagged(self):
         entry = _SessionEntry(_make_session())
         entry.flagged = True
         entry.state = StatusState.PERMISSION_REQUIRED
         entry.state = StatusState.IDLE
-        entry.agents.clear()
         assert entry.flagged is True
 
     def test_clear_state_preserves_hidden(self):
@@ -81,7 +57,6 @@ class TestLiveContextMenuClearState:
         entry.hidden = True
         entry.state = StatusState.PERMISSION_REQUIRED
         entry.state = StatusState.IDLE
-        entry.agents.clear()
         assert entry.hidden is True
 
 

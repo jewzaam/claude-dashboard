@@ -38,9 +38,11 @@ STATE_FILE = CLAUDE_HOME / "claude-dashboard" / "session-state.json"
 # Poll interval
 DEFAULT_POLL_INTERVAL_SECONDS = 3
 
-# Hook server
-HOOK_BIND = os.environ.get("CLAUDE_DASHBOARD_BIND", "127.0.0.1")
-HOOK_PORT = int(os.environ.get("CLAUDE_DASHBOARD_PORT", "17384"))
+# OTEL state source
+PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://localhost:9090")
+
+# PID file for single-instance enforcement
+PID_FILE = CLAUDE_HOME / "claude-dashboard" / "dashboard.pid"
 
 
 # Session status states

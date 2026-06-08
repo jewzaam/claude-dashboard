@@ -22,7 +22,6 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
 
-
 CLAUDE_HOME = Path.home() / ".claude"
 SESSIONS_DIR = CLAUDE_HOME / "sessions"
 SESSION_TRACKER_DIR = CLAUDE_HOME / "session-tracker"
@@ -31,6 +30,7 @@ SESSION_TRACKER_DIR = CLAUDE_HOME / "session-tracker"
 @dataclass
 class ContainerInfo:
     """The application containing the Claude session."""
+
     process_name: str = "Unknown"
     process_pid: int = 0
     container_type: str = "Unknown"  # VSCode, Terminal, GitBash, Screen, Unknown
@@ -42,6 +42,7 @@ class ContainerInfo:
 @dataclass
 class SessionInfo:
     """A discovered Claude Code session."""
+
     pid: int = 0
     session_id: str = ""
     cwd: str = ""
@@ -78,6 +79,7 @@ def validate_pid(pid: int) -> bool:
     """Check if a process with the given PID is still alive."""
     try:
         import psutil
+
         return psutil.pid_exists(pid) and psutil.Process(pid).name() == "claude.exe"
     except Exception:
         return False
@@ -86,6 +88,7 @@ def validate_pid(pid: int) -> bool:
 def walk_process_chain(pid: int) -> list[str]:
     """Walk the parent process chain from PID to root, returning names."""
     import psutil
+
     chain = []
     try:
         current = psutil.Process(pid)
@@ -105,6 +108,7 @@ def detect_container_type(pid: int) -> ContainerInfo:
     emulator, screen, etc.
     """
     import psutil
+
     container = ContainerInfo()
 
     try:
@@ -157,9 +161,17 @@ def detect_container_type(pid: int) -> ContainerInfo:
 
             # Linux terminal emulators
             if name in (
-                "gnome-terminal-server", "konsole", "xfce4-terminal",
-                "alacritty", "kitty", "wezterm-gui", "terminator",
-                "tilix", "xterm", "urxvt", "st",
+                "gnome-terminal-server",
+                "konsole",
+                "xfce4-terminal",
+                "alacritty",
+                "kitty",
+                "wezterm-gui",
+                "terminator",
+                "tilix",
+                "xterm",
+                "urxvt",
+                "st",
             ):
                 container.process_name = current.name()
                 container.process_pid = current.pid
@@ -203,11 +215,10 @@ def find_window_for_container_windows(container: ContainerInfo) -> ContainerInfo
 
     try:
         from ctypes import wintypes
+
         user32 = ctypes.windll.user32
 
-        WNDENUMPROC = ctypes.WINFUNCTYPE(
-            ctypes.c_bool, wintypes.HWND, wintypes.LPARAM
-        )
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
         if container.container_type == "VSCode":
             # VS Code uses a multi-process architecture. The main process
@@ -277,9 +288,7 @@ def find_window_for_container_windows(container: ContainerInfo) -> ContainerInfo
     return container
 
 
-def match_vscode_window_by_cwd(
-    cwd: str, container: ContainerInfo
-) -> ContainerInfo:
+def match_vscode_window_by_cwd(cwd: str, container: ContainerInfo) -> ContainerInfo:
     """Match a VS Code window to a session by checking if the CWD appears
     in any VS Code window title.
 
@@ -297,9 +306,7 @@ def match_vscode_window_by_cwd(
         import psutil
 
         user32 = ctypes.windll.user32
-        WNDENUMPROC = ctypes.WINFUNCTYPE(
-            ctypes.c_bool, wintypes.HWND, wintypes.LPARAM
-        )
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
         # Get the folder name from CWD
         folder_name = Path(cwd).name.lower()
@@ -354,15 +361,15 @@ def main():
     parser = argparse.ArgumentParser(
         description="Detect running Claude Code sessions and their containers"
     )
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument(
-        "--json", action="store_true", help="Output as JSON"
-    )
-    parser.add_argument(
-        "--verbose", action="store_true",
+        "--verbose",
+        action="store_true",
         help="Include internal details (IPC handles, etc.) in output",
     )
     parser.add_argument(
-        "--debug-windows", action="store_true",
+        "--debug-windows",
+        action="store_true",
         help="Enumerate all VS Code windows for diagnostics",
     )
     args = parser.parse_args()
@@ -375,12 +382,8 @@ def main():
             session.process_chain = walk_process_chain(session.pid)
             session.container = detect_container_type(session.pid)
             if platform.system() == "Windows":
-                session.container = find_window_for_container_windows(
-                    session.container
-                )
-                session.container = match_vscode_window_by_cwd(
-                    session.cwd, session.container
-                )
+                session.container = find_window_for_container_windows(session.container)
+                session.container = match_vscode_window_by_cwd(session.cwd, session.container)
 
     if args.json:
         output = []
@@ -423,9 +426,7 @@ def debug_windows():
     from ctypes import wintypes
 
     user32 = ctypes.windll.user32
-    WNDENUMPROC = ctypes.WINFUNCTYPE(
-        ctypes.c_bool, wintypes.HWND, wintypes.LPARAM
-    )
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
 
     # Find main VS Code process (parent=explorer.exe)
     main_pids = []
@@ -450,9 +451,13 @@ def debug_windows():
         for child in main_proc.children(recursive=True):
             if child.name().lower() == "code.exe":
                 cmd_str = " ".join(child.cmdline())
-                for flag in ("--type=renderer", "--type=utility",
-                             "--type=gpu-process", "--type=zygote",
-                             "--type=crashpad-handler"):
+                for flag in (
+                    "--type=renderer",
+                    "--type=utility",
+                    "--type=gpu-process",
+                    "--type=zygote",
+                    "--type=crashpad-handler",
+                ):
                     if flag in cmd_str:
                         ptype = flag.split("=")[1]
                         all_child_types.setdefault(ptype, []).append(child.pid)
@@ -560,9 +565,7 @@ def foreground_session(session_id_prefix: str):
 
     matched.container = detect_container_type(matched.pid)
     if platform.system() == "Windows":
-        matched.container = match_vscode_window_by_cwd(
-            matched.cwd, matched.container
-        )
+        matched.container = match_vscode_window_by_cwd(matched.cwd, matched.container)
 
     if not matched.container or matched.container.window_handle == 0:
         print(f"Could not find window for session {matched.session_id}")
@@ -577,6 +580,7 @@ def foreground_session(session_id_prefix: str):
 
 if __name__ == "__main__":
     import sys as _sys
+
     if "--debug-windows" in _sys.argv:
         debug_windows()
     elif "--foreground" in _sys.argv:

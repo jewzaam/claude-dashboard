@@ -9,10 +9,15 @@ import sys
 def main():
     result = subprocess.run(
         [
-            "gdbus", "call", "--session",
-            "--dest", "org.gnome.Shell",
-            "--object-path", "/org/gnome/Shell/Extensions/Windows",
-            "--method", "org.gnome.Shell.Extensions.Windows.List",
+            "gdbus",
+            "call",
+            "--session",
+            "--dest",
+            "org.gnome.Shell",
+            "--object-path",
+            "/org/gnome/Shell/Extensions/Windows",
+            "--method",
+            "org.gnome.Shell.Extensions.Windows.List",
         ],
         capture_output=True,
         text=True,

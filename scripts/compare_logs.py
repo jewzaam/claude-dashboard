@@ -35,10 +35,12 @@ def extract_transcript_user_messages(entries: list[dict]) -> list[dict]:
             msg = obj.get("message", {})
             content = msg.get("content", "")
             if isinstance(content, str):
-                results.append({
-                    "timestamp": obj.get("timestamp"),
-                    "content": content,
-                })
+                results.append(
+                    {
+                        "timestamp": obj.get("timestamp"),
+                        "content": content,
+                    }
+                )
     return results
 
 
@@ -54,13 +56,15 @@ def extract_transcript_assistant_messages(entries: list[dict]) -> list[dict]:
                 if isinstance(p, dict) and p.get("type") == "text":
                     text += p.get("text", "")
             if text.strip():
-                results.append({
-                    "timestamp": obj.get("timestamp"),
-                    "content": text,
-                    "model": msg.get("model"),
-                    "usage": msg.get("usage"),
-                    "stop_reason": msg.get("stop_reason"),
-                })
+                results.append(
+                    {
+                        "timestamp": obj.get("timestamp"),
+                        "content": text,
+                        "model": msg.get("model"),
+                        "usage": msg.get("usage"),
+                        "stop_reason": msg.get("stop_reason"),
+                    }
+                )
     return results
 
 
@@ -79,7 +83,9 @@ def main():
     print("FILE SIZES")
     print("=" * 70)
     print(f"  Prompt-log:  {len(plog)} entries  ({Path(plog_path).stat().st_size:,} bytes)")
-    print(f"  Transcript:  {len(transcript)} entries  ({Path(transcript_path).stat().st_size:,} bytes)")
+    print(
+        f"  Transcript:  {len(transcript)} entries  ({Path(transcript_path).stat().st_size:,} bytes)"
+    )
     print()
 
     # --- Event types ---
@@ -205,7 +211,9 @@ def main():
         )
 
     plog_extras.append("Simpler schema (flat JSON, 6 fields vs nested objects)")
-    plog_extras.append("Explicit event_type field ('prompt'/'response') vs inferring from type+isMeta")
+    plog_extras.append(
+        "Explicit event_type field ('prompt'/'response') vs inferring from type+isMeta"
+    )
 
     for item in plog_extras:
         print(f"  - {item}")

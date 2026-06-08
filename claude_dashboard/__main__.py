@@ -5,7 +5,6 @@ import argparse
 import logging
 import logging.handlers
 import os
-import socket
 import sys
 from pathlib import Path
 
@@ -16,16 +15,25 @@ EXIT_ERROR = 1
 
 
 def _is_already_running() -> bool:
-    """Check if another instance is running by probing the hook server port."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    """Check if another dashboard instance is running via PID file lock."""
+    pid_path = config.PID_FILE
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        sock.bind((config.HOOK_BIND, config.HOOK_PORT))
+        fd = os.open(str(pid_path), os.O_CREAT | os.O_RDWR, 0o644)
+        if config.IS_WINDOWS:
+            import msvcrt
+
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.write(fd, str(os.getpid()).encode())
+        os.truncate(fd, len(str(os.getpid())))
+        _is_already_running._lock_fd = fd  # type: ignore[attr-defined]
         return False
     except OSError:
         return True
-    finally:
-        sock.close()
 
 
 def _install_excepthook(*, logger: logging.Logger) -> None:
@@ -58,8 +66,6 @@ def main():
 
     log_fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
     if args.log_file:
-        # File logging: default to DEBUG (you're logging to file for diagnostics),
-        # rotate at 2 MB, keep 1 backup.
         level = logging.DEBUG if args.debug else logging.INFO
         if args.quiet:
             level = logging.WARNING
@@ -76,28 +82,22 @@ def main():
     else:
         level = logging.DEBUG if args.debug else (logging.WARNING if args.quiet else logging.INFO)
         logging.basicConfig(level=level, format=log_fmt, stream=sys.stderr)
-    # Suppress noisy third-party debug logging
     logging.getLogger("PIL").setLevel(logging.WARNING)
 
     _install_excepthook(logger=logging.getLogger(__name__))
 
     if _is_already_running():
-        logging.getLogger(__name__).error(
-            "Claude Dashboard is already running (port %d in use)", config.HOOK_PORT
-        )
+        logging.getLogger(__name__).error("Claude Dashboard is already running (PID file locked)")
         sys.exit(EXIT_ERROR)
 
-    # Enable DPI awareness on Windows before creating the Tk root.
-    # Without this, Windows bitmap-scales the entire window, making it blurry and oversized.
     if config.IS_WINDOWS:
         import ctypes
 
         try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
-            pass  # Older Windows versions may not have shcore
+            pass
 
-    # Controller import deferred until args are parsed
     from claude_dashboard.controller import AppController
 
     app = AppController(
