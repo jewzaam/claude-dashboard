@@ -702,9 +702,15 @@ class AppController:
             prior = entry.state
             if new_state == prior:
                 continue
-            # Don't let OTEL overwrite user-cleared IDLE with READY
-            # (user clicked to acknowledge ready → idle, OTEL still sees Stop as latest)
-            if prior == StatusState.IDLE and new_state == StatusState.READY:
+            # Don't let OTEL overwrite user-cleared IDLE with READY — but only
+            # if the session has had activity (last_active > 0 means user clicked
+            # or a prior state update occurred). New sessions start at IDLE with
+            # last_active=0 and should accept READY from OTEL.
+            if (
+                prior == StatusState.IDLE
+                and new_state == StatusState.READY
+                and entry.last_active > 0
+            ):
                 continue
             entry.state = new_state
             entry.last_active = _now_epoch()
@@ -977,9 +983,16 @@ class AppController:
                 label="Open PR",
                 command=lambda: self._open_pr(session),
             )
+
+        def clear_state():
+            if entry:
+                entry.state = StatusState.IDLE
+                logger.info("sandbox %s state cleared via context menu", cwd_display)
+                self._refresh_ui()
+
         self._context_menu.add_command(label="Open in VS Code", command=open_in_vscode)
         self._context_menu.add_command(label="Hide", command=hide)
-        self._context_menu.add_command(label="Delete", command=delete_sandbox)
+        self._context_menu.add_command(label="Clear State", command=clear_state)
 
         self._context_menu_open = True
         popup_menu_clamped(self._context_menu, x=x, y=y)
