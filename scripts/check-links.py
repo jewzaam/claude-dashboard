@@ -55,7 +55,7 @@ def check_file(filepath, root):
             # Skip external URLs, special schemes, and non-path targets
             if re.match(r"^(https?://|mailto:|#$)", target):
                 continue
-            if target in ("...", ):
+            if target in ("...",):
                 continue
             # Skip glob patterns used as descriptive text
             if "*" in target:
@@ -91,10 +91,7 @@ def main():
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
     root = root.resolve()
 
-    md_files = sorted(
-        p for p in root.rglob("*.md")
-        if ".git" not in p.parts
-    )
+    md_files = sorted(p for p in root.rglob("*.md") if ".git" not in p.parts)
 
     all_errors = []
     for f in md_files:

@@ -60,15 +60,10 @@ class TestLastActivePersistence:
     """last_active survives save/restore cycle."""
 
     def _serialize_entry(self, entry: _SessionEntry) -> dict:
-        agents = {
-            aid: {"state": a.state.value, "agent_type": a.agent_type}
-            for aid, a in entry.agents.items()
-        }
         return {
             "state": entry.state.value,
             "hidden": entry.hidden,
             "flagged": entry.flagged,
-            "agents": agents,
             "last_active": entry.last_active,
         }
 

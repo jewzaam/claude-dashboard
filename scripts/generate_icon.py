@@ -40,8 +40,7 @@ def generate_icon(
     pupil_cx = cx + round(6 * scale)
     pupil_cy = cy - round(2 * scale)
     draw.ellipse(
-        [pupil_cx - pupil_r, pupil_cy - pupil_r,
-         pupil_cx + pupil_r, pupil_cy + pupil_r],
+        [pupil_cx - pupil_r, pupil_cy - pupil_r, pupil_cx + pupil_r, pupil_cy + pupil_r],
         fill=(20, 20, 20),
     )
 
@@ -57,7 +56,9 @@ def main():
     parser = argparse.ArgumentParser(description="Generate high-res icon PNG")
     parser.add_argument("--size", type=int, default=512, help="Icon size in pixels (default: 512)")
     parser.add_argument("--color", default="#808080", help="Fill color as hex (default: #808080)")
-    parser.add_argument("--output", default="assets/icon.png", help="Output path (default: assets/icon.png)")
+    parser.add_argument(
+        "--output", default="assets/icon.png", help="Output path (default: assets/icon.png)"
+    )
     args = parser.parse_args()
 
     color = hex_to_rgb(args.color)

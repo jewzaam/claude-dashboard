@@ -87,9 +87,7 @@ def detect_desktop() -> str:
 def check_tool(name: str) -> bool:
     """Check if a CLI tool is available."""
     try:
-        subprocess.run(
-            ["which", name], capture_output=True, check=True, timeout=3
-        )
+        subprocess.run(["which", name], capture_output=True, check=True, timeout=3)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
@@ -618,13 +616,20 @@ def probe_dbus_interfaces() -> dict[str, str]:
     try:
         r = subprocess.run(
             [
-                "gdbus", "call", "--session",
-                "--dest", "org.gnome.Shell",
-                "--object-path", "/org/gnome/Shell",
-                "--method", "org.gnome.Shell.Eval",
+                "gdbus",
+                "call",
+                "--session",
+                "--dest",
+                "org.gnome.Shell",
+                "--object-path",
+                "/org/gnome/Shell",
+                "--method",
+                "org.gnome.Shell.Eval",
                 "1+1",
             ],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if r.returncode == 0:
             success = r.stdout.strip().startswith("(true")
@@ -638,13 +643,20 @@ def probe_dbus_interfaces() -> dict[str, str]:
     try:
         r = subprocess.run(
             [
-                "gdbus", "call", "--session",
-                "--dest", "org.gnome.Shell",
-                "--object-path", "/org/gnome/Shell",
-                "--method", "org.gnome.Shell.FocusApp",
+                "gdbus",
+                "call",
+                "--session",
+                "--dest",
+                "org.gnome.Shell",
+                "--object-path",
+                "/org/gnome/Shell",
+                "--method",
+                "org.gnome.Shell.FocusApp",
                 "org.gnome.Nautilus.desktop",
             ],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if "AccessDenied" in (r.stderr or ""):
             results["gnome.Shell.FocusApp"] = "BLOCKED (AccessDenied)"
@@ -659,11 +671,17 @@ def probe_dbus_interfaces() -> dict[str, str]:
     try:
         r = subprocess.run(
             [
-                "gdbus", "introspect", "--session",
-                "--dest", "org.freedesktop.portal.Desktop",
-                "--object-path", "/org/freedesktop/portal/desktop",
+                "gdbus",
+                "introspect",
+                "--session",
+                "--dest",
+                "org.freedesktop.portal.Desktop",
+                "--object-path",
+                "/org/freedesktop/portal/desktop",
             ],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         interfaces = []
         for line in r.stdout.splitlines():
@@ -680,11 +698,17 @@ def probe_dbus_interfaces() -> dict[str, str]:
     try:
         r = subprocess.run(
             [
-                "gdbus", "introspect", "--session",
-                "--dest", "org.gnome.Shell",
-                "--object-path", "/org/gnome/Shell",
+                "gdbus",
+                "introspect",
+                "--session",
+                "--dest",
+                "org.gnome.Shell",
+                "--object-path",
+                "/org/gnome/Shell",
             ],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         methods = []
         for line in r.stdout.splitlines():
@@ -699,7 +723,9 @@ def probe_dbus_interfaces() -> dict[str, str]:
     try:
         r = subprocess.run(
             ["gnome-extensions", "list", "--enabled"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if r.returncode == 0:
             extensions = [e.strip() for e in r.stdout.strip().splitlines() if e.strip()]
@@ -825,9 +851,7 @@ def find_vscode_window_for_cwd(cwd: str) -> dict:
     return {}
 
 
-def probe_activation_methods(
-    container: ContainerInfo, cwd: str
-) -> dict[str, str]:
+def probe_activation_methods(container: ContainerInfo, cwd: str) -> dict[str, str]:
     """Test various methods to activate/foreground a specific container window.
 
     Only tests non-destructive probes. Returns status for each method.
@@ -844,7 +868,9 @@ def probe_activation_methods(
             # First check if code CLI is available
             r = subprocess.run(
                 ["which", "code"],
-                capture_output=True, text=True, timeout=3,
+                capture_output=True,
+                text=True,
+                timeout=3,
             )
             if r.returncode == 0:
                 results["code CLI"] = f"available at {r.stdout.strip()}"
@@ -872,7 +898,9 @@ def probe_activation_methods(
         try:
             r = subprocess.run(
                 ["xdotool", "windowactivate", str(container.window_id)],
-                capture_output=True, text=True, timeout=3,
+                capture_output=True,
+                text=True,
+                timeout=3,
             )
             results["xdotool windowactivate"] = (
                 "WORKS" if r.returncode == 0 else f"FAILED rc={r.returncode}"
@@ -887,7 +915,9 @@ def probe_activation_methods(
         try:
             r = subprocess.run(
                 ["wmctrl", "-ia", str(container.window_id)],
-                capture_output=True, text=True, timeout=3,
+                capture_output=True,
+                text=True,
+                timeout=3,
             )
             results["wmctrl -ia"] = "WORKS" if r.returncode == 0 else f"FAILED rc={r.returncode}"
         except FileNotFoundError:
@@ -971,15 +1001,15 @@ def main():
     best_method = (
         "window-calls"
         if wc_windows
-        else "xprop"
-        if xprop_windows
-        else "gdbus-eval"
-        if dbus_windows
-        else "xdotool"
-        if xdotool_windows
-        else "wmctrl"
-        if wmctrl_windows
-        else "none"
+        else (
+            "xprop"
+            if xprop_windows
+            else (
+                "gdbus-eval"
+                if dbus_windows
+                else "xdotool" if xdotool_windows else "wmctrl" if wmctrl_windows else "none"
+            )
+        )
     )
     print(f"\n  Best method: {best_method} ({len(best_windows)} windows)")
 
@@ -1060,8 +1090,10 @@ def main():
         if ctype in tested_types:
             continue
         tested_types.add(ctype)
-        print(f"\n  Testing activation for {ctype} "
-              f"({session.container.process_name}, PID {session.container.process_pid}):")
+        print(
+            f"\n  Testing activation for {ctype} "
+            f"({session.container.process_name}, PID {session.container.process_pid}):"
+        )
         probes = probe_activation_methods(session.container, session.cwd)
         for method, status in probes.items():
             print(f"    {method}: {status}")

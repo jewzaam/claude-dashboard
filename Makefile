@@ -2,7 +2,7 @@
 
 -include make/app.mk
 
-.PHONY: check help install install-dev install-no-deps install-hooks install-pipx uninstall uninstall-pipx clean format test-format test-lint test-typecheck test-unit test-verbose test-coverage test-markdown test-links test-mutation test-mutation-report test-complexity
+.PHONY: check help install install-dev install-no-deps install-pipx uninstall uninstall-pipx clean format test-format test-lint test-typecheck test-unit test-verbose test-coverage test-markdown test-links test-mutation test-mutation-report test-complexity
 
 PACKAGE_NAME ?= claude_dashboard
 PY_SYS ?= python3
@@ -35,9 +35,6 @@ install-dev: $(PYTHON)  ## Install in editable mode with dev deps
 
 install-no-deps: $(PYTHON)  ## Install in editable mode without dependencies
 	$(PYTHON) -m pip install -e . --no-deps
-
-install-hooks: $(PYTHON)  ## Merge hook config into ~/.claude/settings.json
-	$(PYTHON) scripts/install_hooks.py
 
 uninstall: $(PYTHON)  ## Uninstall package
 	$(PYTHON) -m pip uninstall -y claude-dashboard

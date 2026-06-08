@@ -1,12 +1,11 @@
 # Claude Dashboard
 
-Cross-platform Tkinter dashboard that monitors running Claude Code sessions. Shows session state (working, idle, permission required, awaiting input) via real-time hook events.
+Cross-platform Tkinter dashboard that monitors running Claude Code sessions. Shows session state (working, idle, permission required, awaiting input) via OTEL-based Prometheus metrics.
 
 ## Quick Start
 
 ```bash
 make install-dev    # Install package + dev deps
-make install-hooks  # Merge hook config into ~/.claude/settings.json
 make check          # test-format, test-lint, test-typecheck, test-unit, test-coverage
 make run            # Run the app (logging to file)
 make run DEBUG=1    # Run with debug logging (rotated at 2 MB, 1 backup)
@@ -15,26 +14,28 @@ python -m claude_dashboard --debug             # Run with debug logging to conso
 python -m claude_dashboard --log-file <path>   # Redirect logs to file (append mode)
 ```
 
+Requires OTEL stack running — see [claude-otel-stack](https://github.com/jewzaam/claude-otel-stack)
+
 ## Architecture
 
 - **Session discovery**: Polls `~/.claude/sessions/*.json` every 5s to find running Claude sessions
-- **State detection**: Claude Code command hooks → `hook_relay.py` → POST to localhost:17384 → dashboard HTTP server
+- **State detection**: Claude Code native OTEL events → OTEL collector → Loki → Prometheus recording rules → dashboard polls Prometheus metrics
 - **UI**: Tkinter borderless window with `overrideredirect` (visible on all virtual desktops)
 - **Tray**: pystray system tray icon with color reflecting highest-priority session state
 
-### Hook Flow
+### OTEL State Flow
 
-Claude Code → command hook fires → `~/.claude/claude-dashboard/scripts/hook_relay.py` reads JSON from stdin → POSTs to `http://127.0.0.1:17384/hook` → `hook_server.py` maps event to state → controller updates UI.
+Claude Code emits native OTEL events → OTEL collector exports to Loki → Prometheus recording rules aggregate log entries into session state metrics (`claude_session_state{session_id}`) → dashboard polls Prometheus `/api/v1/query` every 5s → controller updates UI.
 
-HTTP hooks are documented by Claude Code but don't work in practice (tested 2026-03-22). Command hooks with the relay script are the working approach.
+Session state metrics aggregate all activity (main + agents) by session_id. No per-agent tracking. State values: `working`, `idle`, `permission_required`, `awaiting_input`, `unknown`.
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `claude_dashboard/config.py` | Constants, StatusState enum, SandboxPhase enum, EmojiKey type alias, defaults, LOG_FILE, STATE_FILE |
-| `claude_dashboard/hook_server.py` | HTTP server on port 17384, event→state mapping, SO_REUSEADDR/SO_REUSEPORT |
-| `claude_dashboard/controller.py` | Session lifecycle, hook wiring, UI coordination, session state persistence |
+| `claude_dashboard/config.py` | Constants, StatusState enum, SandboxPhase enum, EmojiKey type alias, defaults, LOG_FILE, STATE_FILE, PID_FILE, PROMETHEUS_URL |
+| `claude_dashboard/otel_state.py` | Prometheus poller for session state metrics from OTEL recording rules |
+| `claude_dashboard/controller.py` | Session lifecycle, OTEL poller wiring, UI coordination, session state persistence, PID file lock |
 | `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()` |
 | `claude_dashboard/file_utils.py` | Atomic JSON file writes (shared by settings + state persistence) |
 | `claude_dashboard/ui/main_window.py` | Dashboard window with session rows |
@@ -44,25 +45,27 @@ HTTP hooks are documented by Claude Code but don't work in practice (tested 2026
 | `claude_dashboard/platform/base.py` | Platform dispatch (ContainerType enum) |
 | `claude_dashboard/platform/windows.py` | Win32 window foregrounding |
 | `claude_dashboard/platform/linux.py` | Window foregrounding via `window-calls` D-Bus, xdotool fallback |
-| `scripts/hook_relay.py` | Command hook → HTTP POST relay |
-| `scripts/install_hooks.py` | Deep-merge hook config into Claude settings |
-| `hooks-settings.json` | Hook config shipped with the project |
 
 ## Standards
 
-- Python 3.11+, Tkinter, psutil, pystray, Pillow
+- Python 3.11+, Tkinter, psutil, pystray, Pillow, requests
 - black (line-length 100), flake8, mypy
 - pytest with 80%+ coverage (currently ~91%)
 - Keyword-only args with `*` separator on all public functions
 - Settings flow through a single `apply_settings()` path — no duplicating logic between init and update
 - All colors/fonts in named constants, not magic strings
 
+## Configuration
+
+- **PROMETHEUS_URL**: Prometheus server URL (default `http://localhost:9090`). Set via env var.
+- **PID_FILE**: Lock file for single-instance enforcement (`~/.claude/claude-dashboard/dashboard.pid`)
+
 ## Known Gaps (v0.2)
 
-- **User interrupt**: No hook fires when user hits Ctrl+C/Escape. State stays at last value until next interaction.
-- **Permission denial**: Denying a tool without feedback text may not fire a hook event. State stays at `permission_required` until next interaction.
-- **Resumed sessions**: Session ID in `sessions/{PID}.json` may not match what hooks send. CWD-based fallback matching handles this.
-- **Dashboard starts late**: Sessions show Unknown until their next hook event fires.
+- **OTEL state latency**: 15-30s delay between Claude Code state change and dashboard update (OTEL SDK flush + recording rule eval + dashboard poll). Accepted tradeoff for sandbox support.
+- **User interrupt**: No OTEL event fires when user hits Ctrl+C/Escape. State stays at last value until next interaction.
+- **Permission denial**: Denying a tool without feedback text may not fire an OTEL event. State stays at `permission_required` until next interaction.
+- **Dashboard starts late**: Sessions show Unknown until Prometheus has their first state metric.
 
 See `docs/state-transitions.md` for the full state machine diagram and gap analysis.
 
@@ -70,13 +73,9 @@ See `docs/state-transitions.md` for the full state machine diagram and gap analy
 
 Decisions recorded here exist because they were non-obvious, caused confusion, or were independently re-proposed as "fixes" during review. They are intentional.
 
-### Agent lifecycle — no TTL or pruning
+### OTEL state — IDLE protected from READY overwrite
 
-Agents can run for arbitrarily long periods (hours). There is no reliable signal to distinguish "still working quietly" from "orphaned after interrupt". A TTL would kill legitimate long-running agents. The only known cause of orphaned agents is user interrupt (Ctrl+C) where `SubagentStop` doesn't fire — and the most common cleanup path (PID death removes the session + all agents) already handles this. The narrow gap (session alive, agent interrupted) is accepted until Claude Code provides a better signal. **Do not add agent TTL, pruning, or timeout-based cleanup.**
-
-### Agent permission debounce (5 seconds)
-
-Agent permission requests are debounced for 5 seconds before surfacing in the UI. Agents are typically run via skills that auto-resolve permission prompts, so most agent permission events are transient noise. If the permission is resolved within 5s, the user never sees it. If still pending after 5s, the UI updates. Main process permission requests are NOT debounced — those always need user action.
+OTEL poller skips READY→IDLE transitions. User clicks clear Ready→Idle immediately in UI, but Prometheus still reports READY until next activity (15-30s lag). Without this guard, OTEL would overwrite IDLE back to READY on next poll, breaking user intent. Only non-IDLE states overwrite IDLE from OTEL.
 
 ### Text color — auto-contrast, not configurable
 
@@ -102,9 +101,9 @@ Ghost sessions are evicted when total session count exceeds `max_sessions` (defa
 
 `_list_windows_dbus()` in `platform/linux.py` must unescape `\\"` → `\"` in gdbus output before JSON parsing. gdbus double-escapes quotes in GVariant strings. Window titles containing literal quotes (e.g., music player track names) break JSON parse without this fix. This affects ALL D-Bus window features (sandbox VS Code detection, live session foregrounding).
 
-### Hook relay `--debug` flag
+### Single-instance enforcement
 
-The relay script always runs with `--debug` in hooks-settings.json, logging raw payloads to `~/.claude/claude-dashboard/logs/hook-payloads.jsonl`. This is safe because both the relay log and the dashboard log use `RotatingFileHandler` (2 MB, 1 backup).
+Uses PID file lock (`~/.claude/claude-dashboard/dashboard.pid`) to prevent multiple dashboard instances. Stale PID files (process dead) are removed on startup. Replaces previous port-based lock (hook server socket binding).
 
 ## Docs
 
@@ -142,15 +141,15 @@ The relay script always runs with `--debug` in hooks-settings.json, logging raw 
 
 - Run git write operations (add, commit, push) — user handles git
 - Read `~/.claude/ide/*.lock` files (contain auth tokens)
-- Use timeout-based state inference — hooks or nothing
+- Add custom command hooks for state detection — OTEL native events provide all signals
 - Duplicate settings logic between init and apply paths
-- Add agent TTL, pruning, or timeout-based cleanup (see Design Decisions)
 - Add `platform.system()` / `sys.platform` checks outside config.py
 
 ## Active Technologies
 
-- Python 3.11+ + Tkinter, psutil, pystray, Pillow (003-agent-awareness)
-- JSON settings file (no new storage for this feature) (003-agent-awareness)
+- Python 3.11+ + Tkinter, psutil, pystray, Pillow, requests
+- OTEL collector + Loki + Prometheus recording rules (claude-otel-stack)
+- JSON settings file (no new storage for this feature)
 
 ## Recent Enhancements (v0.2+)
 
@@ -159,7 +158,7 @@ The relay script always runs with `--debug` in hooks-settings.json, logging raw 
 - `--log-file <path>` CLI arg redirects logging to file (append mode)
 - `sys.excepthook` captures uncaught stack traces in log files
 - Makefile `run` target logs to `~/.claude/claude-dashboard/dashboard.log`
-- Clean shutdown with `SO_REUSEADDR`/`SO_REUSEPORT` on hook server socket
+- Single-instance enforcement via PID file lock
 
 ### UI Interactions
 
@@ -198,10 +197,10 @@ The relay script always runs with `--debug` in hooks-settings.json, logging raw 
 - Periodic `git fetch` for pushed-not-merged sessions (~1/min, rate-limited by tick interval)
 - Title bar chef kiss image replaces unicode emoji (falls back if image missing)
 
-### Agent Awareness (US9)
+### OTEL State Detection
 
-- Dashboard tracks agents per session
-- Effective state is highest priority across main + all agents
-- Agent count indicator `(+N)` shown when agents active
-- Agent state persisted across dashboard restarts
-- Agent permission requests debounced 5s before surfacing in UI
+- Session state derived from Prometheus metrics (`claude_session_state{session_id}`)
+- Metrics aggregated from native Claude Code OTEL events via recording rules
+- All activity (main + agents) rolled up by session_id — no per-agent tracking
+- Polling interval: 5s (configurable in controller)
+- State values: `working`, `idle`, `permission_required`, `awaiting_input`, `unknown`
