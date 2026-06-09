@@ -1023,11 +1023,11 @@ class MainWindow:
         return fg
 
     @staticmethod
-    def _sandbox_emoji(*, sandbox_phase: str, unattached: bool) -> EmojiKey | Path | None:
-        """Return sandbox-specific emoji key, or None to use default rendering.
+    def _sandbox_emoji(*, sandbox_phase: str) -> EmojiKey | Path | None:
+        """Return sandbox-specific emoji override, or None for default state emoji.
 
-        Only Error-phase sandboxes get distinct emoji.  Ready+idle sandboxes
-        use default ghost rendering so they toggle with other ghosts.
+        Only Error-phase sandboxes get distinct emoji (fire).
+        All other phases use the normal state emoji from OTEL.
         """
         phase = (
             SandboxPhase(sandbox_phase)
@@ -1035,11 +1035,7 @@ class MainWindow:
             else SandboxPhase.UNKNOWN
         )
         if phase == SandboxPhase.ERROR:
-            if unattached:
-                return SandboxPhase.ERROR
             return config.EMOJI_SANDBOX_ERROR_ACTIVE
-        if unattached:
-            return phase
         return None
 
     def _emoji_image(self, state: EmojiKey | Path, *, bg_hex: str) -> tk.PhotoImage:
@@ -1131,10 +1127,12 @@ class MainWindow:
             emoji_state_or_path = state
             container_text = self._container_label(container)
 
+        # Sandbox disconnected: dim text to indicate no VS Code
+        if row.sandbox_phase and not row.sandbox_connected:
+            fg = _COLOR_CONTAINER_FG
+
         sandbox_emoji = (
-            self._sandbox_emoji(sandbox_phase=row.sandbox_phase, unattached=row.unattached)
-            if row.sandbox_phase
-            else None
+            self._sandbox_emoji(sandbox_phase=row.sandbox_phase) if row.sandbox_phase else None
         )
         if sandbox_emoji is not None:
             emoji_state_or_path = sandbox_emoji
@@ -1290,10 +1288,11 @@ class MainWindow:
             emoji_state_or_path = row_data.state
             container_text = self._container_label(row_data.container)
 
+        if row_data.sandbox_phase and not row_data.sandbox_connected:
+            fg = _COLOR_CONTAINER_FG
+
         sandbox_emoji = (
-            self._sandbox_emoji(
-                sandbox_phase=row_data.sandbox_phase, unattached=row_data.unattached
-            )
+            self._sandbox_emoji(sandbox_phase=row_data.sandbox_phase)
             if row_data.sandbox_phase
             else None
         )
@@ -1304,6 +1303,7 @@ class MainWindow:
         emoji_image = self._emoji_image(emoji_state_or_path, bg_hex=bg)
         row["status_image"] = emoji_image  # prevent GC
         row["status_label"].configure(image=emoji_image)
+
         row["cwd_var"].set(
             self._cwd_display(row_data.session.cwd, agent_count=row_data.agent_count)
         )

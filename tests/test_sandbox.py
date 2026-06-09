@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 from claude_dashboard.config import (
     EMOJI_SANDBOX_ERROR_ACTIVE,
     GitStatus,
-    SandboxPhase,
 )
 from claude_dashboard.platform.base import ContainerInfo, ContainerType
 from claude_dashboard.session import (
@@ -380,31 +379,19 @@ class TestSandboxForeground:
 class TestSandboxEmoji:
     """Test _sandbox_emoji state selection logic."""
 
-    def _call(self, *, sandbox_phase, unattached):
+    def _call(self, *, sandbox_phase):
         from claude_dashboard.ui.main_window import MainWindow
 
-        return MainWindow._sandbox_emoji(sandbox_phase=sandbox_phase, unattached=unattached)
+        return MainWindow._sandbox_emoji(sandbox_phase=sandbox_phase)
 
-    def test_ready_unattached_returns_phase(self):
-        result = self._call(sandbox_phase="Ready", unattached=True)
-        assert result == SandboxPhase.READY
+    def test_ready_returns_none(self):
+        assert self._call(sandbox_phase="Ready") is None
 
-    def test_ready_attached_returns_none(self):
-        result = self._call(sandbox_phase="Ready", unattached=False)
-        assert result is None
+    def test_error_returns_fire_emoji(self):
+        assert self._call(sandbox_phase="Error") == EMOJI_SANDBOX_ERROR_ACTIVE
 
-    def test_error_unattached_returns_error_phase(self):
-        result = self._call(sandbox_phase="Error", unattached=True)
-        assert result == SandboxPhase.ERROR
+    def test_unknown_phase_returns_none(self):
+        assert self._call(sandbox_phase="SomethingNew") is None
 
-    def test_error_attached_returns_fire_emoji(self):
-        result = self._call(sandbox_phase="Error", unattached=False)
-        assert result == EMOJI_SANDBOX_ERROR_ACTIVE
-
-    def test_unknown_phase_returns_unknown(self):
-        result = self._call(sandbox_phase="SomethingNew", unattached=True)
-        assert result == SandboxPhase.UNKNOWN
-
-    def test_creating_phase_returns_creating(self):
-        result = self._call(sandbox_phase="Creating", unattached=True)
-        assert result == SandboxPhase.CREATING
+    def test_creating_returns_none(self):
+        assert self._call(sandbox_phase="Creating") is None
