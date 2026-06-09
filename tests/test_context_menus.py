@@ -8,7 +8,7 @@ live session Hide/Clear State, ghost Dismiss, and row right-click dispatch.
 from unittest.mock import MagicMock, patch
 
 from claude_dashboard import config
-from claude_dashboard.config import GitStatus, StatusState
+from claude_dashboard.config import StatusState
 from claude_dashboard.controller import _SessionEntry
 from claude_dashboard.platform.base import ContainerInfo
 from claude_dashboard.session import SessionInfo
@@ -104,32 +104,6 @@ class TestRowRightClickDispatch:
         assert ghost.unattached != live.unattached
 
 
-class TestAutoHideNonInteractive:
-    """Test that non-CLI sessions are auto-hidden."""
-
-    def test_cli_entrypoint_not_hidden(self):
-        session = _make_session(entrypoint="cli")
-        entry = _SessionEntry(session)
-        assert entry.hidden is False
-
-    def test_sdk_cli_entrypoint_auto_hidden(self):
-        """Sessions with entrypoint != cli (e.g. claude -p) should be hidden."""
-        session = _make_session(entrypoint="sdk-cli")
-        entry = _SessionEntry(session)
-        # Simulates what _add_session does
-        if session.entrypoint != "cli":
-            entry.hidden = True
-        assert entry.hidden is True
-
-    def test_entrypoint_defaults_to_cli(self):
-        session = SessionInfo(pid=1, session_id="s", cwd="/tmp", started_at=0)
-        assert session.entrypoint == "cli"
-
-    def test_entrypoint_parsed_from_session_data(self):
-        session = SessionInfo(pid=1, session_id="s", cwd="/tmp", started_at=0, entrypoint="sdk-cli")
-        assert session.entrypoint == "sdk-cli"
-
-
 class TestHiddenStatePersistence:
     """Test that hidden state survives restarts and ghost replacement."""
 
@@ -169,88 +143,6 @@ class TestHiddenStatePersistence:
         if saved.get("hidden"):
             entry.hidden = True
         assert entry.hidden is False
-
-
-class TestOpenPrMenuVisibility:
-    """Test that Open PR menu item appears only for PUSHED_NOT_MERGED status."""
-
-    def test_open_pr_available_when_pushed_not_merged(self):
-        entry = _SessionEntry(_make_session())
-        entry.git_status = GitStatus.PUSHED_NOT_MERGED
-        assert entry.git_status == GitStatus.PUSHED_NOT_MERGED
-
-    def test_open_pr_not_available_when_clean(self):
-        entry = _SessionEntry(_make_session())
-        entry.git_status = GitStatus.CLEAN
-        assert entry.git_status != GitStatus.PUSHED_NOT_MERGED
-
-    def test_open_pr_not_available_when_unstaged(self):
-        entry = _SessionEntry(_make_session())
-        entry.git_status = GitStatus.UNSTAGED_CHANGES
-        assert entry.git_status != GitStatus.PUSHED_NOT_MERGED
-
-    def test_open_pr_not_available_when_committed_not_pushed(self):
-        entry = _SessionEntry(_make_session())
-        entry.git_status = GitStatus.COMMITTED_NOT_PUSHED
-        assert entry.git_status != GitStatus.PUSHED_NOT_MERGED
-
-
-class TestOpenPrAction:
-    """Test the _open_pr subprocess invocation."""
-
-    @patch("claude_dashboard.controller.subprocess.run")
-    def test_open_pr_views_existing_pr(self, mock_run):
-        """_open_pr opens existing PR when gh pr view succeeds."""
-        from claude_dashboard.controller import AppController
-
-        mock_run.return_value = MagicMock(returncode=0)
-        session = _make_session(cwd="/tmp/my-repo")
-        stub = object.__new__(AppController)
-        AppController._open_pr(stub, session)
-        mock_run.assert_called_once_with(
-            ["gh", "pr", "view", "--web"],
-            cwd="/tmp/my-repo",
-            stdout=-3,
-            stderr=-3,
-            timeout=10,
-            creationflags=config.SUBPROCESS_FLAGS,
-        )
-
-    @patch("claude_dashboard.controller.subprocess.Popen")
-    @patch("claude_dashboard.controller.subprocess.run")
-    def test_open_pr_falls_back_to_create(self, mock_run, mock_popen):
-        """_open_pr opens create-PR page when no PR exists."""
-        from claude_dashboard.controller import AppController
-
-        mock_run.return_value = MagicMock(returncode=1)
-        session = _make_session(cwd="/tmp/my-repo")
-        stub = object.__new__(AppController)
-        AppController._open_pr(stub, session)
-        mock_popen.assert_called_once_with(
-            ["gh", "pr", "create", "--web"],
-            cwd="/tmp/my-repo",
-            stdout=-3,
-            stderr=-3,
-            creationflags=config.SUBPROCESS_FLAGS,
-        )
-
-    @patch("claude_dashboard.controller.subprocess.run", side_effect=FileNotFoundError)
-    def test_open_pr_handles_missing_gh(self, mock_run):
-        """_open_pr does not raise when gh CLI is missing."""
-        from claude_dashboard.controller import AppController
-
-        session = _make_session(cwd="/tmp/my-repo")
-        stub = object.__new__(AppController)
-        AppController._open_pr(stub, session)  # should not raise
-
-    @patch("claude_dashboard.controller.subprocess.run", side_effect=OSError("test"))
-    def test_open_pr_handles_os_error(self, mock_run):
-        """_open_pr does not raise on generic OSError."""
-        from claude_dashboard.controller import AppController
-
-        session = _make_session(cwd="/tmp/my-repo")
-        stub = object.__new__(AppController)
-        AppController._open_pr(stub, session)  # should not raise
 
 
 class TestLaunchVscode:
@@ -350,49 +242,6 @@ class TestLeftClickGhost:
         ):
             stub._on_row_left_click(session)
             mock_launch.assert_not_called()
-
-
-class TestDoubleClickOpenPr:
-    """Test that double-click opens PR when pushed-not-merged."""
-
-    def test_double_click_pushed_not_merged_opens_pr(self):
-        from claude_dashboard.controller import AppController
-
-        session = _make_session(cwd="/tmp/pr-project")
-        entry = _SessionEntry(session)
-        entry.git_status = GitStatus.PUSHED_NOT_MERGED
-
-        stub = object.__new__(AppController)
-        stub._sessions = {session.pid: entry}
-        with patch.object(stub, "_open_pr") as mock_pr:
-            stub._on_row_double_click(session)
-            mock_pr.assert_called_once_with(session)
-
-    def test_double_click_clean_does_not_open_pr(self):
-        from claude_dashboard.controller import AppController
-
-        session = _make_session(cwd="/tmp/clean-project")
-        entry = _SessionEntry(session)
-        entry.git_status = GitStatus.CLEAN
-
-        stub = object.__new__(AppController)
-        stub._sessions = {session.pid: entry}
-        with patch.object(stub, "_open_pr") as mock_pr:
-            stub._on_row_double_click(session)
-            mock_pr.assert_not_called()
-
-    def test_double_click_unstaged_does_not_open_pr(self):
-        from claude_dashboard.controller import AppController
-
-        session = _make_session(cwd="/tmp/dirty-project")
-        entry = _SessionEntry(session)
-        entry.git_status = GitStatus.UNSTAGED_CHANGES
-
-        stub = object.__new__(AppController)
-        stub._sessions = {session.pid: entry}
-        with patch.object(stub, "_open_pr") as mock_pr:
-            stub._on_row_double_click(session)
-            mock_pr.assert_not_called()
 
 
 class TestGhostToggle:

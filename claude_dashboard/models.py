@@ -21,3 +21,4 @@ class SessionRow(NamedTuple):
     agent_count: int
     unattached: bool
     sandbox_phase: str = ""
+    sandbox_connected: bool = False

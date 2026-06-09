@@ -300,11 +300,20 @@ class AppController:
                     if entry and entry.sandbox_phase != sb_session.sandbox_phase:
                         entry.sandbox_phase = sb_session.sandbox_phase
                         entry.session.sandbox_phase = sb_session.sandbox_phase
-            # Ghost sandboxes that disappeared from openshell list
-            for entry in self._sessions.values():
-                if entry.sandbox and entry.session.session_id not in sandbox_ids:
-                    entry.sandbox = False
-                    entry.unattached = True
+            # Remove sandboxes that disappeared from openshell list
+            gone_pids = [
+                e.session.pid
+                for e in self._sessions.values()
+                if e.sandbox and e.session.session_id not in sandbox_ids
+            ]
+            for pid in gone_pids:
+                entry = self._sessions.get(pid)
+                if entry:
+                    self._session_id_to_pid.pop(entry.session.session_id, None)
+                    logger.info(
+                        "sandbox %s removed (no longer in openshell)", entry.session.session_id
+                    )
+                self._sessions.pop(pid, None)
 
             # 2c. Update sandbox VS Code connection state
             self._sandbox_vscode_tick_counter += 1
@@ -488,11 +497,6 @@ class AppController:
                 )
         else:
             self._apply_saved_state(entry)
-
-        # Auto-hide non-interactive sessions (e.g. claude -p)
-        if session.entrypoint != "cli":
-            entry.hidden = True
-            logger.info("pid=%d auto-hidden (entrypoint=%s)", session.pid, session.entrypoint)
 
         self._sessions[session.pid] = entry
         self._session_id_to_pid[session.session_id] = session.pid
@@ -790,8 +794,9 @@ class AppController:
                 git_status=entry.git_status,
                 merged=entry.merged,
                 agent_count=0,
-                unattached=entry.unattached,
+                unattached=entry.unattached if not entry.sandbox else False,
                 sandbox_phase=entry.sandbox_phase if entry.sandbox else "",
+                sandbox_connected=entry.sandbox and not entry.unattached,
             )
             for entry in all_entries
             if not entry.hidden
@@ -879,11 +884,8 @@ class AppController:
             logger.debug("post-click foreground check failed: %s", exc)
 
     def _on_row_double_click(self, session: SessionInfo):
-        """Double-click opens PR if branch is pushed-not-merged."""
-        entry = self._sessions.get(session.pid)
-        if entry and entry.git_status == config.GitStatus.PUSHED_NOT_MERGED:
-            self._open_pr(session)
-            return
+        """Double-click — reserved, currently no-op."""
+        pass
 
     def _on_row_middle_click(self, session: SessionInfo):
         """Middle-click toggles flagged state."""
@@ -904,7 +906,7 @@ class AppController:
             self._show_live_context_menu(session, x, y)
 
     def _show_live_context_menu(self, session: SessionInfo, x: int, y: int):
-        """Show context menu for live sessions: Hide, Clear State."""
+        """Live session menu: Hide, Clear State."""
         if self._context_menu_open:
             self._context_menu.unpost()
             self._context_menu_open = False
@@ -931,11 +933,6 @@ class AppController:
 
         self._context_menu.add_command(label=cwd_display, state=tk.DISABLED)
         self._context_menu.add_separator()
-        if entry.git_status == config.GitStatus.PUSHED_NOT_MERGED:
-            self._context_menu.add_command(
-                label="Open PR",
-                command=lambda: self._open_pr(session),
-            )
         self._context_menu.add_command(label="Hide", command=hide)
         self._context_menu.add_command(label="Clear State", command=clear_state)
 
@@ -943,7 +940,7 @@ class AppController:
         popup_menu_clamped(self._context_menu, x=x, y=y)
 
     def _show_sandbox_context_menu(self, session: SessionInfo, x: int, y: int):
-        """Show context menu for sandbox sessions: Open, Hide, Delete."""
+        """Live sandbox menu: Hide, Clear State."""
         if self._context_menu_open:
             self._context_menu.unpost()
             self._context_menu_open = False
@@ -954,9 +951,6 @@ class AppController:
         cwd_display = cwd_relative_to_home(cwd=session.cwd)
         entry = self._sessions.get(session.pid)
 
-        def open_in_vscode():
-            self._launch_vscode(folder=session.cwd)
-
         def hide():
             if entry:
                 entry.hidden = True
@@ -964,8 +958,15 @@ class AppController:
                 self._save_session_state()
                 self._refresh_ui()
 
+        def clear_state():
+            if entry:
+                entry.state = StatusState.IDLE
+                logger.info("sandbox %s state cleared via context menu", cwd_display)
+                self._refresh_ui()
+
+        sandbox_name = session.session_id.removeprefix("sandbox-")
+
         def delete_sandbox():
-            sandbox_name = Path(session.cwd).name
             self._sessions.pop(session.pid, None)
             self._session_id_to_pid.pop(session.session_id, None)
             logger.info("sandbox %s delete requested", sandbox_name)
@@ -978,21 +979,41 @@ class AppController:
 
         self._context_menu.add_command(label=f"Sandbox: {cwd_display}", state=tk.DISABLED)
         self._context_menu.add_separator()
-        if entry and entry.git_status == config.GitStatus.PUSHED_NOT_MERGED:
-            self._context_menu.add_command(
-                label="Open PR",
-                command=lambda: self._open_pr(session),
-            )
-
-        def clear_state():
-            if entry:
-                entry.state = StatusState.IDLE
-                logger.info("sandbox %s state cleared via context menu", cwd_display)
-                self._refresh_ui()
-
-        self._context_menu.add_command(label="Open in VS Code", command=open_in_vscode)
         self._context_menu.add_command(label="Hide", command=hide)
         self._context_menu.add_command(label="Clear State", command=clear_state)
+        self._context_menu.add_command(label="Delete Sandbox", command=delete_sandbox)
+
+        self._context_menu_open = True
+        popup_menu_clamped(self._context_menu, x=x, y=y)
+
+    def _show_ghost_context_menu(self, session: SessionInfo, x: int, y: int):
+        """Ghost (local) menu: Hide, Dismiss."""
+        if self._context_menu_open:
+            self._context_menu.unpost()
+            self._context_menu_open = False
+            return
+        self._context_menu.unpost()
+        self._context_menu.delete(0, tk.END)
+
+        cwd_display = cwd_relative_to_home(cwd=session.cwd)
+
+        def dismiss():
+            self._sessions.pop(session.pid, None)
+            logger.info("pid=%d ghost dismissed via context menu", session.pid)
+            self._refresh_ui()
+
+        def hide():
+            entry = self._sessions.get(session.pid)
+            if entry:
+                entry.hidden = True
+                logger.info("pid=%d ghost hidden via context menu", session.pid)
+                self._save_session_state()
+                self._refresh_ui()
+
+        self._context_menu.add_command(label=f"Ghost: {cwd_display}", state=tk.DISABLED)
+        self._context_menu.add_separator()
+        self._context_menu.add_command(label="Hide", command=hide)
+        self._context_menu.add_command(label="Dismiss", command=dismiss)
 
         self._context_menu_open = True
         popup_menu_clamped(self._context_menu, x=x, y=y)
@@ -1013,48 +1034,6 @@ class AppController:
             logger.info("sandbox delete completed name=%s", sandbox_name)
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.warning("sandbox delete failed name=%s error=%s", sandbox_name, exc)
-
-    def _show_ghost_context_menu(self, session: SessionInfo, x: int, y: int):
-        """Show context menu for ghost (unattached) sessions."""
-        if self._context_menu_open:
-            self._context_menu.unpost()
-            self._context_menu_open = False
-            return
-        self._context_menu.unpost()
-        self._context_menu.delete(0, tk.END)
-
-        cwd_display = cwd_relative_to_home(cwd=session.cwd)
-
-        def dismiss():
-            self._sessions.pop(session.pid, None)
-            logger.info("pid=%d ghost dismissed via context menu", session.pid)
-            self._refresh_ui()
-
-        def open_in_vscode():
-            self._launch_vscode(folder=session.cwd)
-
-        def hide():
-            entry = self._sessions.get(session.pid)
-            if entry:
-                entry.hidden = True
-                logger.info("pid=%d ghost hidden via context menu", session.pid)
-                self._save_session_state()
-                self._refresh_ui()
-
-        self._context_menu.add_command(label=f"Ghost: {cwd_display}", state=tk.DISABLED)
-        self._context_menu.add_separator()
-        entry = self._sessions.get(session.pid)
-        if entry and entry.git_status == config.GitStatus.PUSHED_NOT_MERGED:
-            self._context_menu.add_command(
-                label="Open PR",
-                command=lambda: self._open_pr(session),
-            )
-        self._context_menu.add_command(label="Open in VS Code", command=open_in_vscode)
-        self._context_menu.add_command(label="Hide", command=hide)
-        self._context_menu.add_command(label="Dismiss", command=dismiss)
-
-        self._context_menu_open = True
-        popup_menu_clamped(self._context_menu, x=x, y=y)
 
     def _launch_vscode(self, *, folder: str):
         """Launch VS Code for the given folder."""
@@ -1083,35 +1062,6 @@ class AppController:
             return
         self._launch_vscode(folder=folder)
 
-    def _open_pr(self, session: SessionInfo):
-        """Open the GitHub PR for the session's branch, or create-PR page if none exists."""
-        try:
-            result = subprocess.run(
-                ["gh", "pr", "view", "--web"],
-                cwd=session.cwd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=10,
-                creationflags=config.SUBPROCESS_FLAGS,
-            )
-            if result.returncode == 0:
-                logger.info("opened PR in browser for cwd=%s", session.cwd)
-            else:
-                subprocess.Popen(
-                    ["gh", "pr", "create", "--web"],
-                    cwd=session.cwd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=config.SUBPROCESS_FLAGS,
-                )
-                logger.info("no PR found, opened create-PR page for cwd=%s", session.cwd)
-        except FileNotFoundError:
-            logger.warning("gh CLI not found — install from https://cli.github.com/")
-        except subprocess.TimeoutExpired:
-            logger.warning("gh pr view timed out for cwd=%s", session.cwd)
-        except OSError as exc:
-            logger.warning("failed to open PR for cwd=%s error=%s", session.cwd, exc)
-
     @staticmethod
     def _is_error_sandbox(entry: "_SessionEntry") -> bool:
         return entry.sandbox and entry.sandbox_phase == "Error"
@@ -1123,19 +1073,23 @@ class AppController:
         Otherwise: if any non-flagged ghosts are visible, hide them.
         Flagged ghosts are never hidden by this toggle.
         """
+
+        def _is_toggleable(entry: _SessionEntry) -> bool:
+            if not entry.unattached:
+                return False
+            if entry.flagged:
+                return False
+            if self._is_error_sandbox(entry):
+                return False
+            return True
+
         if force_show:
             hide = False
         else:
-            any_visible = any(
-                entry.unattached
-                and not entry.hidden
-                and not entry.flagged
-                and not self._is_error_sandbox(entry)
-                for entry in self._sessions.values()
-            )
+            any_visible = any(_is_toggleable(e) and not e.hidden for e in self._sessions.values())
             hide = any_visible
         for entry in self._sessions.values():
-            if entry.unattached and not entry.flagged and not self._is_error_sandbox(entry):
+            if _is_toggleable(entry):
                 entry.hidden = hide
         self._ghosts_hidden = hide
         logger.info("ghosts %s via title bar", "hidden" if hide else "shown")
@@ -1151,7 +1105,7 @@ class AppController:
         self._session_vars.clear()
         all_entries = self._sorted_entries()
         for entry in all_entries:
-            if entry.unattached:
+            if entry.unattached and not entry.sandbox:
                 continue
             var = tk.BooleanVar(value=not entry.hidden)
             self._session_vars.append(var)
