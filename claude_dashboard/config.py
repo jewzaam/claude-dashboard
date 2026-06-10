@@ -121,6 +121,7 @@ EMOJI_IMAGES: dict[EmojiKey, Path] = {
     None: _ASSETS / "emoji_unattached.png",  # unattached / ghost
 }
 EMOJI_SANDBOX_ERROR_ACTIVE = _ASSETS / "emoji_sandbox_error_active.png"
+ICON_TERMINAL_ACTIVITY = _ASSETS / "emoji_terminal_activity.png"
 
 # Title bar
 TITLE_EMOJI = "\U0001f90c"  # 🤌 (chef's kiss) — fallback if image missing

@@ -22,3 +22,4 @@ class SessionRow(NamedTuple):
     unattached: bool
     sandbox_phase: str = ""
     sandbox_connected: bool = False
+    has_terminal_activity: bool = False
