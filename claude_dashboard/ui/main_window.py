@@ -1061,8 +1061,20 @@ class MainWindow:
         return img
 
     def _flag_icon(self, row: SessionRow) -> tk.PhotoImage:
-        """Generate an eye icon for git status + manual flag, or transparent if clean."""
+        """Generate flag icon: terminal activity indicator, or git eye, or blank."""
         icon_size = self._icon_size
+
+        if row.has_terminal_activity:
+            activity_key = ("terminal_activity", None, icon_size)
+            cached = self._icon_cache.get(activity_key)
+            if cached is not None:
+                return cached
+            fg = Image.open(config.ICON_TERMINAL_ACTIVITY).convert("RGBA")
+            fg = fg.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
+            result = _pil_to_photoimage(fg)
+            self._icon_cache[activity_key] = result
+            return result
+
         eye_color = self._git_status_color(row)
         pupil_color_hex = self._settings.color_flag_manual if row.flagged else None
 
@@ -1072,12 +1084,9 @@ class MainWindow:
             return cached
 
         if eye_color is None and pupil_color_hex is None:
-            # No git status, no flag — transparent placeholder
             blank = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
             result = _pil_to_photoimage(blank)
         else:
-            # Eye outer = git status, pupil = manual flag
-            # If only flagged (no git status), use neutral gray eye with flag-colored pupil
             eye_rgb = config.hex_to_rgb(hex_color=eye_color) if eye_color else (90, 90, 90)
 
             if pupil_color_hex is not None:

@@ -627,3 +627,68 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
             [s.session_id for s in sessions],
         )
     return sorted(sessions, key=lambda s: cwd_relative_to_home(cwd=s.cwd).lower())
+
+
+# Process names to exclude from terminal activity detection
+_TERMINAL_ACTIVITY_EXCLUDE = frozenset(
+    {"claude-wrapper.sh", "claude", "openshell", "node", "code", "pgrep", "ps", "grep"}
+)
+
+
+def detect_terminal_activity(*, session_cwds: list[str], vscode_pid: int) -> set[str]:
+    """Return session CWDs that have non-Claude processes running in VS Code terminals.
+
+    Scans /proc for bash shells parented by VS Code, checks their CWD against
+    session CWDs, and reports which sessions have active non-Claude child processes.
+    """
+    if not config.IS_LINUX or vscode_pid <= 0:
+        return set()
+
+    active_cwds: set[str] = set()
+
+    try:
+        parent = psutil.Process(vscode_pid)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return set()
+
+    for child in parent.children(recursive=True):
+        try:
+            if child.name() != "bash":
+                continue
+            cmdline_str = " ".join(child.cmdline())
+            if "shellIntegration-bash" not in cmdline_str and "bash -li" not in cmdline_str:
+                continue
+
+            child_cwd = child.cwd()
+            matched_cwd = _match_cwd(child_cwd, session_cwds)
+            if not matched_cwd:
+                continue
+
+            for grandchild in child.children(recursive=False):
+                try:
+                    gc_name = grandchild.name()
+                    gc_cmdline = " ".join(grandchild.cmdline())
+                    if gc_name in _TERMINAL_ACTIVITY_EXCLUDE:
+                        continue
+                    if any(ex in gc_cmdline for ex in _TERMINAL_ACTIVITY_EXCLUDE):
+                        continue
+                    active_cwds.add(matched_cwd)
+                    break
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    return active_cwds
+
+
+def _match_cwd(terminal_cwd: str, session_cwds: list[str]) -> str | None:
+    """Match a terminal CWD to a session CWD. Exact match first, prefix fallback."""
+    for cwd in session_cwds:
+        if terminal_cwd == cwd:
+            return cwd
+    for cwd in session_cwds:
+        if terminal_cwd.startswith(cwd + "/"):
+            return cwd
+    return None

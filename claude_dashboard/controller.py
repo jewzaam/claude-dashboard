@@ -31,6 +31,7 @@ from claude_dashboard.session import (
     cwd_basename,
     cwd_relative_to_home,
     detect_branch,
+    detect_terminal_activity,
     discover_sandbox_sessions,
     discover_sessions,
     git_check,
@@ -108,6 +109,7 @@ class _SessionEntry:
         "sandbox",
         "sandbox_phase",
         "last_active",
+        "has_terminal_activity",
     )
 
     def __init__(self, session: SessionInfo):
@@ -122,6 +124,7 @@ class _SessionEntry:
         self.unattached: bool = False
         self.sandbox: bool = False
         self.sandbox_phase: str = ""
+        self.has_terminal_activity: bool = False
         self.last_active: float = 0.0
 
 
@@ -324,6 +327,7 @@ class AppController:
             if sandbox_vscode_tick:
                 self._sandbox_vscode_tick_counter = 0
                 self._update_sandbox_vscode_state()
+                self._check_terminal_activity()
 
             # 3. On first tick, create unattached placeholders from state file
             if not self._first_tick_done:
@@ -576,11 +580,50 @@ class AppController:
             folder_name = Path(entry.session.cwd).name.lower()
             has_vscode = any(folder_name in title for title in vscode_titles)
             if entry.unattached == has_vscode:
+                was_connected = not entry.unattached
                 entry.unattached = not has_vscode
+                if was_connected and entry.unattached and entry.state == StatusState.READY:
+                    entry.state = StatusState.IDLE
                 logger.debug(
                     "sandbox %s vscode_connected=%s",
                     folder_name,
                     has_vscode,
+                )
+
+    def _check_terminal_activity(self):
+        """Detect non-Claude processes in VS Code terminals matching session CWDs."""
+        if not config.IS_LINUX:
+            return
+
+        from claude_dashboard.platform.linux import _list_windows_dbus
+
+        windows = _list_windows_dbus()
+        vscode_pids = {
+            w["pid"]
+            for w in windows
+            if (w.get("wm_class") or "").lower() in ("code", "cursor") and w.get("pid")
+        }
+        if not vscode_pids:
+            return
+
+        session_cwds = [e.session.cwd for e in self._sessions.values()]
+        if not session_cwds:
+            return
+
+        active_cwds: set[str] = set()
+        for vscode_pid in vscode_pids:
+            active_cwds |= detect_terminal_activity(
+                session_cwds=session_cwds, vscode_pid=vscode_pid
+            )
+
+        for entry in self._sessions.values():
+            new_val = entry.session.cwd in active_cwds
+            if entry.has_terminal_activity != new_val:
+                entry.has_terminal_activity = new_val
+                logger.debug(
+                    "terminal_activity=%s cwd=%s",
+                    new_val,
+                    cwd_basename(cwd=entry.session.cwd),
                 )
 
     def _find_unattached_pid(self, cwd: str) -> int | None:
@@ -797,6 +840,7 @@ class AppController:
                 unattached=entry.unattached if not entry.sandbox else False,
                 sandbox_phase=entry.sandbox_phase if entry.sandbox else "",
                 sandbox_connected=entry.sandbox and not entry.unattached,
+                has_terminal_activity=entry.has_terminal_activity,
             )
             for entry in all_entries
             if not entry.hidden
