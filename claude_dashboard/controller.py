@@ -928,8 +928,12 @@ class AppController:
             logger.debug("post-click foreground check failed: %s", exc)
 
     def _on_row_double_click(self, session: SessionInfo):
-        """Double-click — reserved, currently no-op."""
-        pass
+        """Double-click clears state to Idle."""
+        entry = self._sessions.get(session.pid)
+        if entry and entry.state != StatusState.IDLE:
+            entry.state = StatusState.IDLE
+            logger.debug("pid=%d double-clicked, state cleared to idle", session.pid)
+            self._refresh_ui()
 
     def _on_row_middle_click(self, session: SessionInfo):
         """Middle-click toggles flagged state."""
