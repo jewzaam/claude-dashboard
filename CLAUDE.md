@@ -36,7 +36,7 @@ Session state metrics aggregate all activity (main + agents) by session_id. No p
 | `claude_dashboard/config.py` | Constants, StatusState enum, SandboxPhase enum, EmojiKey type alias, defaults, LOG_FILE, STATE_FILE, PID_FILE, PROMETHEUS_URL |
 | `claude_dashboard/otel_state.py` | Prometheus poller for session state metrics from OTEL recording rules |
 | `claude_dashboard/controller.py` | Session lifecycle, OTEL poller wiring, UI coordination, session state persistence, PID file lock |
-| `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()` |
+| `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()`, `detect_terminal_activity()` |
 | `claude_dashboard/file_utils.py` | Atomic JSON file writes (shared by settings + state persistence) |
 | `claude_dashboard/ui/main_window.py` | Dashboard window with session rows |
 | `claude_dashboard/ui/settings_window.py` | Modal settings editor |
@@ -93,13 +93,21 @@ Ghost sessions are evicted when total session count exceeds `max_sessions` (defa
 
 `SandboxPhase` enum in `config.py` has values READY, ERROR, CREATING, STOPPING, UNKNOWN. All phases flow through discovery — no filtering by openshell phase. Error sandboxes get phase-specific emoji (⚠️ unattached, 🔥 active) via `_sandbox_emoji()` static method in `main_window.py`. Ready+idle sandboxes use default ghost rendering (🏖️). Error sandboxes are excluded from ghost visibility toggle via `_is_error_sandbox()` helper. Ready sandboxes without VS Code toggle with ghosts — they are functionally ghosts.
 
+### Sandbox rendering model
+
+Sandboxes never render as ghosts — always state color background + state emoji. Grey text (`_COLOR_CONTAINER_FG`) when VS Code disconnected, normal contrast when connected. `sandbox_connected` field on SessionRow carries VS Code status. `unattached` passed as False for sandboxes in SessionRow (internally still tracked for VS Code detection). Gone from openshell → removed from dashboard entirely (no ghost state). Sandbox Ready→Idle automatically when VS Code disconnects.
+
+### Sandbox removal protection
+
+When `discover_sandbox_sessions()` returns empty but sandbox entries exist, skip removal — likely a transient openshell failure, not all sandboxes vanishing. Protects against spurious removal on openshell errors.
+
 ### EmojiKey type alias
 
 `EmojiKey = StatusState | SandboxPhase | None` in `config.py`. `EMOJI_IMAGES` dict uses this type. `EMOJI_SANDBOX_ERROR_ACTIVE` is a standalone `Path` constant (not in the dict) for the fire emoji.
 
 ### D-Bus gdbus quote escaping
 
-`_list_windows_dbus()` in `platform/linux.py` must unescape `\\"` → `\"` in gdbus output before JSON parsing. gdbus double-escapes quotes in GVariant strings. Window titles containing literal quotes (e.g., music player track names) break JSON parse without this fix. This affects ALL D-Bus window features (sandbox VS Code detection, live session foregrounding).
+`_list_windows_dbus()` in `platform/linux.py` must unescape `\\"` → `\"` in gdbus output before JSON parsing. gdbus output can use double-quote wrapper `("...",)` in addition to single-quote `('...',)` — both formats handled. Escaping unified: `\"` → `"` for both quote styles. Window titles containing literal quotes (e.g., music player track names) break JSON parse without this fix. This affects ALL D-Bus window features (sandbox VS Code detection, live session foregrounding).
 
 ### Single-instance enforcement
 
@@ -159,19 +167,26 @@ Uses PID file lock (`~/.claude/claude-dashboard/dashboard.pid`) to prevent multi
 - `sys.excepthook` captures uncaught stack traces in log files
 - Makefile `run` target logs to `~/.claude/claude-dashboard/dashboard.log`
 - Single-instance enforcement via PID file lock
+- All sessions start visible — `entrypoint != "cli"` no longer hides sessions automatically
+
+### Terminal Activity Detection
+
+`detect_terminal_activity()` in `session.py` scans VS Code terminal child processes (psutil-based, Linux-only). When a non-Claude process runs in a VS Code terminal matching a session CWD, the flag icon (leftmost) changes from the git eye to a yellow circular arrow (`emoji_terminal_activity.png`). Excluded processes: claude-wrapper.sh, claude, openshell, node, code, pgrep, ps, grep. Checked every ~30s on the sandbox vscode tick.
 
 ### UI Interactions
 
 - **Left-click (live)**: Foreground the session's VS Code/terminal window; clear Ready→Idle
 - **Left-click (ghost)**: Open in VS Code with tasks.json (auto-launch Claude)
-- **Double-click**: Open PR in browser if branch is pushed-not-merged; falls back to create-PR page if no PR exists
+- **Double-click**: Toggle IDLE↔READY (re-flag for attention or clear state)
 - **Middle-click**: Toggle manual flag on clicked row
-- **Right-click (row)**: Hide, Clear State, Open PR (when pushed-not-merged); ghosts also get Open in VS Code, Dismiss
+- **Right-click (live)**: Hide, Clear State
+- **Right-click (sandbox)**: Hide, Clear State, Delete Sandbox
+- **Right-click (ghost local)**: Hide, Dismiss
 - **Right-click (title bar)**: Sessions visibility toggles, Open... (folder picker → VS Code), Settings, Restart, Quit
 - **Left-click (title bar)**: Window shade toggle — collapse to title bar only; shaded bar uses highest-priority state color
-- **Middle-click (title bar)**: Toggle ghost session visibility (hide/show all ghosts)
+- **Middle-click (title bar)**: Toggle ghost session visibility (hide/show all ghosts) — includes disconnected sandboxes alongside local ghosts; flagged and error sandboxes excluded
 - **Drag (counts label)**: Horizontal window resize; width persisted to settings
-- **Flag eye icon**: Eye shape left of emoji — outer color = git status, pupil = manual flag (middle-click)
+- **Flag eye icon**: Eye shape left of emoji — outer color = git status, pupil = manual flag (middle-click). Terminal activity changes flag icon from git eye to yellow circular arrow (`emoji_terminal_activity.png`) when non-Claude process runs in VS Code terminal matching session CWD
 - **Tray menu**: Fully dynamic with "Unhide: (session)" items when sessions are hidden
 
 ### State Persistence
@@ -180,6 +195,7 @@ Uses PID file lock (`~/.claude/claude-dashboard/dashboard.pid`) to prevent multi
 - All persisted across dashboard restarts
 - Duplicate-CWD sessions: hidden only persists as true if ALL sessions with that CWD are hidden
 - Flag color determined by git status, configurable via 5 `color_flag_*` settings (manual, unstaged, staged, unpushed, unmerged)
+- Sandboxes always appear in sessions visibility menu regardless of `unattached` state, so they can be unhidden
 
 ### Git Status Flags
 
