@@ -110,6 +110,7 @@ class _SessionEntry:
         "sandbox_phase",
         "last_active",
         "has_terminal_activity",
+        "state_cleared_from",
     )
 
     def __init__(self, session: SessionInfo):
@@ -126,6 +127,7 @@ class _SessionEntry:
         self.sandbox_phase: str = ""
         self.has_terminal_activity: bool = False
         self.last_active: float = 0.0
+        self.state_cleared_from: str = ""
 
 
 class AppController:
@@ -759,17 +761,12 @@ class AppController:
             prior = entry.state
             if new_state == prior:
                 continue
-            # Don't let OTEL overwrite user-cleared IDLE with READY — but only
-            # if the session has had activity (last_active > 0 means user clicked
-            # or a prior state update occurred). New sessions start at IDLE with
-            # last_active=0 and should accept READY from OTEL.
-            if (
-                prior == StatusState.IDLE
-                and new_state == StatusState.READY
-                and entry.last_active > 0
-            ):
+            # Skip if OTEL reports the same state user manually cleared.
+            # Accepts any different state (genuinely new activity).
+            if entry.state_cleared_from and new_state.value == entry.state_cleared_from:
                 continue
             entry.state = new_state
+            entry.state_cleared_from = ""
             entry.last_active = _now_epoch()
             changed = True
             cwd_short = cwd_basename(cwd=entry.session.cwd)
@@ -896,6 +893,7 @@ class AppController:
 
         # Clicking a Ready session clears to Idle
         if entry and entry.state == StatusState.READY:
+            entry.state_cleared_from = entry.state.value
             entry.state = StatusState.IDLE
             logger.debug("pid=%d clicked, cleared ready to idle", session.pid)
             self._refresh_ui()
@@ -956,6 +954,7 @@ class AppController:
             entry.state = StatusState.READY
             logger.debug("pid=%d double-clicked, idle to ready", session.pid)
         else:
+            entry.state_cleared_from = entry.state.value
             entry.state = StatusState.IDLE
             logger.debug("pid=%d double-clicked, state cleared to idle", session.pid)
         self._refresh_ui()
@@ -1000,6 +999,7 @@ class AppController:
             self._refresh_ui()
 
         def clear_state():
+            entry.state_cleared_from = entry.state.value
             entry.state = StatusState.IDLE
             logger.info("pid=%d state cleared via context menu", session.pid)
             self._refresh_ui()
@@ -1033,6 +1033,7 @@ class AppController:
 
         def clear_state():
             if entry:
+                entry.state_cleared_from = entry.state.value
                 entry.state = StatusState.IDLE
                 logger.info("sandbox %s state cleared via context menu", cwd_display)
                 self._refresh_ui()
@@ -1244,6 +1245,7 @@ class AppController:
                     "hidden": entry.hidden,
                     "flagged": entry.flagged,
                     "last_active": entry.last_active,
+                    "state_cleared_from": entry.state_cleared_from,
                 }
 
         try:
@@ -1263,6 +1265,9 @@ class AppController:
         last_active = saved.get("last_active")
         if isinstance(last_active, (int, float)):
             entry.last_active = float(last_active)
+        state_cleared_from = saved.get("state_cleared_from")
+        if isinstance(state_cleared_from, str) and state_cleared_from:
+            entry.state_cleared_from = state_cleared_from
         state_val = saved.get("state")
         if state_val:
             try:
