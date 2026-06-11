@@ -136,17 +136,23 @@ def _list_windows_dbus() -> list[dict]:
             return []
 
         raw = result.stdout.strip()
-        # gdbus wraps output as ('json_string',)
+        # gdbus wraps output as ('json_string',) or ("json_string",)
         if raw.startswith("('") and raw.endswith("',)"):
             json_str = raw[2:-3]
         elif raw.startswith("('") and raw.endswith("')"):
+            json_str = raw[2:-2]
+        elif raw.startswith('("') and raw.endswith('",)'):
+            json_str = raw[2:-3]
+        elif raw.startswith('("') and raw.endswith('")'):
             json_str = raw[2:-2]
         else:
             logger.debug("unexpected gdbus output format: %s", raw[:100])
             return []
 
-        # gdbus double-escapes quotes inside GVariant strings
-        json_str = json_str.replace('\\\\"', '\\"')
+        # gdbus escapes quotes inside GVariant strings.
+        # Single-quote wrapper ('...') double-escapes: \\" → \"
+        # Double-quote wrapper ("...") single-escapes: \" → "
+        json_str = json_str.replace('\\"', '"')
         return json.loads(json_str)
     except FileNotFoundError:
         logger.debug("gdbus not found")

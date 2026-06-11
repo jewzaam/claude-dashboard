@@ -303,20 +303,30 @@ class AppController:
                     if entry and entry.sandbox_phase != sb_session.sandbox_phase:
                         entry.sandbox_phase = sb_session.sandbox_phase
                         entry.session.sandbox_phase = sb_session.sandbox_phase
-            # Remove sandboxes that disappeared from openshell list
-            gone_pids = [
-                e.session.pid
-                for e in self._sessions.values()
-                if e.sandbox and e.session.session_id not in sandbox_ids
-            ]
-            for pid in gone_pids:
-                entry = self._sessions.get(pid)
-                if entry:
-                    self._session_id_to_pid.pop(entry.session.session_id, None)
-                    logger.info(
-                        "sandbox %s removed (no longer in openshell)", entry.session.session_id
-                    )
-                self._sessions.pop(pid, None)
+            # Remove sandboxes that disappeared from openshell list.
+            # Skip removal when discovery returns empty — likely a transient
+            # openshell failure, not all sandboxes vanishing simultaneously.
+            existing_sandbox_count = sum(1 for e in self._sessions.values() if e.sandbox)
+            if sandbox_ids or existing_sandbox_count == 0:
+                gone_pids = [
+                    e.session.pid
+                    for e in self._sessions.values()
+                    if e.sandbox and e.session.session_id not in sandbox_ids
+                ]
+                for pid in gone_pids:
+                    entry = self._sessions.get(pid)
+                    if entry:
+                        self._session_id_to_pid.pop(entry.session.session_id, None)
+                        logger.info(
+                            "sandbox %s removed (no longer in openshell)",
+                            entry.session.session_id,
+                        )
+                    self._sessions.pop(pid, None)
+            elif existing_sandbox_count > 0:
+                logger.debug(
+                    "skipping sandbox removal: openshell returned empty but %d sandboxes known",
+                    existing_sandbox_count,
+                )
 
             # 2c. Update sandbox VS Code connection state
             self._sandbox_vscode_tick_counter += 1
@@ -827,6 +837,16 @@ class AppController:
 
     def _do_refresh_ui(self, all_entries: list["_SessionEntry"]):
         """Actual UI refresh logic."""
+        for entry in all_entries:
+            if not entry.hidden:
+                logger.debug(
+                    "ROW cwd=%s sandbox=%s unattached=%s state=%s pid=%d",
+                    cwd_basename(cwd=entry.session.cwd),
+                    entry.sandbox,
+                    entry.unattached,
+                    entry.state.value,
+                    entry.session.pid,
+                )
         visible_states = [
             SessionRow(
                 session=entry.session,
