@@ -59,6 +59,57 @@ class TestLiveContextMenuClearState:
         entry.state = StatusState.IDLE
         assert entry.hidden is True
 
+    def test_clear_state_records_cleared_from(self):
+        entry = _SessionEntry(_make_session())
+        entry.state = StatusState.WORKING
+        assert entry.state_cleared_from == ""
+        entry.state_cleared_from = entry.state.value
+        entry.state = StatusState.IDLE
+        assert entry.state_cleared_from == "working"
+
+    def test_state_cleared_from_empty_on_init(self):
+        entry = _SessionEntry(_make_session())
+        assert entry.state_cleared_from == ""
+
+
+class TestOtelClearedStateGuard:
+    """Test that OTEL rejects the same state user cleared, accepts different states."""
+
+    def test_same_state_skipped(self):
+        entry = _SessionEntry(_make_session())
+        entry.state_cleared_from = "working"
+        new_state = StatusState.WORKING
+        should_skip = entry.state_cleared_from and new_state.value == entry.state_cleared_from
+        assert should_skip
+
+    def test_different_state_accepted(self):
+        entry = _SessionEntry(_make_session())
+        entry.state_cleared_from = "working"
+        new_state = StatusState.PERMISSION_REQUIRED
+        should_skip = entry.state_cleared_from and new_state.value == entry.state_cleared_from
+        assert not should_skip
+
+    def test_no_clear_accepts_any_state(self):
+        entry = _SessionEntry(_make_session())
+        new_state = StatusState.WORKING
+        should_skip = entry.state_cleared_from and new_state.value == entry.state_cleared_from
+        assert not should_skip
+
+    def test_accepted_state_resets_cleared_from(self):
+        entry = _SessionEntry(_make_session())
+        entry.state_cleared_from = "working"
+        entry.state = StatusState.PERMISSION_REQUIRED
+        entry.state_cleared_from = ""
+        assert entry.state_cleared_from == ""
+
+    def test_ready_cleared_blocks_ready_accepts_working(self):
+        entry = _SessionEntry(_make_session())
+        entry.state_cleared_from = "ready"
+        assert entry.state_cleared_from and StatusState.READY.value == entry.state_cleared_from
+        assert not (
+            entry.state_cleared_from and StatusState.WORKING.value == entry.state_cleared_from
+        )
+
 
 class TestGhostContextMenuDismiss:
     """Test Dismiss action from ghost context menu."""

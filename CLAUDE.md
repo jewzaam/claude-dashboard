@@ -73,9 +73,9 @@ See `docs/state-transitions.md` for the full state machine diagram and gap analy
 
 Decisions recorded here exist because they were non-obvious, caused confusion, or were independently re-proposed as "fixes" during review. They are intentional.
 
-### OTEL state — IDLE protected from READY overwrite
+### OTEL state — cleared-state guard
 
-OTEL poller skips READY→IDLE transitions. User clicks clear Ready→Idle immediately in UI, but Prometheus still reports READY until next activity (15-30s lag). Without this guard, OTEL would overwrite IDLE back to READY on next poll, breaking user intent. Only non-IDLE states overwrite IDLE from OTEL.
+When user clears a session state (context menu, click, double-click), `state_cleared_from` records the state value that was cleared (e.g., `"working"`). OTEL poller rejects updates that report the same state — stale metrics keep reporting what was cleared and get blocked. A genuinely different state (e.g., PERMISSION_REQUIRED after clearing WORKING) is accepted, and `state_cleared_from` resets to `""`. No timestamps or cooldowns — pure state identity comparison. Persisted to `session-state.json` so protection survives dashboard restarts.
 
 ### Text color — auto-contrast, not configurable
 
