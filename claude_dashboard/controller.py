@@ -746,7 +746,8 @@ class AppController:
 
     def _update_states_from_otel(self):
         """Poll Prometheus for session state metrics and update entries."""
-        states = poll_session_states(prometheus_url=config.PROMETHEUS_URL)
+        url = config.resolve_prometheus_url(settings_url=self._settings.prometheus_url)
+        states = poll_session_states(prometheus_url=url)
         changed = False
         for session_id, session_state in states.items():
             pid = self._session_id_to_pid.get(session_id)

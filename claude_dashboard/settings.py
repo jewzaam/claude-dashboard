@@ -34,6 +34,9 @@ class Settings:
     # Poll
     poll_interval_seconds: int = config.DEFAULT_POLL_INTERVAL_SECONDS
 
+    # OTEL state source (env var PROMETHEUS_URL overrides at runtime)
+    prometheus_url: str = config.DEFAULT_PROMETHEUS_URL
+
     # Startup
     run_on_startup: bool = config.DEFAULT_RUN_ON_STARTUP
 

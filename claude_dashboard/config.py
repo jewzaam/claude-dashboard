@@ -39,7 +39,16 @@ STATE_FILE = CLAUDE_HOME / "claude-dashboard" / "session-state.json"
 DEFAULT_POLL_INTERVAL_SECONDS = 3
 
 # OTEL state source
-PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://localhost:9090")
+DEFAULT_PROMETHEUS_URL = "http://localhost:9090"
+# Explicit env override (None when unset) — takes precedence over the saved
+# setting so a work machine can point elsewhere without editing settings.json.
+PROMETHEUS_URL_ENV = os.environ.get("PROMETHEUS_URL")
+
+
+def resolve_prometheus_url(*, settings_url: str) -> str:
+    """Return effective Prometheus URL: env override wins, else saved setting."""
+    return PROMETHEUS_URL_ENV or settings_url
+
 
 # PID file for single-instance enforcement
 PID_FILE = CLAUDE_HOME / "claude-dashboard" / "dashboard.pid"
