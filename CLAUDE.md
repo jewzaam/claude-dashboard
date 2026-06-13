@@ -33,7 +33,7 @@ Session state metrics aggregate all activity (main + agents) by session_id. No p
 
 | File | Purpose |
 |------|---------|
-| `claude_dashboard/config.py` | Constants, StatusState enum, SandboxPhase enum, EmojiKey type alias, defaults, LOG_FILE, STATE_FILE, PID_FILE, PROMETHEUS_URL |
+| `claude_dashboard/config.py` | Constants, StatusState enum, SandboxPhase enum, EmojiKey type alias, defaults, LOG_FILE, STATE_FILE, PID_FILE, DEFAULT_PROMETHEUS_URL, resolve_prometheus_url() |
 | `claude_dashboard/otel_state.py` | Prometheus poller for session state metrics from OTEL recording rules |
 | `claude_dashboard/controller.py` | Session lifecycle, OTEL poller wiring, UI coordination, session state persistence, PID file lock |
 | `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()`, `detect_terminal_activity()` |
@@ -57,7 +57,7 @@ Session state metrics aggregate all activity (main + agents) by session_id. No p
 
 ## Configuration
 
-- **PROMETHEUS_URL**: Prometheus server URL (default `http://localhost:9090`). Set via env var.
+- **Prometheus URL**: Prometheus server URL (default `http://localhost:9090`). Configurable via the Settings window (`prometheus_url`, persisted to settings.json). Env var `PROMETHEUS_URL` overrides the saved setting at runtime via `config.resolve_prometheus_url()` (env wins, else settings value).
 - **PID_FILE**: Lock file for single-instance enforcement (`~/.claude/claude-dashboard/dashboard.pid`)
 
 ## Known Gaps (v0.2)

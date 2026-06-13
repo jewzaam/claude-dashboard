@@ -85,6 +85,12 @@ class SettingsWindow:
             row,
         )
 
+        self._section_label(frame, "OTEL", row)
+        row += 1
+        row = self._add_text_field(
+            frame, "Prometheus URL", "prometheus_url", settings.prometheus_url, row
+        )
+
         self._section_label(frame, "Startup", row)
         row += 1
         row = self._add_checkbox(

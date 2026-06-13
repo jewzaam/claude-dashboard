@@ -54,6 +54,12 @@ class TestLoadSettings:
         assert settings.window_x is None
         assert settings.window_y is None
 
+    def test_loads_prometheus_url(self, tmp_settings_path):
+        data = {"prometheus_url": "https://prometheus.tail64dfcc.ts.net"}
+        tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")
+        settings = load_settings(path=tmp_settings_path)
+        assert settings.prometheus_url == "https://prometheus.tail64dfcc.ts.net"
+
     def test_loads_flag_color_fields(self, tmp_settings_path):
         data = {"color_flag_manual": "#ff0000", "color_flag_unstaged": "#cc0000"}
         tmp_settings_path.write_text(json.dumps(data), encoding="utf-8")

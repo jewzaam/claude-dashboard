@@ -27,7 +27,7 @@ def _is_already_running() -> bool:
         else:
             import fcntl
 
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
         os.write(fd, str(os.getpid()).encode())
         os.truncate(fd, len(str(os.getpid())))
         _is_already_running._lock_fd = fd  # type: ignore[attr-defined]
