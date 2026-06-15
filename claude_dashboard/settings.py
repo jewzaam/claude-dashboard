@@ -37,6 +37,12 @@ class Settings:
     # OTEL state source (env var PROMETHEUS_URL overrides at runtime)
     prometheus_url: str = config.DEFAULT_PROMETHEUS_URL
 
+    # Loki state source (env var LOKI_URL overrides at runtime)
+    loki_url: str = config.DEFAULT_LOKI_URL
+
+    # Tooltip
+    tooltip_delay_ms: int = config.DEFAULT_TOOLTIP_DELAY_MS
+
     # Startup
     run_on_startup: bool = config.DEFAULT_RUN_ON_STARTUP
 

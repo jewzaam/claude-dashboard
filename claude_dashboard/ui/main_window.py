@@ -307,6 +307,11 @@ class MainWindow:
         self._tracked_y: int | None = None
         self._grow_up_bottom_y: int | None = None
 
+        # Tooltip state
+        self._tooltip_window: tk.Toplevel | None = None
+        self._tooltip_after_id: str | None = None
+        self._tooltip_pid: int | None = None
+
         # Create the window shell — apply_settings handles all configuration
         self._window = tk.Toplevel(root)
         if config.IS_LINUX:
@@ -799,6 +804,69 @@ class MainWindow:
                 self._window.geometry(f"{self._s(settings.row_width)}x1")
 
     # ------------------------------------------------------------------
+    # Tooltip
+    # ------------------------------------------------------------------
+
+    def _show_tooltip(self, event: Any, pid: int):
+        """Show tooltip after debounce delay."""
+        self._hide_tooltip()
+        self._tooltip_pid = pid
+        logger.debug("tooltip: hover enter pid=%d", pid)
+
+        def _display():
+            self._tooltip_after_id = None
+            row = self._rows.get(pid)
+            if row is None:
+                logger.debug("tooltip: pid=%d row gone before display", pid)
+                return
+            text = row.get("last_prompt", "")
+            if not text:
+                logger.debug("tooltip: pid=%d no last_prompt data", pid)
+                return
+            logger.debug("tooltip: showing pid=%d text=%s", pid, text[:60])
+            tip = tk.Toplevel(self._window)
+            tip.withdraw()
+            tip.overrideredirect(True)
+            tip.wm_attributes("-topmost", True)
+            label = tk.Label(
+                tip,
+                text=text,
+                bg="#333333",
+                fg="#e0e0e0",
+                font=self._font_container,
+                padx=6,
+                pady=3,
+                wraplength=400,
+                justify=tk.LEFT,
+            )
+            label.pack()
+            tip.update_idletasks()
+            tip_w = tip.winfo_reqwidth()
+            tip_h = tip.winfo_reqheight()
+            x = event.x_root + 12
+            y = event.y_root - tip_h - 4
+            screen_w = self._root.winfo_screenwidth()
+            if x + tip_w > screen_w:
+                x = event.x_root - tip_w - 4
+            if y < 0:
+                y = event.y_root + 20
+            tip.geometry(f"+{x}+{y}")
+            tip.deiconify()
+            self._tooltip_window = tip
+
+        self._tooltip_after_id = self._window.after(self._settings.tooltip_delay_ms, _display)
+
+    def _hide_tooltip(self):
+        """Cancel pending tooltip and destroy visible one."""
+        if self._tooltip_after_id is not None:
+            self._window.after_cancel(self._tooltip_after_id)
+            self._tooltip_after_id = None
+        if self._tooltip_window is not None:
+            self._tooltip_window.destroy()
+            self._tooltip_window = None
+        self._tooltip_pid = None
+
+    # ------------------------------------------------------------------
     # Window visibility
     # ------------------------------------------------------------------
 
@@ -1269,6 +1337,25 @@ class MainWindow:
             w.bind("<Button-2>", mid_click)
             w.bind("<Button-3>", right_click)
 
+        # Tooltip hover bindings (debounced)
+        def make_enter(p: int = session.pid):
+            def handler(event: Any):
+                self._show_tooltip(event, p)
+
+            return handler
+
+        def make_leave(p: int = session.pid):
+            def handler(event: Any):
+                self._hide_tooltip()
+
+            return handler
+
+        enter_handler = make_enter()
+        leave_handler = make_leave()
+        for w in widgets:
+            w.bind("<Enter>", enter_handler)
+            w.bind("<Leave>", leave_handler)
+
         self._rows[session.pid] = {
             "frame": row_frame,
             "status_image": emoji_image,
@@ -1281,6 +1368,7 @@ class MainWindow:
             "container_label": container_label,
             "flag_label": flag_label,
             "flag_image": flag_image,
+            "last_prompt": row.last_prompt,
         }
 
     def _update_row(self, row_data: SessionRow):
@@ -1327,6 +1415,8 @@ class MainWindow:
         row["flag_image"] = flag_image  # prevent GC
         row["flag_label"].configure(image=flag_image, bg=bg)
 
+        row["last_prompt"] = row_data.last_prompt
+
         # Update row height if settings changed
         try:
             row["frame"].configure(height=self._row_height())
@@ -1347,6 +1437,8 @@ class MainWindow:
                 pass
 
     def _remove_row(self, pid: int):
+        if self._tooltip_pid == pid:
+            self._hide_tooltip()
         if self._pending_click_pid == pid and self._pending_click_id is not None:
             self._window.after_cancel(self._pending_click_id)
             self._pending_click_id = None

@@ -50,6 +50,21 @@ def resolve_prometheus_url(*, settings_url: str) -> str:
     return PROMETHEUS_URL_ENV or settings_url
 
 
+# Loki state source (for last-prompt tooltips)
+DEFAULT_LOKI_URL = "http://localhost:3100"
+LOKI_URL_ENV = os.environ.get("LOKI_URL")
+
+
+def resolve_loki_url(*, settings_url: str) -> str:
+    """Return effective Loki URL: env override wins, else saved setting."""
+    return LOKI_URL_ENV or settings_url
+
+
+# Tooltip
+DEFAULT_TOOLTIP_DELAY_MS = 500
+DEFAULT_TOOLTIP_MAX_CHARS = 200
+
+
 # PID file for single-instance enforcement
 PID_FILE = CLAUDE_HOME / "claude-dashboard" / "dashboard.pid"
 
