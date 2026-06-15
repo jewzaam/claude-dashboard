@@ -90,6 +90,13 @@ class SettingsWindow:
         row = self._add_text_field(
             frame, "Prometheus URL", "prometheus_url", settings.prometheus_url, row
         )
+        row = self._add_text_field(frame, "Loki URL", "loki_url", settings.loki_url, row)
+
+        self._section_label(frame, "Tooltip", row)
+        row += 1
+        row = self._add_int_field(
+            frame, "Hover delay (ms)", "tooltip_delay_ms", settings.tooltip_delay_ms, row
+        )
 
         self._section_label(frame, "Startup", row)
         row += 1

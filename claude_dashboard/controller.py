@@ -18,6 +18,7 @@ from tkinter import filedialog
 
 from claude_dashboard import config
 from claude_dashboard.file_utils import atomic_write_json
+from claude_dashboard.loki import poll_last_prompts
 from claude_dashboard.otel_state import poll_session_states
 from claude_dashboard.platform.base import (
     ContainerInfo,
@@ -111,6 +112,7 @@ class _SessionEntry:
         "last_active",
         "has_terminal_activity",
         "state_cleared_from",
+        "last_prompt",
     )
 
     def __init__(self, session: SessionInfo):
@@ -128,6 +130,7 @@ class _SessionEntry:
         self.has_terminal_activity: bool = False
         self.last_active: float = 0.0
         self.state_cleared_from: str = ""
+        self.last_prompt: str = ""
 
 
 class AppController:
@@ -430,6 +433,9 @@ class AppController:
 
             # Poll Prometheus for session states from OTEL recording rules
             self._update_states_from_otel()
+
+            # Poll Loki for last user prompt per session (tooltip data)
+            self._update_last_prompts()
 
             # Refresh UI (state may not have changed, but rows may have been added/removed)
             self._refresh_ui()
@@ -797,6 +803,59 @@ class AppController:
         if changed:
             self._refresh_ui()
 
+    def _update_last_prompts(self):
+        """Poll Loki for last user prompt per session and cache in entries."""
+        local_ids: list[str] = []
+        sandbox_hosts: list[str] = []
+        # Map sandbox host_name back to dashboard session_id for pid lookup
+        host_to_session_id: dict[str, str] = {}
+
+        for entry in self._sessions.values():
+            if entry.unattached or not entry.session.session_id:
+                continue
+            if entry.sandbox:
+                # Sandbox OTEL events use host_name (e.g. "sandbox-foo-main"),
+                # not the dashboard's synthetic session_id.
+                host = entry.session.session_id  # same format as host_name
+                sandbox_hosts.append(host)
+                host_to_session_id[host] = entry.session.session_id
+            else:
+                local_ids.append(entry.session.session_id)
+
+        if not local_ids and not sandbox_hosts:
+            logger.debug("last_prompts: no active sessions to query")
+            return
+
+        loki_url = config.resolve_loki_url(settings_url=self._settings.loki_url)
+        logger.debug(
+            "last_prompts: querying loki_url=%s local=%s sandbox=%s",
+            loki_url,
+            local_ids,
+            sandbox_hosts,
+        )
+        prompts = poll_last_prompts(
+            loki_url=loki_url,
+            session_ids=local_ids or None,
+            host_names=sandbox_hosts or None,
+        )
+        logger.debug("last_prompts: got %d prompts: %s", len(prompts), list(prompts.keys()))
+
+        for key, text in prompts.items():
+            # Key is session_id for local, host_name for sandbox
+            session_id = host_to_session_id.get(key, key)
+            pid = self._session_id_to_pid.get(session_id)
+            if pid is None:
+                logger.debug("last_prompts: no pid for key=%s", key)
+                continue
+            entry = self._sessions.get(pid)
+            if entry is not None:
+                entry.last_prompt = text
+                logger.debug(
+                    "last_prompts: pid=%d prompt=%s",
+                    pid,
+                    text[:60] if text else "(empty)",
+                )
+
     def _match_sandbox_by_hostname(self, host_name: str) -> int | None:
         """Match a Prometheus host_name label to a sandbox session PID."""
         if not host_name.startswith("sandbox-"):
@@ -875,6 +934,7 @@ class AppController:
                 sandbox_phase=entry.sandbox_phase if entry.sandbox else "",
                 sandbox_connected=entry.sandbox and not entry.unattached,
                 has_terminal_activity=entry.has_terminal_activity,
+                last_prompt=entry.last_prompt,
             )
             for entry in all_entries
             if not entry.hidden
