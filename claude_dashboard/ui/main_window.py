@@ -833,7 +833,7 @@ class MainWindow:
                 text=text,
                 bg="#333333",
                 fg="#e0e0e0",
-                font=self._font_container,
+                font=self._font_body,
                 padx=6,
                 pady=3,
                 wraplength=400,
