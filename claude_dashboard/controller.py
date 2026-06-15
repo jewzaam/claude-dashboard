@@ -778,6 +778,22 @@ class AppController:
                 new_state.value,
                 prior.value,
             )
+        # Stale WORKING → READY: sessions not in current OTEL results that
+        # are WORKING transition to READY ("just finished, needs attention").
+        # PERMISSION_REQUIRED and AWAITING_INPUT are left alone — stale metric
+        # doesn't mean the user answered; those persist until explicitly cleared.
+        otel_session_ids = set(states.keys())
+        for entry in self._sessions.values():
+            if entry.session.pid_alive:
+                continue
+            if entry.state != StatusState.WORKING:
+                continue
+            sid = entry.session.session_id
+            if sid in otel_session_ids:
+                continue
+            entry.state = StatusState.READY
+            changed = True
+
         if changed:
             self._refresh_ui()
 
