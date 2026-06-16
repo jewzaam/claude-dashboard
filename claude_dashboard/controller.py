@@ -788,14 +788,22 @@ class AppController:
         # are WORKING transition to READY ("just finished, needs attention").
         # PERMISSION_REQUIRED and AWAITING_INPUT are left alone — stale metric
         # doesn't mean the user answered; those persist until explicitly cleared.
-        otel_session_ids = set(states.keys())
+        # Build set of PIDs that OTEL matched this tick (covers both direct
+        # session_id lookup and sandbox hostname matching).
+        otel_matched_pids: set[int] = set()
+        for session_id, session_state in states.items():
+            pid = self._session_id_to_pid.get(session_id)
+            if pid is None:
+                pid = self._match_sandbox_by_hostname(session_state.host_name)
+            if pid is not None:
+                otel_matched_pids.add(pid)
+
         for entry in self._sessions.values():
             if entry.session.pid_alive:
                 continue
             if entry.state != StatusState.WORKING:
                 continue
-            sid = entry.session.session_id
-            if sid in otel_session_ids:
+            if entry.session.pid in otel_matched_pids:
                 continue
             entry.state = StatusState.READY
             changed = True
