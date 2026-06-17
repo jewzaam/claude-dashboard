@@ -5,6 +5,7 @@ import json
 from unittest.mock import patch, MagicMock
 
 from claude_dashboard.loki import (
+    _extract_user_text,
     _truncate,
     poll_last_prompts,
 )
@@ -42,6 +43,74 @@ def _fake_urlopen_factory(streams: list[dict]):
         return mock
 
     return fake_urlopen
+
+
+class TestExtractUserText:
+    def test_plain_text_unchanged(self):
+        assert _extract_user_text("fix the bug") == "fix the bug"
+
+    def test_strips_any_xml_block(self):
+        raw = "<whatever-tag>content</whatever-tag>user text"
+        assert _extract_user_text(raw) == "user text"
+
+    def test_strips_multiple_xml_blocks(self):
+        raw = "<tag-a>stuff</tag-a><tag-b>more stuff</tag-b>actual prompt"
+        assert _extract_user_text(raw) == "actual prompt"
+
+    def test_strips_multiline_xml(self):
+        raw = "<some-tag>\nline1\nline2\n</some-tag>\ndo the thing"
+        assert _extract_user_text(raw) == "do the thing"
+
+    def test_strips_nested_xml(self):
+        raw = "<outer><inner>nested</inner>more</outer>" "actual user prompt"
+        assert _extract_user_text(raw) == "actual user prompt"
+
+    def test_strips_orphan_tags(self):
+        assert _extract_user_text("hello <br/> world") == "hello  world"
+
+    def test_all_xml_returns_empty(self):
+        raw = "<wrapper>only system content</wrapper>"
+        assert _extract_user_text(raw) == ""
+
+    def test_empty_string(self):
+        assert _extract_user_text("") == ""
+
+    def test_xml_with_attributes(self):
+        raw = '<tag attr="val">content</tag>user text'
+        assert _extract_user_text(raw) == "user text"
+
+    def test_task_notification_real_world(self):
+        raw = (
+            "<task-notification>\n"
+            "<task-id>abc123</task-id>\n"
+            '<summary>Agent "My agent" came to rest</summary>\n'
+            "<result>some long result text</result>\n"
+            "</task-notification>"
+        )
+        assert _extract_user_text(raw) == ""
+
+    def test_system_reminder_real_world(self):
+        raw = (
+            "<system-reminder>UserPromptSubmit hook additional context: "
+            "CAVEMAN MODE ACTIVE (full).</system-reminder>"
+            "look at the recording rules"
+        )
+        assert _extract_user_text(raw) == "look at the recording rules"
+
+    def test_future_unknown_tags_stripped(self):
+        raw = "<brand-new-tag-2027>injected context</brand-new-tag-2027>user input"
+        assert _extract_user_text(raw) == "user input"
+
+    def test_integration_with_poll(self):
+        """XML-heavy prompts are cleaned before tooltip display."""
+        raw = "<system-reminder>hook content</system-reminder>" "look at the recording rules"
+        streams = [_stream(session_id="s1", prompt=raw)]
+        with patch(
+            "claude_dashboard.loki.urllib.request.urlopen",
+            side_effect=_fake_urlopen_factory(streams),
+        ):
+            result = poll_last_prompts(loki_url="http://localhost:3100", session_ids=["s1"])
+        assert result["s1"] == "look at the recording rules"
 
 
 class TestTruncate:
@@ -141,6 +210,31 @@ class TestPollLastPrompts:
         ):
             result = poll_last_prompts(loki_url="http://localhost:3100", session_ids=["s1"])
         assert result == {}
+
+    def test_skips_task_notifications_finds_real_prompt(self):
+        """Agent auto-wake prompts are skipped; real user prompt is found."""
+        streams = [
+            _stream(
+                session_id="s1",
+                prompt=(
+                    "<task-notification><summary>Agent done</summary>"
+                    "<result>long result</result></task-notification>"
+                ),
+            ),
+            _stream(
+                session_id="s1",
+                prompt=(
+                    "<task-notification><summary>Another agent</summary>" "</task-notification>"
+                ),
+            ),
+            _stream(session_id="s1", prompt="review the recording rules"),
+        ]
+        with patch(
+            "claude_dashboard.loki.urllib.request.urlopen",
+            side_effect=_fake_urlopen_factory(streams),
+        ):
+            result = poll_last_prompts(loki_url="http://localhost:3100", session_ids=["s1"])
+        assert result["s1"] == "review the recording rules"
 
     def test_first_session_wins_for_duplicate(self):
         streams = [

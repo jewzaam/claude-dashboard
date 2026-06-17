@@ -3,6 +3,7 @@
 
 import json
 import logging
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -13,7 +14,23 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT_SECONDS = 3
 
-_LOOKBACK_SECONDS = 3600
+_LOOKBACK_SECONDS = 86400  # 24 hours
+
+_XML_BLOCK_RE = re.compile(r"<([a-zA-Z][\w-]*)[\s>].*?</\1>", re.DOTALL)
+_ORPHAN_TAGS_RE = re.compile(r"<[^>]+>")
+
+
+def _extract_user_text(text: str) -> str:
+    """Strip XML blocks and tags, keeping only user-typed text.
+
+    Claude Code OTEL prompts mix user input with system-injected XML
+    (hooks, task notifications, command metadata). User text is never
+    wrapped in XML tags — stripping all XML blocks and orphan tags
+    isolates it without maintaining a tag allowlist.
+    """
+    text = _XML_BLOCK_RE.sub("", text)
+    text = _ORPHAN_TAGS_RE.sub("", text)
+    return text.strip()
 
 
 def _truncate(text: str, *, max_chars: int) -> str:
@@ -32,9 +49,13 @@ def _extract_prompts(results: list[dict], *, key: str, max_chars: int) -> dict[s
         match_val = labels.get(key, "")
         if not match_val or match_val in prompts:
             continue
-        prompt_text = labels.get("prompt", "")
-        if not prompt_text:
+        raw_prompt = labels.get("prompt", "")
+        if not raw_prompt:
             logger.debug("loki stream %s=%s: no prompt label", key, match_val)
+            continue
+        prompt_text = _extract_user_text(raw_prompt)
+        if not prompt_text:
+            logger.debug("loki stream %s=%s: empty after xml strip", key, match_val)
             continue
         prompts[match_val] = _truncate(prompt_text, max_chars=max_chars)
         logger.debug("loki prompt %s=%s text=%s", key, match_val, prompts[match_val][:60])
@@ -68,7 +89,7 @@ def poll_last_prompts(
         )
         logger.debug("loki session query: %s", query)
         try:
-            results = _query_loki(loki_url=loki_url, query=query, limit=len(session_ids) * 2)
+            results = _query_loki(loki_url=loki_url, query=query, limit=len(session_ids) * 20)
             logger.debug("loki session results: %d streams", len(results))
             prompts.update(_extract_prompts(results, key="session_id", max_chars=max_chars))
         except Exception:
@@ -82,7 +103,7 @@ def poll_last_prompts(
         )
         logger.debug("loki sandbox query: %s", query)
         try:
-            results = _query_loki(loki_url=loki_url, query=query, limit=len(host_names) * 2)
+            results = _query_loki(loki_url=loki_url, query=query, limit=len(host_names) * 20)
             logger.debug("loki sandbox results: %d streams", len(results))
             prompts.update(_extract_prompts(results, key="host_name", max_chars=max_chars))
         except Exception:
