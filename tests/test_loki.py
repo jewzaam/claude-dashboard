@@ -236,6 +236,21 @@ class TestPollLastPrompts:
             result = poll_last_prompts(loki_url="http://localhost:3100", session_ids=["s1"])
         assert result["s1"] == "review the recording rules"
 
+    def test_newest_prompt_wins_across_unordered_streams(self):
+        """Loki streams arrive in arbitrary order; newest timestamp wins."""
+        old_stream = _stream(session_id="s1", prompt="old prompt")
+        old_stream["stream"]["observed_timestamp"] = "1000000000000000000"
+        new_stream = _stream(session_id="s1", prompt="new prompt")
+        new_stream["stream"]["observed_timestamp"] = "2000000000000000000"
+        # Streams arrive old-first (Loki doesn't guarantee cross-stream order)
+        streams = [old_stream, new_stream]
+        with patch(
+            "claude_dashboard.loki.urllib.request.urlopen",
+            side_effect=_fake_urlopen_factory(streams),
+        ):
+            result = poll_last_prompts(loki_url="http://localhost:3100", session_ids=["s1"])
+        assert result["s1"] == "new prompt"
+
     def test_first_session_wins_for_duplicate(self):
         streams = [
             _stream(session_id="s1", prompt="first prompt"),

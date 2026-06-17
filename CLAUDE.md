@@ -35,6 +35,7 @@ Session state metrics aggregate all activity (main + agents) by session_id. No p
 |------|---------|
 | `claude_dashboard/config.py` | Constants, StatusState enum, SandboxPhase enum, EmojiKey type alias, defaults, LOG_FILE, STATE_FILE, PID_FILE, DEFAULT_PROMETHEUS_URL, resolve_prometheus_url() |
 | `claude_dashboard/otel_state.py` | Prometheus poller for session state metrics from OTEL recording rules |
+| `claude_dashboard/loki.py` | Loki query client for session user prompt extraction (tooltips) |
 | `claude_dashboard/controller.py` | Session lifecycle, OTEL poller wiring, UI coordination, session state persistence, PID file lock |
 | `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()`, `detect_terminal_activity()` |
 | `claude_dashboard/file_utils.py` | Atomic JSON file writes (shared by settings + state persistence) |
@@ -68,6 +69,24 @@ Session state metrics aggregate all activity (main + agents) by session_id. No p
 - **Dashboard starts late**: Sessions show Unknown until Prometheus has their first state metric.
 
 See `docs/state-transitions.md` for the full state machine diagram and gap analysis.
+
+## Loki Query Implementation
+
+### Tooltip XML stripping
+
+`loki.py` `_extract_user_text()` strips all XML blocks from OTEL `user_prompt` event `prompt` field. User text is never wrapped in XML tags; system-injected content always is (`<system-reminder>`, `<task-notification>`, `<command-name>`, etc.). Strip all `<tag>...</tag>` blocks and orphan tags. Do not maintain an exclusion list of known tags — an exclusion list not based on a schema will always fail.
+
+### Cross-stream ordering
+
+Loki `direction=backward` only orders entries within each stream. Structured metadata (like `prompt`) creates unique streams per event. Cross-stream order in the result array is not guaranteed. `_extract_prompts()` sorts results by `observed_timestamp` (descending) before extracting to ensure newest-first ordering. Do not rely on Loki result array order for cross-stream queries.
+
+### Lookback window
+
+`_LOOKBACK_SECONDS = 86400` (24 hours) for tooltip queries. Agent-heavy sessions generate `<task-notification>` auto-wake events that push real user prompts beyond a 1-hour window. A session can have 10+ consecutive task-notification prompts between user inputs.
+
+### Query limit
+
+`limit = len(session_ids) * 20` per query to look past task-notification noise from background agent completions. `_extract_prompts()` skips XML-only prompts and continues to the next result.
 
 ## Design Decisions
 
