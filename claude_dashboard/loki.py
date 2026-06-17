@@ -42,9 +42,20 @@ def _truncate(text: str, *, max_chars: int) -> str:
 
 
 def _extract_prompts(results: list[dict], *, key: str, max_chars: int) -> dict[str, str]:
-    """Extract prompt text from Loki streams, keyed by the given label."""
+    """Extract prompt text from Loki streams, keyed by the given label.
+
+    Results are sorted newest-first by observed_timestamp before
+    extraction. Loki's direction=backward orders entries within each
+    stream but does NOT guarantee cross-stream ordering — each unique
+    structured-metadata combination is a separate stream.
+    """
+    sorted_results = sorted(
+        results,
+        key=lambda s: int(s.get("stream", {}).get("observed_timestamp", "0")),
+        reverse=True,
+    )
     prompts: dict[str, str] = {}
-    for stream in results:
+    for stream in sorted_results:
         labels = stream.get("stream", {})
         match_val = labels.get(key, "")
         if not match_val or match_val in prompts:
