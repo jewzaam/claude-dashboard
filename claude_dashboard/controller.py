@@ -264,13 +264,23 @@ class AppController:
                     pass
         logger.info("Claude Dashboard stopped")
 
+    _TICK_DEADLINE_SECONDS = 8
+
+    def _tick_expired(self, tick_start: float) -> bool:
+        return time.monotonic() - tick_start > self._TICK_DEADLINE_SECONDS
+
     def _discovery_tick(self):
         """Discover new sessions and remove dead ones.
 
         Flow: discover → register new → ghost dead → prune deleted CWDs →
-        git status (all sessions) → refresh UI.
+        git status (all sessions) → OTEL poll → Loki poll → refresh UI.
+
+        A per-tick deadline ensures the tick completes within
+        _TICK_DEADLINE_SECONDS. Phases that exceed the budget are skipped
+        and catch up on subsequent ticks.
         """
         try:
+            tick_start = time.monotonic()
             discovered = discover_sessions()
             alive_pids = set()
 
@@ -373,6 +383,9 @@ class AppController:
 
             fetched_cwds: set[str] = set()
             for entry in self._sessions.values():
+                if self._tick_expired(tick_start):
+                    logger.debug("tick deadline: skipping remaining git checks")
+                    break
                 is_ghost = entry.unattached
                 if is_ghost and entry.sandbox and not sandbox_vscode_tick:
                     continue
@@ -432,12 +445,18 @@ class AppController:
                 self._trunk_cache.clear()
 
             # Poll Prometheus for session states from OTEL recording rules
-            self._update_states_from_otel()
+            if not self._tick_expired(tick_start):
+                self._update_states_from_otel()
+            else:
+                logger.debug("tick deadline: skipping OTEL poll")
 
             # Poll Loki for last user prompt per session (tooltip data)
-            self._update_last_prompts()
+            if not self._tick_expired(tick_start):
+                self._update_last_prompts()
+            else:
+                logger.debug("tick deadline: skipping Loki poll")
 
-            # Refresh UI (state may not have changed, but rows may have been added/removed)
+            # Always refresh UI even if data phases were skipped
             self._refresh_ui()
             self._first_tick_done = True
 
