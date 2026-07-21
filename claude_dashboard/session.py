@@ -548,6 +548,20 @@ def sandbox_git_check(*, sandbox_dir: str) -> tuple[GitStatus, bool, str]:
     return (best_status, any_merged, first_branch)
 
 
+def _scan_sandbox_manifests() -> dict[str, Path]:
+    """Scan manifest.json files to map openshell names to host directories."""
+    mapping: dict[str, Path] = {}
+    for manifest in SANDBOXES_DIR.glob("*/manifest.json"):
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            os_name = data.get("openshell_name", "")
+            if os_name:
+                mapping[os_name] = manifest.parent
+        except (json.JSONDecodeError, OSError):
+            continue
+    return mapping
+
+
 def discover_sandbox_sessions() -> list[SessionInfo]:
     """Discover Claude sessions running in OpenShell sandboxes.
 
@@ -587,6 +601,8 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
         return []
 
     sessions: list[SessionInfo] = []
+    manifest_map = _scan_sandbox_manifests()
+
     for sb in sandboxes:
         if not isinstance(sb, dict):
             continue
@@ -594,9 +610,29 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
         name = sb.get("name", "")
         if not name:
             continue
-        sandbox_dir = SANDBOXES_DIR / name
-        if not sandbox_dir.is_dir():
-            logger.info("sandbox %s skipped: dir %s not found", name, sandbox_dir)
+
+        sandbox_dir: Path | None = None
+
+        # Strategy 1: label from openshell (new sandboxes with --label)
+        labels = sb.get("labels") or {}
+        source_dir = labels.get("source.directory", "")
+        if source_dir:
+            candidate = SANDBOXES_DIR / source_dir
+            if candidate.is_dir():
+                sandbox_dir = candidate
+
+        # Strategy 2: direct name match (old full-name sandboxes)
+        if sandbox_dir is None:
+            candidate = SANDBOXES_DIR / name
+            if candidate.is_dir():
+                sandbox_dir = candidate
+
+        # Strategy 3: manifest lookup (hash-name sandboxes)
+        if sandbox_dir is None and name in manifest_map:
+            sandbox_dir = manifest_map[name]
+
+        if sandbox_dir is None:
+            logger.info("sandbox %s skipped: no matching directory found", name)
             continue
 
         started_at = 0

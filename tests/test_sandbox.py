@@ -26,6 +26,7 @@ def _make_sandbox_json(sandboxes):
                 "phase": sb.get("phase", "Ready"),
                 "created_at": sb.get("created_at", "2026-06-02 12:00:00"),
                 "id": sb.get("id", "fake-uuid"),
+                "labels": sb.get("labels", {}),
             }
             for sb in sandboxes
         ]
@@ -215,6 +216,85 @@ class TestDiscoverSandboxSessions:
 
     def test_os_error(self):
         with patch("subprocess.run", side_effect=OSError("pipe broken")):
+            sessions = discover_sandbox_sessions()
+
+        assert sessions == []
+
+    def test_discovers_hash_name_via_manifest(self, tmp_path):
+        sandbox_dir = tmp_path / "my-project-main"
+        sandbox_dir.mkdir()
+        manifest = {"name": "my-project-main", "openshell_name": "sb-abc123def456"}
+        (sandbox_dir / "manifest.json").write_text(json.dumps(manifest))
+        json_out = _make_sandbox_json([{"name": "sb-abc123def456"}])
+        mock_result = MagicMock(returncode=0, stdout=json_out)
+
+        with (
+            patch("claude_dashboard.session.SANDBOXES_DIR", tmp_path),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            sessions = discover_sandbox_sessions()
+
+        assert len(sessions) == 1
+        assert sessions[0].session_id == "sandbox-sb-abc123def456"
+        assert sessions[0].cwd == str(sandbox_dir)
+
+    def test_discovers_sandbox_via_label(self, tmp_path):
+        sandbox_dir = tmp_path / "labeled-project"
+        sandbox_dir.mkdir()
+        json_out = _make_sandbox_json(
+            [
+                {
+                    "name": "sb-fedcba654321",
+                    "labels": {"source.directory": "labeled-project"},
+                }
+            ]
+        )
+        mock_result = MagicMock(returncode=0, stdout=json_out)
+
+        with (
+            patch("claude_dashboard.session.SANDBOXES_DIR", tmp_path),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            sessions = discover_sandbox_sessions()
+
+        assert len(sessions) == 1
+        assert sessions[0].cwd == str(sandbox_dir)
+
+    def test_label_takes_priority_over_manifest(self, tmp_path):
+        label_dir = tmp_path / "from-label"
+        label_dir.mkdir()
+        manifest_dir = tmp_path / "from-manifest"
+        manifest_dir.mkdir()
+        manifest = {"name": "from-manifest", "openshell_name": "sb-priority123"}
+        (manifest_dir / "manifest.json").write_text(json.dumps(manifest))
+
+        json_out = _make_sandbox_json(
+            [
+                {
+                    "name": "sb-priority123",
+                    "labels": {"source.directory": "from-label"},
+                }
+            ]
+        )
+        mock_result = MagicMock(returncode=0, stdout=json_out)
+
+        with (
+            patch("claude_dashboard.session.SANDBOXES_DIR", tmp_path),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            sessions = discover_sandbox_sessions()
+
+        assert len(sessions) == 1
+        assert sessions[0].cwd == str(label_dir)
+
+    def test_skips_hash_name_without_manifest(self, tmp_path):
+        json_out = _make_sandbox_json([{"name": "sb-000000000000"}])
+        mock_result = MagicMock(returncode=0, stdout=json_out)
+
+        with (
+            patch("claude_dashboard.session.SANDBOXES_DIR", tmp_path),
+            patch("subprocess.run", return_value=mock_result),
+        ):
             sessions = discover_sandbox_sessions()
 
         assert sessions == []
