@@ -1142,7 +1142,7 @@ class AppController:
                 logger.info("sandbox %s state cleared via context menu", cwd_display)
                 self._refresh_ui()
 
-        sandbox_name = session.session_id.removeprefix("sandbox-")
+        sandbox_name = Path(session.cwd).name
 
         def delete_sandbox():
             self._sessions.pop(session.pid, None)
