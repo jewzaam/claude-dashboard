@@ -608,7 +608,7 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
             continue
         phase = sb.get("phase", "Unknown")
         name = sb.get("name", "")
-        if not name:
+        if not name or phase == "Deleting":
             continue
 
         sandbox_dir: Path | None = None
