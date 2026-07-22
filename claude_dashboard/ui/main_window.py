@@ -1208,12 +1208,15 @@ class MainWindow:
         if row.sandbox_phase and not row.sandbox_connected:
             fg = _COLOR_CONTAINER_FG
 
+        if row.sandbox_phase:
+            os_name = row.session.session_id.removeprefix("sandbox-")
+            container_text = f"{os_name[:8]}.." if len(os_name) > 8 else os_name
+
         sandbox_emoji = (
             self._sandbox_emoji(sandbox_phase=row.sandbox_phase) if row.sandbox_phase else None
         )
         if sandbox_emoji is not None:
             emoji_state_or_path = sandbox_emoji
-            container_text = "Sandbox"
 
         row_frame = tk.Frame(self._frame, bg=bg, height=self._row_height(), cursor="hand2")
         row_frame.pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
@@ -1388,6 +1391,10 @@ class MainWindow:
         if row_data.sandbox_phase and not row_data.sandbox_connected:
             fg = _COLOR_CONTAINER_FG
 
+        if row_data.sandbox_phase:
+            os_name = row_data.session.session_id.removeprefix("sandbox-")
+            container_text = f"{os_name[:8]}.." if len(os_name) > 8 else os_name
+
         sandbox_emoji = (
             self._sandbox_emoji(sandbox_phase=row_data.sandbox_phase)
             if row_data.sandbox_phase
@@ -1395,7 +1402,6 @@ class MainWindow:
         )
         if sandbox_emoji is not None:
             emoji_state_or_path = sandbox_emoji
-            container_text = "Sandbox"
 
         emoji_image = self._emoji_image(emoji_state_or_path, bg_hex=bg)
         row["status_image"] = emoji_image  # prevent GC
