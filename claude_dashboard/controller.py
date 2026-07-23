@@ -1002,6 +1002,16 @@ class AppController:
             logger.debug("pid=%d clicked, cleared ready to idle", session.pid)
             self._refresh_ui()
 
+        # Error sandbox: podman start to recover stopped container
+        if entry and self._is_error_sandbox(entry):
+            os_name = session.session_id.removeprefix("sandbox-")
+            threading.Thread(
+                target=self._podman_start_sandbox,
+                args=(os_name,),
+                daemon=True,
+            ).start()
+            return
+
         # Sandbox sessions open in VS Code without touching tasks.json
         if entry and entry.sandbox:
             self._launch_vscode(folder=session.cwd)
@@ -1213,6 +1223,35 @@ class AppController:
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.warning("sandbox delete failed name=%s error=%s", sandbox_name, exc)
 
+    def _podman_start_sandbox(self, os_name: str):
+        """Look up podman container by openshell label and start it."""
+        try:
+            result = subprocess.run(
+                ["podman", "ps", "-a", "--format", "json"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=config.SUBPROCESS_FLAGS,
+            )
+            containers = json.loads(result.stdout) if result.returncode == 0 else []
+            cid = ""
+            for c in containers:
+                if (c.get("Labels") or {}).get("openshell.ai/sandbox-name") == os_name:
+                    cid = c["Id"]
+                    break
+            if not cid:
+                logger.warning("podman container not found for sandbox %s", os_name)
+                return
+            subprocess.run(
+                ["podman", "start", cid],
+                capture_output=True,
+                timeout=30,
+                creationflags=config.SUBPROCESS_FLAGS,
+            )
+            logger.info("podman start completed sandbox=%s container=%s", os_name, cid[:12])
+        except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+            logger.warning("podman start failed sandbox=%s error=%s", os_name, exc)
+
     def _launch_vscode(self, *, folder: str):
         """Launch VS Code for the given folder."""
         code_path = shutil.which("code")
@@ -1253,11 +1292,9 @@ class AppController:
         """
 
         def _is_toggleable(entry: _SessionEntry) -> bool:
-            if not entry.unattached:
+            if not entry.unattached and not self._is_error_sandbox(entry):
                 return False
             if entry.flagged:
-                return False
-            if self._is_error_sandbox(entry):
                 return False
             return True
 
