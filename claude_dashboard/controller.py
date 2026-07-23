@@ -619,7 +619,8 @@ class AppController:
             if entry.unattached == has_vscode:
                 was_connected = not entry.unattached
                 entry.unattached = not has_vscode
-                if was_connected and entry.unattached and entry.state == StatusState.READY:
+                if was_connected and entry.unattached:
+                    entry.state_cleared_from = entry.state.value
                     entry.state = StatusState.IDLE
                 logger.debug(
                     "sandbox %s vscode_connected=%s",
