@@ -80,6 +80,15 @@ class StatusState(Enum):
     PERMISSION_REQUIRED = "permission_required"
 
 
+STATE_PRIORITY = {
+    StatusState.PERMISSION_REQUIRED: 0,
+    StatusState.AWAITING_INPUT: 1,
+    StatusState.WORKING: 2,
+    StatusState.READY: 3,
+    StatusState.IDLE: 4,
+}
+
+
 class SandboxPhase(Enum):
     """OpenShell sandbox infrastructure phase."""
 
