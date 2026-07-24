@@ -6,17 +6,12 @@ import logging
 import urllib.request
 from typing import NamedTuple
 
+from claude_dashboard import config
 from claude_dashboard.config import StatusState
 
 logger = logging.getLogger(__name__)
 
-_STATE_PRIORITY = {
-    StatusState.PERMISSION_REQUIRED: 0,
-    StatusState.AWAITING_INPUT: 1,
-    StatusState.WORKING: 2,
-    StatusState.READY: 3,
-    StatusState.IDLE: 4,
-}
+_STATE_PRIORITY = config.STATE_PRIORITY
 
 _METRIC_TO_STATE = {
     "claude_session_permission": StatusState.PERMISSION_REQUIRED,

@@ -50,13 +50,7 @@ from claude_dashboard.ui.settings_window import SettingsWindow
 
 logger = logging.getLogger(__name__)
 
-_STATE_PRIORITY = {
-    StatusState.PERMISSION_REQUIRED: 0,
-    StatusState.AWAITING_INPUT: 1,
-    StatusState.WORKING: 2,
-    StatusState.READY: 3,
-    StatusState.IDLE: 4,
-}
+_STATE_PRIORITY = config.STATE_PRIORITY
 
 # States where the user can take an action (approve, answer, navigate, etc.)
 _ACTIONABLE_STATES = frozenset(
