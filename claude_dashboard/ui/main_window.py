@@ -42,6 +42,7 @@ def _build_fonts(size: int) -> tuple[tuple, tuple, tuple]:
 
 _COLOR_EMPTY_FG = "#666666"
 _COLOR_CONTAINER_FG = "#888888"
+_COLOR_PROFILE_PERSONAL = "#d787ff"
 _ROW_PAD_X = 1
 _ROW_PAD_Y = 1
 
@@ -1244,12 +1245,15 @@ class MainWindow:
         status_label.pack(side=tk.LEFT, padx=(0, _ELEMENT_GAP))
 
         # Pack RIGHT: container label
+        container_fg = (
+            _COLOR_PROFILE_PERSONAL if row.sandbox_profile == "personal" else _COLOR_CONTAINER_FG
+        )
         container_var = tk.StringVar(value=container_text)
         container_label = tk.Label(
             row_frame,
             textvariable=container_var,
             bg=bg,
-            fg=_COLOR_CONTAINER_FG,
+            fg=container_fg,
             font=self._font_container,
             anchor=tk.E,
         )
@@ -1416,7 +1420,12 @@ class MainWindow:
         row["branch_label"].configure(
             fg=self._branch_color(merged=row_data.merged, fg=fg), font=self._font_body
         )
-        row["container_label"].configure(font=self._font_container)
+        container_fg = (
+            _COLOR_PROFILE_PERSONAL
+            if row_data.sandbox_profile == "personal"
+            else _COLOR_CONTAINER_FG
+        )
+        row["container_label"].configure(font=self._font_container, fg=container_fg)
         flag_image = self._flag_icon(row_data)
         row["flag_image"] = flag_image  # prevent GC
         row["flag_label"].configure(image=flag_image, bg=bg)
