@@ -1401,8 +1401,6 @@ class AppController:
             return
         if saved.get("flagged"):
             entry.flagged = True
-        if saved.get("hidden"):
-            entry.hidden = True
         last_active = saved.get("last_active")
         if isinstance(last_active, (int, float)):
             entry.last_active = float(last_active)
