@@ -103,6 +103,7 @@ class _SessionEntry:
         "unattached",
         "sandbox",
         "sandbox_phase",
+        "sandbox_profile",
         "last_active",
         "has_terminal_activity",
         "state_cleared_from",
@@ -121,6 +122,7 @@ class _SessionEntry:
         self.unattached: bool = False
         self.sandbox: bool = False
         self.sandbox_phase: str = ""
+        self.sandbox_profile: str = ""
         self.has_terminal_activity: bool = False
         self.last_active: float = 0.0
         self.state_cleared_from: str = ""
@@ -778,6 +780,8 @@ class AppController:
             entry = self._sessions.get(pid)
             if entry is None:
                 continue
+            if session_state.sandbox_profile:
+                entry.sandbox_profile = session_state.sandbox_profile
             new_state = session_state.state
             prior = entry.state
             if new_state == prior:
@@ -957,6 +961,7 @@ class AppController:
                 sandbox_connected=entry.sandbox and not entry.unattached,
                 has_terminal_activity=entry.has_terminal_activity,
                 last_prompt=entry.last_prompt,
+                sandbox_profile=entry.sandbox_profile,
             )
             for entry in all_entries
             if not entry.hidden

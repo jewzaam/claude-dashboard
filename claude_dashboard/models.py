@@ -24,3 +24,4 @@ class SessionRow(NamedTuple):
     sandbox_connected: bool = False
     has_terminal_activity: bool = False
     last_prompt: str = ""
+    sandbox_profile: str = ""
