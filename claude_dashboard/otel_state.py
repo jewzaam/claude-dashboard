@@ -29,7 +29,6 @@ class SessionState(NamedTuple):
     state: StatusState
     host_name: str
     project: str
-    sandbox_profile: str = ""
 
 
 def poll_session_states(*, prometheus_url: str) -> dict[str, SessionState]:
@@ -64,30 +63,7 @@ def poll_session_states(*, prometheus_url: str) -> dict[str, SessionState]:
                     state=state, host_name=host_name, project=project
                 )
 
-    profiles = _poll_sandbox_profiles(prometheus_url=prometheus_url)
-    for session_id, profile in profiles.items():
-        existing = candidates.get(session_id)
-        if existing is not None and not existing.sandbox_profile:
-            candidates[session_id] = existing._replace(sandbox_profile=profile)
-
     return candidates
-
-
-def _poll_sandbox_profiles(*, prometheus_url: str) -> dict[str, str]:
-    """Return session_id → sandbox_profile from raw OTEL metrics."""
-    results = _query_metric(
-        prometheus_url=prometheus_url,
-        metric="max by (session_id, sandbox_profile) "
-        '(claude_code_cost_usage_USD_total{sandbox_profile!=""})',
-    )
-    mapping: dict[str, str] = {}
-    for result in results:
-        labels = result.get("metric", {})
-        sid = labels.get("session_id", "")
-        profile = labels.get("sandbox_profile", "")
-        if sid and profile:
-            mapping[sid] = profile
-    return mapping
 
 
 def _query_metric(*, prometheus_url: str, metric: str) -> list[dict]:

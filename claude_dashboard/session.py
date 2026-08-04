@@ -28,6 +28,7 @@ class SessionInfo:
     pid_alive: bool = False
     entrypoint: str = "cli"
     sandbox_phase: str = ""
+    sandbox_profile: str = ""
 
 
 def discover_sessions(*, sessions_dir: Path | None = None) -> list[SessionInfo]:
@@ -548,6 +549,15 @@ def sandbox_git_check(*, sandbox_dir: str) -> tuple[GitStatus, bool, str]:
     return (best_status, any_merged, first_branch)
 
 
+def _read_sandbox_profile(sandbox_dir: Path) -> str:
+    """Read profile from manifest.json in a sandbox directory."""
+    try:
+        data = json.loads((sandbox_dir / "manifest.json").read_text(encoding="utf-8"))
+        return data.get("profile", "")
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return ""
+
+
 def _scan_sandbox_manifests() -> dict[str, Path]:
     """Scan manifest.json files to map openshell names to host directories."""
     mapping: dict[str, Path] = {}
@@ -645,6 +655,8 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
             except ValueError:
                 pass
 
+        profile = _read_sandbox_profile(sandbox_dir)
+
         sessions.append(
             SessionInfo(
                 pid=0,
@@ -653,6 +665,7 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
                 started_at=started_at,
                 entrypoint="sandbox",
                 sandbox_phase=phase,
+                sandbox_profile=profile,
             )
         )
 
