@@ -690,6 +690,9 @@ class AppController:
                 entry.flagged = True
             if saved.get("hidden"):
                 entry.hidden = True
+            sandbox_profile = saved.get("sandbox_profile", "")
+            if sandbox_profile:
+                entry.sandbox_profile = sandbox_profile
             last_active = saved.get("last_active")
             if isinstance(last_active, (int, float)):
                 entry.last_active = float(last_active)
@@ -894,10 +897,13 @@ class AppController:
     # ------------------------------------------------------------------
 
     def _sorted_entries(self) -> list["_SessionEntry"]:
-        """Return all session entries sorted by display name."""
+        """Return all session entries sorted: personal sandboxes first, then by name."""
         return sorted(
             self._sessions.values(),
-            key=lambda e: cwd_relative_to_home(cwd=e.session.cwd).lower(),
+            key=lambda e: (
+                0 if e.sandbox_profile == "personal" else 1,
+                cwd_relative_to_home(cwd=e.session.cwd).lower(),
+            ),
         )
 
     def _refresh_ui(self):
@@ -1387,6 +1393,7 @@ class AppController:
                     "flagged": entry.flagged,
                     "last_active": entry.last_active,
                     "state_cleared_from": entry.state_cleared_from,
+                    "sandbox_profile": entry.sandbox_profile,
                 }
 
         try:
@@ -1401,6 +1408,9 @@ class AppController:
             return
         if saved.get("flagged"):
             entry.flagged = True
+        sandbox_profile = saved.get("sandbox_profile", "")
+        if sandbox_profile:
+            entry.sandbox_profile = sandbox_profile
         last_active = saved.get("last_active")
         if isinstance(last_active, (int, float)):
             entry.last_active = float(last_active)
