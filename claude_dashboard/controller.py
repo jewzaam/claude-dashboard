@@ -311,9 +311,11 @@ class AppController:
                 else:
                     pid = self._session_id_to_pid[sb_session.session_id]
                     entry = self._sessions.get(pid)
-                    if entry and entry.sandbox_phase != sb_session.sandbox_phase:
-                        entry.sandbox_phase = sb_session.sandbox_phase
-                        entry.session.sandbox_phase = sb_session.sandbox_phase
+                    if entry:
+                        if entry.sandbox_phase != sb_session.sandbox_phase:
+                            entry.sandbox_phase = sb_session.sandbox_phase
+                            entry.session.sandbox_phase = sb_session.sandbox_phase
+                        entry.sandbox_profile = sb_session.sandbox_profile
             # Remove sandboxes that disappeared from openshell list.
             # Skip removal when discovery returns empty — likely a transient
             # openshell failure, not all sandboxes vanishing simultaneously.
@@ -560,10 +562,12 @@ class AppController:
             started_at=session.started_at,
             entrypoint=session.entrypoint,
             sandbox_phase=session.sandbox_phase,
+            sandbox_profile=session.sandbox_profile,
         )
         entry = _SessionEntry(session)
         entry.sandbox = True
         entry.sandbox_phase = session.sandbox_phase
+        entry.sandbox_profile = session.sandbox_profile
         entry.unattached = True
         entry.last_active = _now_epoch()
         entry.container = ContainerInfo(container_type=ContainerType.SANDBOX)
@@ -690,9 +694,6 @@ class AppController:
                 entry.flagged = True
             if saved.get("hidden"):
                 entry.hidden = True
-            sandbox_profile = saved.get("sandbox_profile", "")
-            if sandbox_profile:
-                entry.sandbox_profile = sandbox_profile
             last_active = saved.get("last_active")
             if isinstance(last_active, (int, float)):
                 entry.last_active = float(last_active)
@@ -783,8 +784,6 @@ class AppController:
             entry = self._sessions.get(pid)
             if entry is None:
                 continue
-            if session_state.sandbox_profile:
-                entry.sandbox_profile = session_state.sandbox_profile
             new_state = session_state.state
             prior = entry.state
             if new_state == prior:
@@ -1393,7 +1392,6 @@ class AppController:
                     "flagged": entry.flagged,
                     "last_active": entry.last_active,
                     "state_cleared_from": entry.state_cleared_from,
-                    "sandbox_profile": entry.sandbox_profile,
                 }
 
         try:
@@ -1408,9 +1406,6 @@ class AppController:
             return
         if saved.get("flagged"):
             entry.flagged = True
-        sandbox_profile = saved.get("sandbox_profile", "")
-        if sandbox_profile:
-            entry.sandbox_profile = sandbox_profile
         last_active = saved.get("last_active")
         if isinstance(last_active, (int, float)):
             entry.last_active = float(last_active)
