@@ -579,7 +579,7 @@ class AppController:
             old = self._sessions.pop(unattached_pid, None)
             if old:
                 entry.flagged = old.flagged
-                entry.hidden = False
+                entry.hidden = old.hidden
         else:
             self._apply_saved_state(entry)
 
@@ -969,7 +969,7 @@ class AppController:
                 sandbox_profile=entry.sandbox_profile,
             )
             for entry in all_entries
-            if not entry.hidden
+            if not entry.hidden or self._main_window._filter_text
         ]
         self._main_window.update_sessions(visible_states)
 
