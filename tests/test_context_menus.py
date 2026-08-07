@@ -195,6 +195,17 @@ class TestHiddenStatePersistence:
             entry.hidden = True
         assert entry.hidden is False
 
+    def test_hidden_preserved_when_sandbox_replaces_ghost(self):
+        """Ghost→sandbox transition must not unhide a hidden session."""
+        ghost = _SessionEntry(_make_session(pid=-1))
+        ghost.unattached = True
+        ghost.hidden = True
+        sandbox = _SessionEntry(_make_session(pid=-2))
+        sandbox.sandbox = True
+        sandbox.flagged = ghost.flagged
+        sandbox.hidden = ghost.hidden
+        assert sandbox.hidden is True
+
 
 class TestLaunchVscode:
     """Test the shared _launch_vscode subprocess wrapper."""

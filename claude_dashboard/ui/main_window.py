@@ -313,6 +313,11 @@ class MainWindow:
         self._tooltip_after_id: str | None = None
         self._tooltip_pid: int | None = None
 
+        # Keyboard filter
+        self._filter_text: str = ""
+        self._last_sessions: list[SessionRow] = []
+        self._filter_after_id: str | None = None
+
         # Create the window shell — apply_settings handles all configuration
         self._window = tk.Toplevel(root)
         if config.IS_LINUX:
@@ -345,6 +350,8 @@ class MainWindow:
 
         # Bindings
         self._window.bind("<Button-3>", self._on_right_click_event)
+        self._window.bind("<Key>", self._on_key)
+        self._window.bind("<Escape>", self._on_filter_clear)
 
         # Apply all settings (position, size, colors, topmost)
         self.apply_settings(settings, restore_position=True)
@@ -488,11 +495,13 @@ class MainWindow:
         )
         self._title_counts_label.pack(side=tk.RIGHT, padx=(0, _COUNTS_RIGHT_PAD))
 
+        self._title_emoji_label.configure(cursor="xterm")
+        self._title_emoji_label.bind("<Button-1>", self._on_search_click)
+
         # Bind drag (window move) on non-cost title bar widgets
         move_widgets = [
             frame,
             self._title_icon,
-            self._title_emoji_label,
             self._title_text_label,
         ]
         for w in move_widgets:
@@ -501,7 +510,7 @@ class MainWindow:
             w.bind("<Button-3>", self._on_title_bar_right_click)
 
         # Title text/icon/frame: left-click toggles shade, middle-click toggles ghosts
-        shade_widgets = [frame, self._title_icon, self._title_emoji_label, self._title_text_label]
+        shade_widgets = [frame, self._title_icon, self._title_text_label]
         for w in shade_widgets:
             w.bind("<ButtonRelease-1>", self._on_shade_toggle)
             w.bind("<Button-2>", self._on_ghost_toggle_click)
@@ -724,7 +733,8 @@ class MainWindow:
         self._apply_title_bar_style()
         fg = self._title_fg
 
-        self._title_text_label.configure(text=config.TITLE_TEXT)
+        if not self._filter_text:
+            self._title_text_label.configure(text=config.TITLE_TEXT)
 
         # Right-side counts
         counts = ""
@@ -982,6 +992,62 @@ class MainWindow:
     # Right-click context menu
     # ------------------------------------------------------------------
 
+    def _on_search_click(self, _event: Any = None):
+        """Toggle filter mode on search icon click."""
+        if self._filter_text:
+            self._exit_filter_mode()
+        else:
+            self._window.focus_force()
+        return "break"
+
+    def _on_key(self, event: Any):
+        """Accumulate typed characters into filter, apply immediately."""
+        if event.keysym == "BackSpace":
+            if self._filter_text:
+                self._filter_text = self._filter_text[:-1]
+                self._apply_filter()
+            return "break"
+        char = event.char
+        if char and char.isprintable() and len(char) == 1:
+            self._filter_text += char
+            self._apply_filter()
+            return "break"
+
+    def _on_filter_clear(self, _event: Any = None):
+        """Escape clears filter and exits filter mode."""
+        if self._filter_text:
+            self._exit_filter_mode()
+            return "break"
+
+    def _exit_filter_mode(self):
+        self._filter_text = ""
+        if self._filter_after_id is not None:
+            self._window.after_cancel(self._filter_after_id)
+            self._filter_after_id = None
+        self._title_text_label.configure(text=config.TITLE_TEXT)
+        self._do_filter_render()
+
+    def _apply_filter(self):
+        """Debounced re-render with current filter applied."""
+        if self._filter_text:
+            self._title_text_label.configure(text=f"/{self._filter_text}")
+        else:
+            self._title_text_label.configure(text=config.TITLE_TEXT)
+        if self._filter_after_id is not None:
+            self._window.after_cancel(self._filter_after_id)
+        self._filter_after_id = self._window.after(300, self._do_filter_render)
+
+    def _do_filter_render(self):
+        self._filter_after_id = None
+        filtered = self._filtered_sessions(self._last_sessions)
+        self._render_sessions(filtered)
+
+    def _filtered_sessions(self, sessions: list[SessionRow]) -> list[SessionRow]:
+        if not self._filter_text:
+            return sessions
+        needle = self._filter_text.lower()
+        return [s for s in sessions if needle in self._cwd_display(s.session.cwd).lower()]
+
     def _on_right_click_event(self, event: Any):
         if self._on_right_click:
             self._on_right_click(event.x_root, event.y_root)
@@ -1002,6 +1068,12 @@ class MainWindow:
     # ------------------------------------------------------------------
 
     def update_sessions(self, sessions: list[SessionRow]):
+        self._last_sessions = sessions
+        if self._filter_after_id is not None:
+            return
+        self._render_sessions(self._filtered_sessions(sessions))
+
+    def _render_sessions(self, sessions: list[SessionRow]):
         # When shaded, track rows silently but don't touch geometry or visibility
         if self._shaded:
             current_pids = {row.session.pid for row in sessions}

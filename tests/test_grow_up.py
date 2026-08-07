@@ -280,6 +280,9 @@ class TestGeometryBeforePacking:
             win._emoji_label_width = 30
             win._icon_cache = {}
             win._emoji_image_cache = {}
+            win._filter_after_id = None
+            win._filter_text = ""
+            win._last_sessions = []
 
             call_order = []
 
