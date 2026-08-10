@@ -135,7 +135,6 @@ DEFAULT_MAX_SESSIONS = 40
 
 # General UI
 DEFAULT_WINDOW_BG = "#1a1a1a"
-DEFAULT_TEXT_COLOR = "#e0e0e0"
 
 # Status emoji images (Noto Color Emoji, Apache 2.0)
 _ASSETS = Path(__file__).parent / "assets"
