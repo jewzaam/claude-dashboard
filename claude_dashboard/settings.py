@@ -61,7 +61,6 @@ class Settings:
 
     # General UI
     window_bg: str = config.DEFAULT_WINDOW_BG
-    text_color: str = config.DEFAULT_TEXT_COLOR
 
     # Session filtering
     ignore_regex: str = config.DEFAULT_IGNORE_REGEX

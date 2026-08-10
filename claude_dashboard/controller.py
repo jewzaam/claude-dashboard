@@ -775,12 +775,14 @@ class AppController:
         url = config.resolve_prometheus_url(settings_url=self._settings.prometheus_url)
         states = poll_session_states(prometheus_url=url)
         changed = False
+        otel_matched_pids: set[int] = set()
         for session_id, session_state in states.items():
             pid = self._session_id_to_pid.get(session_id)
             if pid is None:
                 pid = self._match_sandbox_by_hostname(session_state.host_name)
             if pid is None:
                 continue
+            otel_matched_pids.add(pid)
             entry = self._sessions.get(pid)
             if entry is None:
                 continue
@@ -808,16 +810,6 @@ class AppController:
         # are WORKING transition to READY ("just finished, needs attention").
         # PERMISSION_REQUIRED and AWAITING_INPUT are left alone — stale metric
         # doesn't mean the user answered; those persist until explicitly cleared.
-        # Build set of PIDs that OTEL matched this tick (covers both direct
-        # session_id lookup and sandbox hostname matching).
-        otel_matched_pids: set[int] = set()
-        for session_id, session_state in states.items():
-            pid = self._session_id_to_pid.get(session_id)
-            if pid is None:
-                pid = self._match_sandbox_by_hostname(session_state.host_name)
-            if pid is not None:
-                otel_matched_pids.add(pid)
-
         for entry in self._sessions.values():
             if entry.session.pid_alive:
                 continue
@@ -1096,14 +1088,20 @@ class AppController:
         else:
             self._show_live_context_menu(session, x, y)
 
-    def _show_live_context_menu(self, session: SessionInfo, x: int, y: int):
-        """Live session menu: Hide, Clear State."""
+    def _begin_context_menu(self) -> bool:
+        """Reset context menu for new content. Returns False if menu was already open."""
         if self._context_menu_open:
             self._context_menu.unpost()
             self._context_menu_open = False
-            return
+            return False
         self._context_menu.unpost()
         self._context_menu.delete(0, tk.END)
+        return True
+
+    def _show_live_context_menu(self, session: SessionInfo, x: int, y: int):
+        """Live session menu: Hide, Clear State."""
+        if not self._begin_context_menu():
+            return
 
         entry = self._sessions.get(session.pid)
         if not entry:
@@ -1133,12 +1131,8 @@ class AppController:
 
     def _show_sandbox_context_menu(self, session: SessionInfo, x: int, y: int):
         """Live sandbox menu: Hide, Clear State."""
-        if self._context_menu_open:
-            self._context_menu.unpost()
-            self._context_menu_open = False
+        if not self._begin_context_menu():
             return
-        self._context_menu.unpost()
-        self._context_menu.delete(0, tk.END)
 
         cwd_display = cwd_relative_to_home(cwd=session.cwd)
         entry = self._sessions.get(session.pid)
@@ -1181,12 +1175,8 @@ class AppController:
 
     def _show_ghost_context_menu(self, session: SessionInfo, x: int, y: int):
         """Ghost (local) menu: Hide, Dismiss."""
-        if self._context_menu_open:
-            self._context_menu.unpost()
-            self._context_menu_open = False
+        if not self._begin_context_menu():
             return
-        self._context_menu.unpost()
-        self._context_menu.delete(0, tk.END)
 
         cwd_display = cwd_relative_to_home(cwd=session.cwd)
 
