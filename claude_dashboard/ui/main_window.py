@@ -43,6 +43,7 @@ def _build_fonts(size: int) -> tuple[tuple, tuple, tuple]:
 _COLOR_EMPTY_FG = "#666666"
 _COLOR_CONTAINER_FG = "#888888"
 _COLOR_PROFILE_PERSONAL = "#d787ff"
+_COLOR_SEARCH_FG = "#00ccff"
 _ROW_PAD_X = 1
 _ROW_PAD_Y = 1
 
@@ -588,7 +589,10 @@ class MainWindow:
             except tk.TclError:
                 pass
 
-        self._title_text_label.configure(fg=fg)
+        if getattr(self, "_filter_text", ""):
+            self._title_text_label.configure(fg=_COLOR_SEARCH_FG)
+        else:
+            self._title_text_label.configure(fg=fg)
         self._title_counts_label.configure(fg=fg)
 
         # Eye icon: reflects highest-priority git status across all visible rows
@@ -1024,15 +1028,24 @@ class MainWindow:
         if self._filter_after_id is not None:
             self._window.after_cancel(self._filter_after_id)
             self._filter_after_id = None
-        self._title_text_label.configure(text=config.TITLE_TEXT)
+        self._title_text_label.configure(
+            text=config.TITLE_TEXT,
+            fg=self._title_fg,
+        )
         self._do_filter_render()
 
     def _apply_filter(self):
         """Debounced re-render with current filter applied."""
         if self._filter_text:
-            self._title_text_label.configure(text=f"/{self._filter_text}")
+            self._title_text_label.configure(
+                text=f"/{self._filter_text}",
+                fg=_COLOR_SEARCH_FG,
+            )
         else:
-            self._title_text_label.configure(text=config.TITLE_TEXT)
+            self._title_text_label.configure(
+                text=config.TITLE_TEXT,
+                fg=self._title_fg,
+            )
         if self._filter_after_id is not None:
             self._window.after_cancel(self._filter_after_id)
         self._filter_after_id = self._window.after(300, self._do_filter_render)
