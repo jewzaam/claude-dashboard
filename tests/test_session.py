@@ -5,8 +5,12 @@ import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
+import psutil
+
 from claude_dashboard.config import GitStatus
 from claude_dashboard.session import (
+    _is_dtach_attached,
+    _parse_dtach_socket,
     _read_remotes,
     _read_symbolic_ref,
     _read_upstream,
@@ -186,6 +190,119 @@ class TestValidatePid:
         mock_psutil.AccessDenied = psutil.AccessDenied
         mock_psutil.NoSuchProcess = psutil.NoSuchProcess
         assert validate_pid(pid=1234) is False
+
+    @patch("claude_dashboard.session._is_dtach_attached", return_value=False)
+    @patch("claude_dashboard.session.config")
+    @patch("claude_dashboard.session.psutil")
+    def test_dtach_detached_returns_false(self, mock_psutil, mock_config, mock_dtach):
+        mock_config.IS_LINUX = True
+        mock_psutil.pid_exists.return_value = True
+        mock_proc = MagicMock()
+        mock_proc.name.return_value = "claude"
+        mock_psutil.Process.return_value = mock_proc
+        mock_psutil.NoSuchProcess = psutil.NoSuchProcess
+        mock_psutil.AccessDenied = psutil.AccessDenied
+        assert validate_pid(pid=1234) is False
+
+    @patch("claude_dashboard.session._is_dtach_attached", return_value=True)
+    @patch("claude_dashboard.session.config")
+    @patch("claude_dashboard.session.psutil")
+    def test_dtach_attached_returns_true(self, mock_psutil, mock_config, mock_dtach):
+        mock_config.IS_LINUX = True
+        mock_psutil.pid_exists.return_value = True
+        mock_proc = MagicMock()
+        mock_proc.name.return_value = "claude"
+        mock_psutil.Process.return_value = mock_proc
+        mock_psutil.NoSuchProcess = psutil.NoSuchProcess
+        mock_psutil.AccessDenied = psutil.AccessDenied
+        assert validate_pid(pid=1234) is True
+
+
+class TestParseDtachSocket:
+    def test_standard_cmdline(self):
+        assert _parse_dtach_socket(["dtach", "-c", ".dtach-claude", "claude"]) == ".dtach-claude"
+
+    def test_with_flags(self):
+        cmdline = ["dtach", "-c", ".dtach-claude", "claude", "-c"]
+        assert _parse_dtach_socket(cmdline) == ".dtach-claude"
+
+    def test_no_c_flag(self):
+        assert _parse_dtach_socket(["dtach", "-a", ".dtach-claude"]) == ""
+
+    def test_c_flag_at_end(self):
+        assert _parse_dtach_socket(["dtach", "-c"]) == ""
+
+    def test_empty(self):
+        assert _parse_dtach_socket([]) == ""
+
+
+class TestIsDtachAttached:
+    def _make_proc(self, *, parent_name=None, grandparent_name=None):
+        proc = MagicMock()
+        if parent_name is None:
+            proc.parent.return_value = None
+            return proc
+        parent = MagicMock()
+        parent.name.return_value = parent_name
+        parent.pid = 100
+        proc.parent.return_value = parent
+        if grandparent_name is None:
+            parent.parent.return_value = None
+        else:
+            gp = MagicMock()
+            gp.name.return_value = grandparent_name
+            parent.parent.return_value = gp
+        return proc
+
+    def test_not_dtach_returns_true(self):
+        proc = self._make_proc(parent_name="bash")
+        assert _is_dtach_attached(proc) is True
+
+    def test_no_parent_returns_true(self):
+        proc = self._make_proc(parent_name=None)
+        assert _is_dtach_attached(proc) is True
+
+    def test_dtach_with_dtach_grandparent_attached(self):
+        proc = self._make_proc(parent_name="dtach", grandparent_name="dtach")
+        assert _is_dtach_attached(proc) is True
+
+    def test_dtach_with_systemd_grandparent_detached(self):
+        proc = self._make_proc(parent_name="dtach", grandparent_name="systemd")
+        parent = proc.parent()
+        parent.cwd.return_value = "/home/user/project"
+        parent.cmdline.return_value = ["dtach", "-c", ".dtach-claude", "claude"]
+        with patch("claude_dashboard.session.psutil.process_iter", return_value=[]):
+            assert _is_dtach_attached(proc) is False
+
+    @patch("claude_dashboard.session.os.path.realpath", side_effect=lambda p: p)
+    def test_dtach_detached_with_a_client_attached(self, mock_realpath):
+        proc = self._make_proc(parent_name="dtach", grandparent_name="systemd")
+        parent = proc.parent()
+        parent.cwd.return_value = "/home/user/project"
+        parent.cmdline.return_value = ["dtach", "-c", ".dtach-claude", "claude"]
+
+        client = MagicMock()
+        client.info = {"name": "dtach", "pid": 999}
+        client.cmdline.return_value = ["dtach", "-a", ".dtach-claude"]
+        client.cwd.return_value = "/home/user/project"
+
+        with patch("claude_dashboard.session.psutil.process_iter", return_value=[client]):
+            assert _is_dtach_attached(proc) is True
+
+    @patch("claude_dashboard.session.os.path.realpath", side_effect=lambda p: p)
+    def test_dtach_a_different_socket_not_matched(self, mock_realpath):
+        proc = self._make_proc(parent_name="dtach", grandparent_name="systemd")
+        parent = proc.parent()
+        parent.cwd.return_value = "/home/user/project-a"
+        parent.cmdline.return_value = ["dtach", "-c", ".dtach-claude", "claude"]
+
+        client = MagicMock()
+        client.info = {"name": "dtach", "pid": 999}
+        client.cmdline.return_value = ["dtach", "-a", ".dtach-claude"]
+        client.cwd.return_value = "/home/user/project-b"
+
+        with patch("claude_dashboard.session.psutil.process_iter", return_value=[client]):
+            assert _is_dtach_attached(proc) is False
 
 
 def _make_run_result(*, stdout="", returncode=0):
