@@ -3,6 +3,7 @@
 
 import json
 import logging
+import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -61,15 +62,88 @@ def discover_sessions(*, sessions_dir: Path | None = None) -> list[SessionInfo]:
 
 
 def validate_pid(*, pid: int) -> bool:
-    """Check if a process with the given PID is alive and is a Claude process."""
+    """Check if a process with the given PID is alive and is a Claude process.
+
+    On Linux, also checks dtach: if Claude is running under dtach and no client
+    is attached, returns False so the session renders as a ghost.
+    """
     try:
         if not psutil.pid_exists(pid):
             return False
         proc = psutil.Process(pid)
         name = proc.name().lower()
-        return "claude" in name
+        if "claude" not in name:
+            return False
+        if config.IS_LINUX and not _is_dtach_attached(proc):
+            return False
+        return True
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         return False
+
+
+def _is_dtach_attached(proc: psutil.Process) -> bool:
+    """Check if a Claude process under dtach has an attached client.
+
+    Returns True if not under dtach (normal session) or if dtach has a client.
+    Returns False only when Claude is under dtach and no client is connected.
+    """
+    try:
+        parent = proc.parent()
+        if not parent or parent.name() != "dtach":
+            return True
+
+        master = parent
+
+        # Case 1: initial -c client still alive (master's parent is also dtach)
+        try:
+            grandparent = master.parent()
+            if grandparent and grandparent.name() == "dtach":
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+        # Case 2: reattached via -a — scan for dtach process with same socket
+        try:
+            master_cwd = master.cwd()
+            master_cmdline = master.cmdline()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return False
+
+        socket_name = _parse_dtach_socket(master_cmdline)
+        if not socket_name:
+            return False
+
+        socket_abs = os.path.realpath(os.path.join(master_cwd, socket_name))
+
+        for p in psutil.process_iter(["name", "pid"]):
+            if p.info["name"] != "dtach" or p.info["pid"] == master.pid:
+                continue
+            try:
+                cmdline = p.cmdline()
+                if "-a" not in cmdline:
+                    continue
+                a_idx = cmdline.index("-a")
+                if a_idx + 1 >= len(cmdline):
+                    continue
+                client_socket = cmdline[a_idx + 1]
+                client_cwd = p.cwd()
+                client_abs = os.path.realpath(os.path.join(client_cwd, client_socket))
+                if client_abs == socket_abs:
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                continue
+
+        return False
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return True
+
+
+def _parse_dtach_socket(cmdline: list[str]) -> str:
+    """Extract socket path from dtach cmdline like ['dtach', '-c', '.dtach-claude', 'claude']."""
+    for i, arg in enumerate(cmdline):
+        if arg == "-c" and i + 1 < len(cmdline):
+            return cmdline[i + 1]
+    return ""
 
 
 def encode_project_key(*, cwd: str) -> str:
