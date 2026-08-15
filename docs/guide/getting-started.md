@@ -7,6 +7,11 @@ Claude Dashboard is a persistent, low-profile Tkinter window that monitors runni
 ## Prerequisites
 
 - Python 3.11+
+- `tkinter` — ships with the OS Python, not from pip, so it cannot be declared in `pyproject.toml`:
+  - Fedora / RHEL: `sudo dnf install python3-tkinter`
+  - Debian / Ubuntu: `sudo apt install python3-tk`
+  - Arch: `sudo pacman -S tk`
+  - macOS (Homebrew): `brew install python-tk`
 - Claude Code installed and working
 - Linux: GNOME with [Window Calls](https://extensions.gnome.org/extension/4724/window-calls/) extension (for window foregrounding on Wayland)
 
@@ -74,6 +79,19 @@ The dashboard starts an HTTP server on port 17384, discovers running sessions fr
 | `--debug` | Enable debug logging to stderr |
 | `--log-file <path>` | Redirect logs to file (append mode, rotates at 2 MB) |
 | `--quiet` / `-q` | Suppress non-essential output |
+| `--reset-position` | Ignore the saved window position and start centered on screen |
+
+### Recovering an Off-Screen Window
+
+If the dashboard starts with no visible window, its saved position is off-screen — most often after a monitor layout change. Start it centered instead:
+
+```bash
+make run-reset-position
+```
+
+The window is placed mid-screen rather than at the origin. At the origin the title bar lands under a top panel, leaving the window visible but impossible to drag. Mid-screen clears panels on every edge and works whether the window grows up or down.
+
+The recovered position is saved on exit, so this is a one-time recovery rather than a mode.
 
 ### Run with Logging (Recommended)
 

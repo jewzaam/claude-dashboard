@@ -203,8 +203,11 @@ def _detect_monitor_bounds() -> list[tuple[int, int, int, int]]:
 _monitor_bounds: list[tuple[int, int, int, int]] | None = None
 
 
-def _get_screen_bounds(x: int, y: int, *, fallback_w: int, fallback_h: int) -> tuple[int, int]:
-    """Return (right, bottom) boundary for the monitor containing (x, y)."""
+def get_screen_bounds(x: int, y: int, *, fallback_w: int, fallback_h: int) -> tuple[int, int]:
+    """Return (right, bottom) boundary for the monitor containing (x, y).
+
+    Used both to clamp popup menus and to recentre the window on reset.
+    """
     global _monitor_bounds
     if _monitor_bounds is None:
         _monitor_bounds = _detect_monitor_bounds() if config.IS_LINUX else []
@@ -232,7 +235,7 @@ def popup_menu_clamped(menu: tk.Menu, *, x: int, y: int) -> None:
     except tk.TclError:
         mw, mh = 0, 0
 
-    sr, sb = _get_screen_bounds(
+    sr, sb = get_screen_bounds(
         x, y, fallback_w=menu.winfo_screenwidth(), fallback_h=menu.winfo_screenheight()
     )
 
@@ -643,6 +646,14 @@ class MainWindow:
             y = self._tracked_y if self._tracked_y is not None else self._window.winfo_y()
             if self._settings.grow_up and old_height > 0:
                 y = y + old_height - new_height
+
+        # A saved bottom edge near the top of the screen makes grow_up place
+        # the window above y=0, where it is neither visible nor draggable —
+        # the title bar is the only recovery surface and it goes with it.
+        # Clamp the computed top so the window always stays reachable.
+        if y < 0:
+            logger.warning("apply_geometry: computed y=%d is off-screen, clamping to 0", y)
+            y = 0
 
         geom = f"{self._s(self._settings.row_width)}x{new_height}+{x}+{y}"
         if logger.isEnabledFor(logging.DEBUG):

@@ -62,6 +62,11 @@ def main():
         default=None,
         help="DPI scale factor (default: auto-detect, or set CLAUDE_DASHBOARD_SCALE env var)",
     )
+    parser.add_argument(
+        "--reset-position",
+        action="store_true",
+        help="ignore the saved window position and start centered on screen",
+    )
     args = parser.parse_args()
 
     log_fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -101,7 +106,11 @@ def main():
     from claude_dashboard.controller import AppController
 
     app = AppController(
-        debug=args.debug, quiet=args.quiet, ttl_seconds=args.ttl, dpi_scale=args.scale
+        debug=args.debug,
+        quiet=args.quiet,
+        ttl_seconds=args.ttl,
+        dpi_scale=args.scale,
+        reset_position_on_start=args.reset_position,
     )
     app.run()
 

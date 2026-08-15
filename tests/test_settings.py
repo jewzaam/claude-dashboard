@@ -3,7 +3,35 @@
 
 import json
 
-from claude_dashboard.settings import Settings, load_settings, save_settings
+from claude_dashboard.settings import Settings, load_settings, reset_position, save_settings
+
+
+class TestResetPosition:
+    """Escape hatch for a window stranded off-screen."""
+
+    def test_centers_window_on_screen(self):
+        settings = Settings(window_x=-4000, window_y=2)
+        reset_position(settings, screen_width=3072, screen_height=1728, window_width=500)
+        assert settings.window_x == (3072 - 500) // 2
+        assert settings.window_y == 1728 // 2
+
+    def test_never_returns_negative_x_when_window_wider_than_screen(self):
+        settings = Settings()
+        reset_position(settings, screen_width=400, screen_height=1000, window_width=900)
+        assert settings.window_x == 0
+
+    def test_result_clears_top_panel_for_both_growth_directions(self):
+        """y must be well below the top edge — a title bar at y=0 sits under
+        a top panel, visible but not draggable."""
+        settings = Settings()
+        reset_position(settings, screen_width=3072, screen_height=1728, window_width=500)
+        assert settings.window_y > 0
+
+    def test_leaves_other_fields_untouched(self):
+        settings = Settings(window_x=900, window_y=1400, row_width=720, grow_up=True)
+        reset_position(settings, screen_width=3072, screen_height=1728, window_width=720)
+        assert settings.row_width == 720
+        assert settings.grow_up is True
 
 
 class TestLoadSettings:

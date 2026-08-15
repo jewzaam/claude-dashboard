@@ -40,12 +40,17 @@ from claude_dashboard.session import (
     sandbox_git_check,
     validate_pid,
 )
-from claude_dashboard.settings import Settings, load_settings, save_settings
+from claude_dashboard.settings import Settings, load_settings, reset_position, save_settings
 from claude_dashboard.startup import set_run_on_startup
 from claude_dashboard.config import GitStatus, StatusState
 from claude_dashboard.models import SessionRow
 from claude_dashboard.tray import create_tray_icon, update_tray_icon
-from claude_dashboard.ui.main_window import MainWindow, MainWindowCallbacks, popup_menu_clamped
+from claude_dashboard.ui.main_window import (
+    MainWindow,
+    MainWindowCallbacks,
+    get_screen_bounds,
+    popup_menu_clamped,
+)
 from claude_dashboard.ui.settings_window import SettingsWindow
 
 logger = logging.getLogger(__name__)
@@ -139,6 +144,7 @@ class AppController:
         quiet: bool = False,
         ttl_seconds: int = 0,
         dpi_scale: float | None = None,
+        reset_position_on_start: bool = False,
     ):
         self._debug = debug
         self._quiet = quiet
@@ -151,6 +157,10 @@ class AppController:
         from claude_dashboard.dpi import apply_dpi_scaling
 
         self._dpi_scale = apply_dpi_scaling(self._root, override=dpi_scale)
+
+        # Needs the root window and DPI scale, so it cannot run at load time.
+        if reset_position_on_start:
+            self._reset_window_position()
 
         self._root.withdraw()
 
@@ -222,6 +232,28 @@ class AppController:
 
         # Load saved session state for restart continuity
         self._saved_state = self._load_session_state()
+
+    def _reset_window_position(self) -> None:
+        """Recentre the window, discarding a saved off-screen position."""
+        right, bottom = get_screen_bounds(
+            0,
+            0,
+            fallback_w=self._root.winfo_screenwidth(),
+            fallback_h=self._root.winfo_screenheight(),
+        )
+        reset_position(
+            self._settings,
+            screen_width=right,
+            screen_height=bottom,
+            window_width=round(self._settings.row_width * self._dpi_scale),
+        )
+        logger.info(
+            "window position reset to (%d,%d) on screen %dx%d",
+            self._settings.window_x,
+            self._settings.window_y,
+            right,
+            bottom,
+        )
 
     # ------------------------------------------------------------------
     # Main loop

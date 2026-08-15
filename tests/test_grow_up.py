@@ -241,6 +241,60 @@ class TestTrackedBottomEdge:
             assert win._grow_up_bottom_y == 520 + 136
 
 
+class TestOffScreenClamp:
+    """Verify a bottom edge near the top of the screen cannot hide the window.
+
+    With grow_up the window is drawn upward from the saved bottom edge, so a
+    small saved bottom (e.g. 2) puts the whole window above y=0 where it is
+    neither visible nor draggable.  _apply_geometry clamps the computed top.
+    """
+
+    def _make_window(self, *, bottom_y, x=100, row_height=32):
+        with patch("claude_dashboard.ui.main_window.tk"):
+            from claude_dashboard.ui.main_window import MainWindow
+
+            with patch.object(MainWindow, "__init__", lambda self, *a, **kw: None):
+                win = MainWindow.__new__(MainWindow)
+
+            toplevel = MagicMock()
+            win._window = toplevel
+            win._settings = Settings(
+                grow_up=True, window_x=x, window_y=bottom_y, row_height=row_height
+            )
+            win._dpi_scale = 1.0
+            win._shaded = False
+            win._icon_size = 20
+            win._emoji_img_size = 16
+            win._tracked_x = x
+            win._tracked_y = 0
+            win._grow_up_bottom_y = bottom_y
+
+            toplevel.winfo_x.return_value = x
+            toplevel.winfo_y.return_value = 0
+            toplevel.winfo_height.return_value = 0
+            return win, toplevel
+
+    def test_negative_computed_top_is_clamped(self):
+        """bottom_y=2 with 3 rows would place the top at -134; clamp to 0."""
+        win, toplevel = self._make_window(bottom_y=2)
+        win._apply_geometry(row_count=3)
+
+        # row_h=32, title_bar=34, height = 34 + 3*34 = 136
+        geometry_call = toplevel.geometry.call_args[0][0]
+        assert geometry_call == "500x136+100+0"
+        # Tracked bottom re-derived from the clamped position, not the stale 2
+        assert win._grow_up_bottom_y == 136
+
+    def test_on_screen_bottom_is_not_clamped(self):
+        """A sane bottom edge must be left alone — no shifting on restart."""
+        win, toplevel = self._make_window(bottom_y=1000)
+        win._apply_geometry(row_count=3)
+
+        geometry_call = toplevel.geometry.call_args[0][0]
+        assert geometry_call == "500x136+100+864"
+        assert win._grow_up_bottom_y == 1000
+
+
 class TestGeometryBeforePacking:
     """Verify geometry is set before rows are packed in update_sessions.
 
