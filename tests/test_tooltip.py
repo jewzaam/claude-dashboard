@@ -16,19 +16,29 @@ def _make_widget(*, x=100, y=200, width=500, height=28):
     return widget
 
 
-def _make_window(*, pointer_xy):
+def _make_window(*, pointer_xy, window_box=(90, 100, 520, 400)):
     win = MainWindow.__new__(MainWindow)
     win._root = MagicMock()
     win._root.winfo_pointerxy.return_value = pointer_xy
     win._window = MagicMock()
     win._window.after.return_value = "after#1"
     win._window.winfo_viewable.return_value = 1
+    wx, wy, ww, wh = window_box
+    win._window.winfo_rootx.return_value = wx
+    win._window.winfo_rooty.return_value = wy
+    win._window.winfo_width.return_value = ww
+    win._window.winfo_height.return_value = wh
     win._tooltip_window = MagicMock()
     win._tooltip_after_id = None
     win._tooltip_watch_id = "after#0"
     win._tooltip_life_id = "after#2"
     win._tooltip_pid = 1000
+    win._tooltip_leave_time = 0
     return win
+
+
+def _motion(*, time_ms=5000):
+    return MagicMock(time=time_ms, x_root=300, y_root=210)
 
 
 class TestPointInWidget:
@@ -105,7 +115,7 @@ class TestReArmGuard:
 
     def test_ignores_repeat_while_shown(self):
         win = _make_window(pointer_xy=(300, 210))
-        win._show_tooltip(MagicMock(), 1000)
+        win._show_tooltip(_motion(), 1000)
         win._window.after.assert_not_called()
         assert win._tooltip_window is not None
 
@@ -113,7 +123,7 @@ class TestReArmGuard:
         win = _make_window(pointer_xy=(300, 210))
         win._tooltip_window = None
         win._tooltip_after_id = "after#3"
-        win._show_tooltip(MagicMock(), 1000)
+        win._show_tooltip(_motion(), 1000)
         win._window.after.assert_not_called()
         assert win._tooltip_after_id == "after#3"
 
@@ -121,7 +131,7 @@ class TestReArmGuard:
         win = _make_window(pointer_xy=(300, 210))
         win._settings = MagicMock(tooltip_delay_ms=500)
         tip = win._tooltip_window
-        win._show_tooltip(MagicMock(), 2000)
+        win._show_tooltip(_motion(), 2000)
         tip.destroy.assert_called_once()
         assert win._tooltip_pid == 2000
         assert win._tooltip_after_id == "after#1"
@@ -136,3 +146,72 @@ class TestHideCancelsTimers:
         assert cancelled == {"after#3", "after#0", "after#2"}
         assert win._tooltip_life_id is None
         assert win._tooltip_pid is None
+
+
+class TestStaleMotionLatch:
+    """Motion compressed behind a <Leave> must not re-arm the tooltip."""
+
+    def _armed_window(self, *, leave_time):
+        win = _make_window(pointer_xy=(300, 210))
+        win._settings = MagicMock(tooltip_delay_ms=500)
+        win._tooltip_window = None
+        win._tooltip_watch_id = None
+        win._tooltip_life_id = None
+        win._tooltip_pid = None
+        win._tooltip_leave_time = leave_time
+        return win
+
+    def test_motion_predating_leave_ignored(self):
+        win = self._armed_window(leave_time=5000)
+        win._show_tooltip(_motion(time_ms=4990), 1000)
+        win._window.after.assert_not_called()
+        assert win._tooltip_pid is None
+
+    def test_motion_same_time_as_leave_ignored(self):
+        win = self._armed_window(leave_time=5000)
+        win._show_tooltip(_motion(time_ms=5000), 1000)
+        win._window.after.assert_not_called()
+
+    def test_motion_after_leave_arms(self):
+        win = self._armed_window(leave_time=5000)
+        win._show_tooltip(_motion(time_ms=5001), 1000)
+        assert win._tooltip_after_id == "after#1"
+        assert win._tooltip_pid == 1000
+
+    def test_timestamp_wraparound_still_arms(self):
+        win = self._armed_window(leave_time=4_294_967_000)
+        win._show_tooltip(_motion(time_ms=120), 1000)
+        assert win._tooltip_after_id == "after#1"
+
+    def test_missing_timestamp_arms(self):
+        win = self._armed_window(leave_time=5000)
+        win._show_tooltip(_motion(time_ms=0), 1000)
+        assert win._tooltip_after_id == "after#1"
+
+
+class TestEdgeMargin:
+    """A pointer frozen on the window border reads as gone, not hovering.
+
+    Window spans x 90..610, y 100..500; the row sits at x 100..600, y 200..228.
+    """
+
+    def test_pointer_well_inside_row(self):
+        win = _make_window(pointer_xy=(300, 210))
+        assert win._pointer_over_row(_make_widget()) is True
+
+    def test_pointer_on_bottom_border(self):
+        win = _make_window(pointer_xy=(300, 499), window_box=(90, 100, 520, 400))
+        widget = _make_widget(x=100, y=472, width=500, height=28)
+        assert win._pointer_over_row(widget) is False
+
+    def test_pointer_on_left_border(self):
+        win = _make_window(pointer_xy=(91, 210))
+        assert win._pointer_over_row(_make_widget(x=90, y=200)) is False
+
+    def test_pointer_on_top_border(self):
+        win = _make_window(pointer_xy=(300, 101))
+        assert win._pointer_over_row(_make_widget(x=100, y=100)) is False
+
+    def test_pointer_just_past_margin(self):
+        win = _make_window(pointer_xy=(300, 103))
+        assert win._pointer_over_row(_make_widget(x=100, y=100)) is True
