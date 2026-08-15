@@ -66,6 +66,8 @@ _CLICK_DELAY_MS = 200  # delay before single-click fires (allows double-click)
 # Revisit if Tk ever gets a Wayland-native backend.
 _TOOLTIP_POLL_MS = 150  # pointer-position check interval while a tooltip is up
 _TOOLTIP_LIFETIME_MS = 4000  # hard cap on how long a tooltip can stay up
+_TOOLTIP_STALE_MS = 1000  # motion this far behind the last <Leave> is a queued replay
+_EDGE_MARGIN_PX = 3  # pointer this close to a window border counts as outside
 
 # Auto-contrast text colors (W3C contrast ratio + warm two-tone)
 _TEXT_LIGHT = "#f5f0e8"  # warm white for dark backgrounds
@@ -333,6 +335,7 @@ class MainWindow:
         self._tooltip_watch_id: str | None = None
         self._tooltip_life_id: str | None = None
         self._tooltip_pid: int | None = None
+        self._tooltip_leave_time: int = 0  # X timestamp of the last row <Leave>
 
         # Keyboard filter
         self._filter_text: str = ""
@@ -857,14 +860,32 @@ class MainWindow:
         which fires a synthetic <Enter> on the row below and re-arms an endless
         show/hide loop. Real hovering always produces motion; a synthetic
         crossing never does.
+
+        Motion is dispatched after compression, so the last motion of a pointer
+        leaving the window can arrive *after* the <Leave> that dismissed the
+        tooltip. X timestamps expose that: anything not newer than the last
+        leave predates it and must not re-arm.
         """
+        event_time = getattr(event, "time", 0) or 0
+        # Bounded comparison: X timestamps wrap roughly every 49 days, so only
+        # treat a motion as stale when it sits just behind the leave.
+        stale_by = self._tooltip_leave_time - event_time
+        if event_time and 0 <= stale_by <= _TOOLTIP_STALE_MS:
+            logger.debug("tooltip: stale motion pid=%d t=%d", pid, event_time)
+            return
         if self._tooltip_pid == pid and (
             self._tooltip_after_id is not None or self._tooltip_window is not None
         ):
             return  # already pending or shown for this row
         self._hide_tooltip()
         self._tooltip_pid = pid
-        logger.debug("tooltip: armed pid=%d", pid)
+        logger.debug(
+            "tooltip: armed pid=%d at (%s,%s) t=%d",
+            pid,
+            getattr(event, "x_root", "?"),
+            getattr(event, "y_root", "?"),
+            event_time,
+        )
 
         def _display():
             self._tooltip_after_id = None
@@ -919,12 +940,31 @@ class MainWindow:
         self._tooltip_after_id = self._window.after(self._settings.tooltip_delay_ms, _display)
 
     def _pointer_over_row(self, frame: tk.Widget) -> bool:
-        """True if the pointer is over a row of a visible dashboard window."""
+        """True if the pointer is over a row, away from the window's outer edge.
+
+        ponytail: edge margin, because XWayland gives us no truthful answer. A
+        pointer that left the window freezes at its exit point, which is on the
+        outermost pixels of the window — so a reading inside `_EDGE_MARGIN_PX`
+        of any border is treated as "gone", at the cost of no tooltip when
+        genuinely hovering that outer sliver. Replace with a real pointer query
+        if Tk ever speaks Wayland natively.
+        """
         try:
             if not self._window.winfo_viewable():
                 return False  # window hidden/withdrawn — row coords are stale
             px, py = self._root.winfo_pointerxy()
-            return _point_in_widget(frame, px, py)
+            if not _point_in_widget(frame, px, py):
+                return False
+            wx = self._window.winfo_rootx()
+            wy = self._window.winfo_rooty()
+            m = _EDGE_MARGIN_PX
+            inside_edges = (
+                wx + m <= px < wx + self._window.winfo_width() - m
+                and wy + m <= py < wy + self._window.winfo_height() - m
+            )
+            if not inside_edges:
+                logger.debug("tooltip: pointer at window edge (%d,%d) — treating as gone", px, py)
+            return inside_edges
         except tk.TclError:
             return False  # row or window destroyed under the pointer
 
@@ -1510,6 +1550,8 @@ class MainWindow:
 
         def make_leave(p: int = session.pid):
             def handler(event: Any):
+                self._tooltip_leave_time = getattr(event, "time", 0) or 0
+                logger.debug("tooltip: leave pid=%d t=%d", p, self._tooltip_leave_time)
                 self._hide_tooltip()
 
             return handler

@@ -96,13 +96,15 @@ Decisions recorded here exist because they were non-obvious, caused confusion, o
 
 When user clears a session state (context menu, click, double-click), `state_cleared_from` records the state value that was cleared (e.g., `"working"`). OTEL poller rejects updates that report the same state — stale metrics keep reporting what was cleared and get blocked. A genuinely different state (e.g., PERMISSION_REQUIRED after clearing WORKING) is accepted, and `state_cleared_from` resets to `""`. No timestamps or cooldowns — pure state identity comparison. Persisted to `session-state.json` so protection survives dashboard restarts.
 
-### Tooltip dismissal — pointer poll, not crossing events
+### Tooltip dismissal — timers, not crossing events or pointer position
 
-Tkinter runs under XWayland, where the compositor never reports the global pointer position. `winfo_pointerxy()` freezes at the last coordinate the pointer held over one of our own windows — which is inside the row it just left — so **pointer position cannot prove the pointer left a row**, and `<Leave>` is not reliably delivered when the pointer exits a borderless window. Three rules follow, all in `main_window.py`:
+Tkinter runs under XWayland, where the compositor never reports the global pointer position. `winfo_pointerxy()` freezes at the last coordinate the pointer held over one of our own windows — which is inside the row it just left — so **pointer position cannot prove the pointer left a row**, and `<Leave>` is not reliably delivered when the pointer exits a borderless window. Five rules follow, all in `main_window.py`:
 
 1. **`<Motion>` arms the tooltip, not `<Enter>`.** Destroying a tooltip makes X re-evaluate what is under the (frozen) pointer and fire a synthetic `<Enter>` on the row beneath, which re-armed an endless show/hide loop. Real hovering always produces motion; a synthetic crossing never does. `_show_tooltip()` also returns early if one is already pending or shown for that row, so the repeated motion events do not restack timers.
-2. **`_TOOLTIP_LIFETIME_MS` (4 s) is the only guarantee.** A displayed tooltip always self-destructs; everything else is a best-effort speedup.
-3. `_pointer_over_row()` (pre-display guard + 150 ms `_watch_pointer()` poll) is best-effort only — correct while the pointer is genuinely over a window of ours, useless once it leaves.
+2. **Motion not newer than the last `<Leave>` is discarded** (`_tooltip_leave_time`, compared with a `_TOOLTIP_STALE_MS` window so X timestamp wraparound cannot wedge it). Tk dispatches motion after compression, so the final motion of a pointer leaving the window can arrive *after* the `<Leave>` that dismissed the tooltip and re-arm it. This showed as: grow-down mode, exit across the bottom row's own edge → tooltip always returns. Other edges cross a different widget first, so their last motion is not on a tooltip row.
+3. **A pointer reading within `_EDGE_MARGIN_PX` (3 px) of any window border counts as gone.** A pointer that left freezes at its exit point, which is on the outermost pixels; a hover that merely stopped is essentially never parked there. This is what stops the reproducible case — grow-down, exit across the bottom row's own bottom edge — where no other signal distinguishes departure from a stationary hover. Cost: no tooltip while hovering that outer sliver.
+4. **`_TOOLTIP_LIFETIME_MS` (4 s) is the only guarantee.** A displayed tooltip always self-destructs; everything else is a best-effort speedup.
+5. `_pointer_over_row()` (pre-display guard + 150 ms `_watch_pointer()` poll) cannot prove the pointer is present, only that it is plausibly present.
 
 **Do not re-bind tooltips to `<Enter>` and do not treat pointer coordinates as authoritative.**
 
