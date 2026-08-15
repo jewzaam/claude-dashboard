@@ -85,6 +85,22 @@ def _is_valid_value(*, value: object, default: object) -> bool:
 SETTINGS_FIELD_NAMES = {f.name for f in fields(Settings)}
 
 
+def reset_position(
+    settings: Settings, *, screen_width: int, screen_height: int, window_width: int
+) -> None:
+    """Move the window to the middle of the screen.
+
+    Escape hatch for a window stranded off-screen. The origin is not usable
+    as a recovery target: with ``grow_up`` disabled the title bar lands at
+    y=0, underneath a top panel, so the window is visible but cannot be
+    dragged. Mid-screen clears panels at every edge and works for both
+    growth directions — ``window_y`` is a top edge when growing down and a
+    bottom edge when growing up, and either way the window stays on screen.
+    """
+    settings.window_x = max(0, (screen_width - window_width) // 2)
+    settings.window_y = screen_height // 2
+
+
 def load_settings(*, path: Path | None = None) -> Settings:
     """Load settings from JSON file. Returns defaults if file missing or invalid."""
     settings_path = config.SETTINGS_FILE if path is None else path
