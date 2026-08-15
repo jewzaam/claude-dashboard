@@ -13,7 +13,7 @@ Claude Dashboard is a persistent, low-profile Tkinter window that monitors runni
   - Arch: `sudo pacman -S tk`
   - macOS (Homebrew): `brew install python-tk`
 - Claude Code installed and working
-- Linux: GNOME with [Window Calls](https://extensions.gnome.org/extension/4724/window-calls/) extension (for window foregrounding on Wayland)
+- Linux: GNOME with [Window Calls](https://extensions.gnome.org/extension/4724/window-calls/) extension — required, the dashboard exits at startup if it does not answer on D-Bus
 
 ## Install
 
@@ -113,7 +113,7 @@ Enable via the Settings dialog (right-click title bar > Settings). On Linux, thi
 | Linux/GNOME Wayland | D-Bus via Window Calls extension | [Window Calls](https://extensions.gnome.org/extension/4724/window-calls/) |
 | Linux (VS Code fallback) | `code /path` CLI | VS Code `code` command in PATH |
 
-Without the Window Calls extension on Linux, clicking a session row still works for VS Code windows (via the `code` CLI) but cannot foreground terminal windows.
+Without the Window Calls extension on Linux the dashboard refuses to start: the D-Bus window list is also how sandbox VS Code connection is detected, so a missing extension would otherwise render every sandbox as disconnected (grey text, no tooltips) with no visible cause. Verify with `gnome-extensions list --enabled | grep -i window`. A GNOME major upgrade can disable the extension as unsupported.
 
 ## Key Paths
 

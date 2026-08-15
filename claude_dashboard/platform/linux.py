@@ -108,6 +108,38 @@ def detect_container_linux(pid: int) -> ContainerInfo:
     return container
 
 
+WINDOW_CALLS_NAME = "Window Calls"
+WINDOW_CALLS_URL = "https://extensions.gnome.org/extension/4724/window-calls/"
+
+
+def window_calls_available() -> bool:
+    """Check whether the window-calls GNOME Shell extension answers on D-Bus.
+
+    Distinct from ``_list_windows_dbus() == []``, which cannot tell a missing
+    extension from a session with no windows.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gdbus",
+                "call",
+                "--session",
+                "--dest",
+                _DBUS_DEST,
+                "--object-path",
+                _DBUS_PATH,
+                "--method",
+                f"{_DBUS_IFACE}.List",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
 def _list_windows_dbus() -> list[dict]:
     """List all windows via the window-calls GNOME Shell extension D-Bus interface.
 

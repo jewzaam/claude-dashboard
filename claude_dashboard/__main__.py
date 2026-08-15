@@ -95,6 +95,27 @@ def main():
         logging.getLogger(__name__).error("Claude Dashboard is already running (PID file locked)")
         sys.exit(EXIT_ERROR)
 
+    if config.IS_LINUX:
+        from claude_dashboard.platform.linux import (
+            WINDOW_CALLS_NAME,
+            WINDOW_CALLS_URL,
+            window_calls_available,
+        )
+
+        if not window_calls_available():
+            msg = (
+                f"ERROR: required GNOME Shell extension '{WINDOW_CALLS_NAME}' is not "
+                "responding on D-Bus.\n\n"
+                "Without it the dashboard cannot see VS Code windows: sandbox rows render "
+                "as disconnected (grey text, no tooltips) and window foregrounding fails.\n\n"
+                f"Install and enable it: {WINDOW_CALLS_URL}\n"
+                "Verify with: gnome-extensions list --enabled | grep -i window"
+            )
+            # stderr as well as the log — --log-file would otherwise swallow it.
+            print(msg, file=sys.stderr)
+            logging.getLogger(__name__).error(msg.replace("\n", " "))
+            sys.exit(EXIT_ERROR)
+
     if config.IS_WINDOWS:
         import ctypes
 

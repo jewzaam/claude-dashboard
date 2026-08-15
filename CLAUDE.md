@@ -114,7 +114,7 @@ Ghost sessions are evicted when total session count exceeds `max_sessions` (defa
 
 ### Sandbox rendering model
 
-Sandboxes never render as ghosts — always state color background + state emoji. Grey text (`_COLOR_CONTAINER_FG`) when VS Code disconnected, normal contrast when connected. `sandbox_connected` field on SessionRow carries VS Code status. `unattached` passed as False for sandboxes in SessionRow (internally still tracked for VS Code detection). Gone from openshell → removed from dashboard entirely (no ghost state). Sandbox Ready→Idle automatically when VS Code disconnects.
+Sandboxes never render as ghosts — always state color background + state emoji. Grey text (`_COLOR_CONTAINER_FG`) when VS Code disconnected, normal contrast when connected. Connection state comes from the `window-calls` D-Bus window scan only — never from OTEL or PID. That extension is a hard dependency: `__main__.main()` calls `window_calls_available()` on Linux and exits with an install message if D-Bus does not answer. Without the check a missing extension silently dims every sandbox row and drops sandbox tooltips (`_update_last_prompts()` skips `unattached` entries), which reads as a rendering bug. `sandbox_connected` field on SessionRow carries VS Code status. `unattached` passed as False for sandboxes in SessionRow (internally still tracked for VS Code detection). Gone from openshell → removed from dashboard entirely (no ghost state). Sandbox Ready→Idle automatically when VS Code disconnects.
 
 ### Sandbox removal protection
 

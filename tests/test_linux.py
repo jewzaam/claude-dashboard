@@ -15,6 +15,7 @@ from claude_dashboard.platform.linux import (
     _list_windows_dbus,
     detect_container_linux,
     foreground_window_linux,
+    window_calls_available,
 )
 
 # ---------------------------------------------------------------------------
@@ -383,3 +384,27 @@ class TestForegroundWindowLinux:
             process_pid=3789,
         )
         assert foreground_window_linux(container, cwd="/home/user/project") is False
+
+
+class TestWindowCallsAvailable:
+    """Extension presence probe — distinct from an empty window list."""
+
+    @patch("subprocess.run")
+    def test_extension_present(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="('[]',)")
+        assert window_calls_available() is True
+
+    @patch("subprocess.run")
+    def test_extension_missing(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1, stderr="Error: GDBus.Error:...UnknownMethod: Object does not exist"
+        )
+        assert window_calls_available() is False
+
+    @patch("subprocess.run", side_effect=FileNotFoundError)
+    def test_gdbus_missing(self, mock_run):
+        assert window_calls_available() is False
+
+    @patch("subprocess.run", side_effect=subprocess.TimeoutExpired("gdbus", 3))
+    def test_gdbus_timeout(self, mock_run):
+        assert window_calls_available() is False
