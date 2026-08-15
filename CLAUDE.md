@@ -96,6 +96,16 @@ Decisions recorded here exist because they were non-obvious, caused confusion, o
 
 When user clears a session state (context menu, click, double-click), `state_cleared_from` records the state value that was cleared (e.g., `"working"`). OTEL poller rejects updates that report the same state — stale metrics keep reporting what was cleared and get blocked. A genuinely different state (e.g., PERMISSION_REQUIRED after clearing WORKING) is accepted, and `state_cleared_from` resets to `""`. No timestamps or cooldowns — pure state identity comparison. Persisted to `session-state.json` so protection survives dashboard restarts.
 
+### Tooltip dismissal — pointer poll, not crossing events
+
+Tkinter runs under XWayland, where the compositor never reports the global pointer position. `winfo_pointerxy()` freezes at the last coordinate the pointer held over one of our own windows — which is inside the row it just left — so **pointer position cannot prove the pointer left a row**, and `<Leave>` is not reliably delivered when the pointer exits a borderless window. Three rules follow, all in `main_window.py`:
+
+1. **`<Motion>` arms the tooltip, not `<Enter>`.** Destroying a tooltip makes X re-evaluate what is under the (frozen) pointer and fire a synthetic `<Enter>` on the row beneath, which re-armed an endless show/hide loop. Real hovering always produces motion; a synthetic crossing never does. `_show_tooltip()` also returns early if one is already pending or shown for that row, so the repeated motion events do not restack timers.
+2. **`_TOOLTIP_LIFETIME_MS` (4 s) is the only guarantee.** A displayed tooltip always self-destructs; everything else is a best-effort speedup.
+3. `_pointer_over_row()` (pre-display guard + 150 ms `_watch_pointer()` poll) is best-effort only — correct while the pointer is genuinely over a window of ours, useless once it leaves.
+
+**Do not re-bind tooltips to `<Enter>` and do not treat pointer coordinates as authoritative.**
+
 ### Text color — auto-contrast, not configurable
 
 Text color is computed per-row from the background color using W3C sRGB contrast ratios. The `text_color` setting field exists in the Settings dataclass for backward compat but is unused. Removing the setting from the UI was intentional — users pick status colors, text adapts automatically.
