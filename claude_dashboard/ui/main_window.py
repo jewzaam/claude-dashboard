@@ -58,6 +58,14 @@ _ELEMENT_GAP = 2  # horizontal gap between adjacent elements
 _COUNTS_RIGHT_PAD = 6  # right padding for counts label
 _HIGHLIGHT_THICKNESS = 1  # title bar border thickness
 _CLICK_DELAY_MS = 200  # delay before single-click fires (allows double-click)
+# ponytail: neither <Leave> nor pointer position can be trusted to dismiss a
+# tooltip. Tk runs under XWayland, where the compositor never reports the global
+# pointer position — winfo_pointerxy() freezes at the last coordinate the pointer
+# had over one of our own windows, which is inside the row it just left. The
+# lifetime timer is the only guarantee; poll and <Leave> are best-effort speedups.
+# Revisit if Tk ever gets a Wayland-native backend.
+_TOOLTIP_POLL_MS = 150  # pointer-position check interval while a tooltip is up
+_TOOLTIP_LIFETIME_MS = 4000  # hard cap on how long a tooltip can stay up
 
 # Auto-contrast text colors (W3C contrast ratio + warm two-tone)
 _TEXT_LIGHT = "#f5f0e8"  # warm white for dark backgrounds
@@ -110,6 +118,13 @@ def _pil_to_photoimage(pil_image: Any) -> tk.PhotoImage:
     buf = io.BytesIO()
     pil_image.save(buf, format="PNG")
     return tk.PhotoImage(data=buf.getvalue())
+
+
+def _point_in_widget(widget: Any, x_root: int, y_root: int) -> bool:
+    """True if a screen coordinate falls inside a widget's on-screen bounds."""
+    x0 = widget.winfo_rootx()
+    y0 = widget.winfo_rooty()
+    return x0 <= x_root < x0 + widget.winfo_width() and y0 <= y_root < y0 + widget.winfo_height()
 
 
 def _contrast_text_for_bg(bg_hex: str) -> str:
@@ -315,6 +330,8 @@ class MainWindow:
         # Tooltip state
         self._tooltip_window: tk.Toplevel | None = None
         self._tooltip_after_id: str | None = None
+        self._tooltip_watch_id: str | None = None
+        self._tooltip_life_id: str | None = None
         self._tooltip_pid: int | None = None
 
         # Keyboard filter
@@ -834,10 +851,20 @@ class MainWindow:
     # ------------------------------------------------------------------
 
     def _show_tooltip(self, event: Any, pid: int):
-        """Show tooltip after debounce delay."""
+        """Arm the tooltip for a row. Driven by <Motion>, never by <Enter>.
+
+        Destroying a tooltip makes X re-evaluate what sits under the pointer,
+        which fires a synthetic <Enter> on the row below and re-arms an endless
+        show/hide loop. Real hovering always produces motion; a synthetic
+        crossing never does.
+        """
+        if self._tooltip_pid == pid and (
+            self._tooltip_after_id is not None or self._tooltip_window is not None
+        ):
+            return  # already pending or shown for this row
         self._hide_tooltip()
         self._tooltip_pid = pid
-        logger.debug("tooltip: hover enter pid=%d", pid)
+        logger.debug("tooltip: armed pid=%d", pid)
 
         def _display():
             self._tooltip_after_id = None
@@ -848,6 +875,13 @@ class MainWindow:
             text = row.get("last_prompt", "")
             if not text:
                 logger.debug("tooltip: pid=%d no last_prompt data", pid)
+                return
+            # Best-effort: catches the case where the pointer is still over one
+            # of our windows so the coordinate is real. Under XWayland it reads
+            # a frozen coordinate once the pointer leaves, hence the lifetime cap.
+            if not self._pointer_over_row(row["frame"]):
+                logger.debug("tooltip: pid=%d pointer left before display", pid)
+                self._tooltip_pid = None
                 return
             logger.debug("tooltip: showing pid=%d text=%s", pid, text[:60])
             tip = tk.Toplevel(self._window)
@@ -879,14 +913,40 @@ class MainWindow:
             tip.geometry(f"+{x}+{y}")
             tip.deiconify()
             self._tooltip_window = tip
+            self._tooltip_life_id = self._window.after(_TOOLTIP_LIFETIME_MS, self._hide_tooltip)
+            self._watch_pointer(row["frame"])
 
         self._tooltip_after_id = self._window.after(self._settings.tooltip_delay_ms, _display)
 
+    def _pointer_over_row(self, frame: tk.Widget) -> bool:
+        """True if the pointer is over a row of a visible dashboard window."""
+        try:
+            if not self._window.winfo_viewable():
+                return False  # window hidden/withdrawn — row coords are stale
+            px, py = self._root.winfo_pointerxy()
+            return _point_in_widget(frame, px, py)
+        except tk.TclError:
+            return False  # row or window destroyed under the pointer
+
+    def _watch_pointer(self, frame: tk.Widget):
+        """Hide the tooltip once the pointer is no longer over its row."""
+        self._tooltip_watch_id = None
+        if self._tooltip_window is None:
+            return
+        if not self._pointer_over_row(frame):
+            self._hide_tooltip()
+            return
+        self._tooltip_watch_id = self._window.after(
+            _TOOLTIP_POLL_MS, lambda: self._watch_pointer(frame)
+        )
+
     def _hide_tooltip(self):
         """Cancel pending tooltip and destroy visible one."""
-        if self._tooltip_after_id is not None:
-            self._window.after_cancel(self._tooltip_after_id)
-            self._tooltip_after_id = None
+        for attr in ("_tooltip_after_id", "_tooltip_watch_id", "_tooltip_life_id"):
+            after_id = getattr(self, attr)
+            if after_id is not None:
+                self._window.after_cancel(after_id)
+                setattr(self, attr, None)
         if self._tooltip_window is not None:
             self._tooltip_window.destroy()
             self._tooltip_window = None
@@ -1440,8 +1500,9 @@ class MainWindow:
             w.bind("<Button-2>", mid_click)
             w.bind("<Button-3>", right_click)
 
-        # Tooltip hover bindings (debounced)
-        def make_enter(p: int = session.pid):
+        # Tooltip hover bindings (debounced). <Motion> arms the tooltip, not
+        # <Enter> — see _show_tooltip for why synthetic crossings must not.
+        def make_motion(p: int = session.pid):
             def handler(event: Any):
                 self._show_tooltip(event, p)
 
@@ -1453,10 +1514,10 @@ class MainWindow:
 
             return handler
 
-        enter_handler = make_enter()
+        motion_handler = make_motion()
         leave_handler = make_leave()
         for w in widgets:
-            w.bind("<Enter>", enter_handler)
+            w.bind("<Motion>", motion_handler)
             w.bind("<Leave>", leave_handler)
 
         self._rows[session.pid] = {
