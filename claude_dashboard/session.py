@@ -32,8 +32,19 @@ class SessionInfo:
     sandbox_profile: str = ""
 
 
+# Entrypoints written by non-interactive runs (`claude -p`, Agent SDK). They have
+# no window to foreground and finish in seconds, so a row plus a ghost is noise.
+# Verified against Claude Code 2.1.226: `claude -p` writes entrypoint "sdk-cli",
+# the interactive TUI writes "cli". Unknown entrypoints stay visible on purpose.
+HEADLESS_ENTRYPOINTS = frozenset({"sdk-cli"})
+
+
 def discover_sessions(*, sessions_dir: Path | None = None) -> list[SessionInfo]:
-    """Read all session files from ~/.claude/sessions/ and return SessionInfo list."""
+    """Read all session files from ~/.claude/sessions/ and return SessionInfo list.
+
+    Headless entrypoints are skipped — see HEADLESS_ENTRYPOINTS. Their OTEL
+    telemetry is unaffected; Claude Code emits that independently.
+    """
     directory = sessions_dir or config.SESSIONS_DIR
 
     if not directory.is_dir():
@@ -53,6 +64,14 @@ def discover_sessions(*, sessions_dir: Path | None = None) -> list[SessionInfo]:
                 started_at=data.get("startedAt", 0),
                 entrypoint=data.get("entrypoint", "cli"),
             )
+            if session.entrypoint in HEADLESS_ENTRYPOINTS:
+                logger.debug(
+                    "skipping headless session pid=%d entrypoint=%s cwd=%s",
+                    session.pid,
+                    session.entrypoint,
+                    session.cwd,
+                )
+                continue
             if session.pid and session.session_id:
                 sessions.append(session)
         except (json.JSONDecodeError, OSError) as exc:
