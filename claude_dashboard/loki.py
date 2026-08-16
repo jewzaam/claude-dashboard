@@ -123,6 +123,37 @@ def poll_last_prompts(
     return prompts
 
 
+def poll_interactive_sessions(*, loki_url: str, session_ids: list[str]) -> set[str]:
+    """Return the subset of session_ids with interactive main-thread activity.
+
+    Headless runs (``claude -p``, Agent SDK) emit api_request events whose
+    query_source is only ever "sdk"; an interactive TUI session always
+    produces query_source="repl_main_thread". OTEL telemetry carries no
+    explicit headless marker, so this is the discriminator — the remote
+    counterpart of the local HEADLESS_ENTRYPOINTS session-file filter.
+
+    Fails closed: on query failure returns an empty set (no remote rows
+    created that tick; retried next tick).
+    """
+    if not session_ids:
+        return set()
+    query = (
+        '{service_name="claude-code"}'
+        ' | event_name = "api_request"'
+        ' | query_source = "repl_main_thread"'
+        f' | session_id =~ "{"|".join(session_ids)}"'
+    )
+    logger.debug("loki interactive query: %s", query)
+    results = _query_loki(loki_url=loki_url, query=query, limit=len(session_ids) * 10)
+    found = set()
+    for stream in results:
+        sid = stream.get("stream", {}).get("session_id", "")
+        if sid:
+            found.add(sid)
+    logger.debug("loki interactive sessions: %d of %d", len(found), len(session_ids))
+    return found
+
+
 def _query_loki(*, loki_url: str, query: str, limit: int = 100) -> list[dict]:
     """Run a Loki query_range and return stream results (newest first)."""
     now = time.time()

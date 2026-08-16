@@ -1352,7 +1352,13 @@ class MainWindow:
             self._icon_cache[activity_key] = result
             return result
 
-        eye_color = self._git_status_color(row)
+        # Remote rows repurpose the eye as the remote marker — there is no
+        # local git status to show, and drawing the existing eye shape in
+        # color_remote avoids a bespoke solid-color slot.
+        if row.remote_host:
+            eye_color: str | None = self._settings.color_remote
+        else:
+            eye_color = self._git_status_color(row)
         pupil_color_hex = self._settings.color_flag_manual if row.flagged else None
 
         cache_key = (eye_color, pupil_color_hex, icon_size)
@@ -1443,14 +1449,11 @@ class MainWindow:
         row_frame.pack_propagate(False)
 
         # Pack LEFT: flag eye icon → emoji (visual indicators grouped together)
-        # Remote rows mark the flag slot with the remote color — the slot is
-        # otherwise dead space for them (no local git or terminal detection).
-        flag_bg = self._settings.color_remote if row.remote_host else bg
         flag_image = self._flag_icon(row)
         flag_label = tk.Label(
             row_frame,
             image=flag_image,
-            bg=flag_bg,
+            bg=bg,
             anchor=tk.CENTER,
         )
         flag_label.pack(side=tk.LEFT, padx=(_MARGIN_LEFT, 0))
@@ -1647,10 +1650,9 @@ class MainWindow:
             fg=self._branch_color(merged=row_data.merged, fg=fg), font=self._font_body
         )
         row["container_label"].configure(font=self._font_container, fg=self._container_fg(row_data))
-        flag_bg = self._settings.color_remote if row_data.remote_host else bg
         flag_image = self._flag_icon(row_data)
         row["flag_image"] = flag_image  # prevent GC
-        row["flag_label"].configure(image=flag_image, bg=flag_bg)
+        row["flag_label"].configure(image=flag_image, bg=bg)
 
         row["last_prompt"] = row_data.last_prompt
 
@@ -1666,6 +1668,7 @@ class MainWindow:
             "cwd_label",
             "branch_label",
             "container_label",
+            "flag_label",
         ):
             try:
                 row[key].configure(bg=bg)
