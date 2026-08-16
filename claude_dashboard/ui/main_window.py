@@ -1332,22 +1332,23 @@ class MainWindow:
         self._emoji_image_cache[cache_key] = img
         return img
 
-    def _flag_icon(self, row: SessionRow) -> tk.PhotoImage:
+    def _flag_icon(self, row: SessionRow, *, bg_hex: str) -> tk.PhotoImage:
         """Generate flag icon: terminal activity indicator, or git eye, or blank."""
         icon_size = self._icon_size
 
         if row.has_terminal_activity:
-            # Arrow carries git status the same way the eye does; keep the asset's
-            # own color when the tree is clean and there is no status to show.
-            arrow_color = self._git_status_color(row)
+            # Arrow carries git status the same way the eye does. A clean tree has
+            # no status color, and every status color doubles as a row background —
+            # so fall back to the row's auto-contrast text color, which is the one
+            # value guaranteed to stay visible against its own background.
+            arrow_color = self._git_status_color(row) or _contrast_text_for_bg(bg_hex)
             activity_key = ("terminal_activity", arrow_color, icon_size)
             cached = self._icon_cache.get(activity_key)
             if cached is not None:
                 return cached
             fg = Image.open(config.ICON_TERMINAL_ACTIVITY).convert("RGBA")
             fg = fg.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
-            if arrow_color is not None:
-                fg = _tint_image(fg, config.hex_to_rgb(hex_color=arrow_color))
+            fg = _tint_image(fg, config.hex_to_rgb(hex_color=arrow_color))
             result = _pil_to_photoimage(fg)
             self._icon_cache[activity_key] = result
             return result
@@ -1449,7 +1450,7 @@ class MainWindow:
         row_frame.pack_propagate(False)
 
         # Pack LEFT: flag eye icon → emoji (visual indicators grouped together)
-        flag_image = self._flag_icon(row)
+        flag_image = self._flag_icon(row, bg_hex=bg)
         flag_label = tk.Label(
             row_frame,
             image=flag_image,
@@ -1650,7 +1651,7 @@ class MainWindow:
             fg=self._branch_color(merged=row_data.merged, fg=fg), font=self._font_body
         )
         row["container_label"].configure(font=self._font_container, fg=self._container_fg(row_data))
-        flag_image = self._flag_icon(row_data)
+        flag_image = self._flag_icon(row_data, bg_hex=bg)
         row["flag_image"] = flag_image  # prevent GC
         row["flag_label"].configure(image=flag_image, bg=bg)
 

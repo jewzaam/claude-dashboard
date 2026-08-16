@@ -4,7 +4,7 @@
 from PIL import Image
 
 from claude_dashboard import config
-from claude_dashboard.ui.main_window import _tint_image
+from claude_dashboard.ui.main_window import _contrast_text_for_bg, _tint_image
 
 
 def _load_arrow() -> Image.Image:
@@ -47,3 +47,29 @@ class TestArrowAssetIsFlat:
 
     def test_single_opaque_color(self):
         assert len(_opaque_colors(_load_arrow())) == 1
+
+
+class TestCleanStatusArrowColor:
+    """Clean tree falls back to auto-contrast, never to a status color.
+
+    Every status color doubles as a row background, so tinting the arrow with
+    one would make it vanish on the matching row.
+    """
+
+    def test_contrast_differs_from_every_status_background(self):
+        backgrounds = (
+            config.DEFAULT_COLOR_WORKING,
+            config.DEFAULT_COLOR_READY,
+            config.DEFAULT_COLOR_IDLE,
+            config.DEFAULT_COLOR_AWAITING_INPUT,
+            config.DEFAULT_COLOR_PERMISSION_REQUIRED,
+            config.DEFAULT_COLOR_UNATTACHED,
+        )
+        for bg in backgrounds:
+            assert _contrast_text_for_bg(bg).lower() != bg.lower()
+
+    def test_dark_background_gets_light_arrow(self):
+        assert _contrast_text_for_bg(config.DEFAULT_COLOR_WORKING) == "#f5f0e8"
+
+    def test_light_background_gets_dark_arrow(self):
+        assert _contrast_text_for_bg("#ffffff") == "#1a1520"
