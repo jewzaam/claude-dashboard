@@ -149,6 +149,20 @@ pid, `remote_host` set). The `location` label (display-normalized path from
 the recording rules) is used as the row CWD. Rules that follow from having no
 local process or working tree:
 
+- **Headless filter is Loki-based.** OTEL telemetry has no headless marker
+  (no entrypoint attribute; `terminal_type` is inherited TERM; `start_type`
+  is fresh/continue) — verified live and against docs. The discriminator:
+  interactive sessions emit api_request events with
+  `query_source="repl_main_thread"`; `claude -p` / Agent SDK runs only ever
+  emit `query_source="sdk"`. Remote row creation requires main-thread proof
+  via `poll_interactive_sessions()` (one batched Loki query per tick for
+  unproven candidates; proofs cached in `_remote_interactive`). Fails
+  closed: Loki down → no new remote rows that tick, retried next tick;
+  existing rows unaffected.
+- **Remote READY renders as IDLE.** Dismissal is per-dashboard local state
+  with no telemetry to sync it, so a READY remote row would demand dismissal
+  on every dashboard watching the session. The session's own host still
+  shows READY. Do not "fix" remote rows to show READY.
 - **Lifecycle is metric-driven with sticky exceptions.** A remote row whose
   metrics expired is removed — unless its state is PERMISSION_REQUIRED /
   AWAITING_INPUT or it is flagged; those persist until the user dismisses
@@ -165,9 +179,13 @@ local process or working tree:
 - **No local behaviors.** Remote rows skip git checks, ghost conversion, CWD
   pruning, terminal-activity scan, and click-to-foreground (left-click still
   clears READY→IDLE). They are never ghosts.
-- **Rendering.** Remote rows sort in a block above everything else, by host
-  then path. The flag/eye slot background and the right-side truncated host
-  label use `color_remote` (settings, default `#0891b2`). Tooltips are
+- **Rendering.** Remote rows sort in a block above everything else, by
+  visible path (location) with host as tiebreak — hosts can be opaque
+  truncated sandbox identifiers, so host-first ordering looks random.
+  The eye icon is drawn in `color_remote` (settings, default
+  `#0891b2`) — the same eye shape as git status, repurposed since remote rows
+  have no local git; the right-side truncated host label uses the same
+  color. Tooltips are
   prefixed with `[host]`. "Show remote sessions" checkbox at the top of the
   title-bar right-click menu toggles visibility (`show_remote` setting);
   entries are still tracked while hidden so sticky states are not lost.

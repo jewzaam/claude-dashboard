@@ -18,7 +18,7 @@ from tkinter import filedialog
 
 from claude_dashboard import config
 from claude_dashboard.file_utils import atomic_write_json
-from claude_dashboard.loki import poll_last_prompts
+from claude_dashboard.loki import poll_interactive_sessions, poll_last_prompts
 from claude_dashboard.otel_state import SessionState, poll_session_states
 from claude_dashboard.platform.base import (
     ContainerInfo,
@@ -231,6 +231,11 @@ class AppController:
         # Incremental counter for synthetic PIDs (unattached placeholders)
         self._next_synthetic_pid: int = -1
         self._ghosts_hidden: bool = False
+
+        # Session ids proven interactive (repl_main_thread seen in Loki).
+        # ponytail: grows unbounded, but entries are short strings and
+        # session churn is tens per day — cap it if that ever changes.
+        self._remote_interactive: set[str] = set()
 
         # Load saved session state for restart continuity
         self._saved_state = self._load_session_state()
@@ -855,38 +860,26 @@ class AppController:
         states = poll_session_states(prometheus_url=url)
         changed = False
         otel_matched_pids: set[int] = set()
+        remote_candidates: dict[str, SessionState] = {}
         for session_id, session_state in states.items():
             pid = self._session_id_to_pid.get(session_id)
             if pid is None:
                 pid = self._match_sandbox_by_hostname(session_state.host_name)
             if pid is None:
-                pid = self._add_remote_session(session_id=session_id, state=session_state)
+                if self._is_remote_candidate(session_state):
+                    remote_candidates[session_id] = session_state
+                continue
+            otel_matched_pids.add(pid)
+            if self._apply_otel_state(pid=pid, session_state=session_state):
+                changed = True
+
+        for session_id, session_state in self._filter_interactive(remote_candidates).items():
+            pid = self._add_remote_session(session_id=session_id, state=session_state)
             if pid is None:
                 continue
             otel_matched_pids.add(pid)
-            entry = self._sessions.get(pid)
-            if entry is None:
-                continue
-            new_state = session_state.state
-            prior = entry.state
-            if new_state == prior:
-                continue
-            # Skip if OTEL reports the same state user manually cleared.
-            # Accepts any different state (genuinely new activity).
-            if entry.state_cleared_from and new_state.value == entry.state_cleared_from:
-                continue
-            entry.state = new_state
-            entry.state_cleared_from = ""
-            entry.last_active = _now_epoch()
-            changed = True
-            cwd_short = cwd_basename(cwd=entry.session.cwd)
-            logger.debug(
-                "pid=%d project=%s new_state=%s prior_state=%s source=otel",
-                pid,
-                cwd_short,
-                new_state.value,
-                prior.value,
-            )
+            if self._apply_otel_state(pid=pid, session_state=session_state):
+                changed = True
         # Stale WORKING → READY: sessions not in current OTEL results that
         # are WORKING transition to READY ("just finished, needs attention").
         # PERMISSION_REQUIRED and AWAITING_INPUT are left alone — stale metric
@@ -926,6 +919,61 @@ class AppController:
 
         if changed:
             self._refresh_ui()
+
+    def _apply_otel_state(self, *, pid: int, session_state: "SessionState") -> bool:
+        """Apply an OTEL-reported state to an entry. Returns True on change."""
+        entry = self._sessions.get(pid)
+        if entry is None:
+            return False
+        new_state = session_state.state
+        # Remote READY renders as IDLE: dismissal is per-dashboard local
+        # state, so a READY row would demand dismissal on every dashboard
+        # watching this session. The session's own host shows READY.
+        if entry.remote_host and new_state == StatusState.READY:
+            new_state = StatusState.IDLE
+        prior = entry.state
+        if new_state == prior:
+            return False
+        # Skip if OTEL reports the same state user manually cleared.
+        # Accepts any different state (genuinely new activity).
+        if entry.state_cleared_from and new_state.value == entry.state_cleared_from:
+            return False
+        entry.state = new_state
+        entry.state_cleared_from = ""
+        entry.last_active = _now_epoch()
+        logger.debug(
+            "pid=%d project=%s new_state=%s prior_state=%s source=otel",
+            pid,
+            cwd_basename(cwd=entry.session.cwd),
+            new_state.value,
+            prior.value,
+        )
+        return True
+
+    def _is_remote_candidate(self, state: "SessionState") -> bool:
+        """True when an unmatched OTEL session could become a remote row."""
+        if not state.host_name or state.host_name == config.LOCAL_HOSTNAME:
+            return False
+        cwd = state.location or state.project
+        return bool(cwd) and not self._is_ignored(cwd)
+
+    def _filter_interactive(
+        self, candidates: dict[str, "SessionState"]
+    ) -> dict[str, "SessionState"]:
+        """Drop headless sessions (claude -p / Agent SDK) from remote candidates.
+
+        Interactivity is proven by repl_main_thread activity in Loki; proven
+        sessions are cached so each is queried at most until first proof.
+        Unproven candidates are retried every tick — headless sessions simply
+        never prove out and expire from the metrics on their own.
+        """
+        unknown = [sid for sid in candidates if sid not in self._remote_interactive]
+        if unknown:
+            loki_url = config.resolve_loki_url(settings_url=self._settings.loki_url)
+            self._remote_interactive |= poll_interactive_sessions(
+                loki_url=loki_url, session_ids=unknown
+            )
+        return {s: st for s, st in candidates.items() if s in self._remote_interactive}
 
     def _add_remote_session(self, *, session_id: str, state: "SessionState") -> int | None:
         """Register a session seen only in OTEL metrics (running on another host).
@@ -1028,14 +1076,20 @@ class AppController:
     # ------------------------------------------------------------------
 
     def _sorted_entries(self) -> list["_SessionEntry"]:
-        """Return all session entries sorted: remote block first (by host,
-        then name), then personal sandboxes, then everything else by name."""
+        """Return all session entries sorted: remote block first, then
+        personal sandboxes, then everything else by name.
+
+        The remote block sorts by location before host: hosts can be opaque
+        (sandbox identifiers) and are truncated in the row, so ordering by
+        the visible path keeps the list looking consistent. Host breaks ties
+        between identical paths on different machines.
+        """
         return sorted(
             self._sessions.values(),
             key=lambda e: (
                 0 if e.remote_host else (1 if e.sandbox_profile == "personal" else 2),
-                e.remote_host,
                 cwd_relative_to_home(cwd=e.session.cwd).lower(),
+                e.remote_host.lower(),
             ),
         )
 

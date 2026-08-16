@@ -31,6 +31,7 @@ def _make_controller() -> AppController:
     c._next_synthetic_pid = -1
     c._settings = Settings()
     c._saved_state = {}
+    c._remote_interactive = set()
     c._refresh_ui = lambda: None  # type: ignore[method-assign]
     return c
 
@@ -43,8 +44,26 @@ def _remote_state(
     )
 
 
-def _poll(controller: AppController, states: dict[str, SessionState]) -> None:
-    with patch("claude_dashboard.controller.poll_session_states", return_value=states):
+def _poll(
+    controller: AppController,
+    states: dict[str, SessionState],
+    *,
+    interactive_ids: set[str] | None = None,
+) -> None:
+    """Run one OTEL poll. By default every session proves interactive."""
+
+    def fake_interactive(*, loki_url: str, session_ids: list[str]) -> set[str]:
+        if interactive_ids is None:
+            return set(session_ids)
+        return interactive_ids & set(session_ids)
+
+    with (
+        patch("claude_dashboard.controller.poll_session_states", return_value=states),
+        patch(
+            "claude_dashboard.controller.poll_interactive_sessions",
+            side_effect=fake_interactive,
+        ),
+    ):
         controller._update_states_from_otel()
 
 
@@ -77,6 +96,47 @@ class TestRemoteDiscovery:
         _poll(c, {"abc": _remote_state()})
         assert not c._sessions
 
+    def test_headless_session_is_skipped(self):
+        # claude -p / SDK runs never emit repl_main_thread — no row
+        c = _make_controller()
+        _poll(c, {"abc": _remote_state()}, interactive_ids=set())
+        assert not c._sessions
+
+    def test_headless_then_proven_interactive(self):
+        c = _make_controller()
+        _poll(c, {"abc": _remote_state()}, interactive_ids=set())
+        assert not c._sessions
+        _poll(c, {"abc": _remote_state()}, interactive_ids={"abc"})
+        assert _entry_for(c, "abc").remote_host == "remote-host-1"
+
+    def test_interactive_proof_is_cached(self):
+        c = _make_controller()
+        _poll(c, {"abc": _remote_state()})
+        assert "abc" in c._remote_interactive
+        calls: list[list[str]] = []
+
+        def spy(*, loki_url: str, session_ids: list[str]) -> set[str]:
+            calls.append(session_ids)
+            return set(session_ids)
+
+        # Remove the entry so "abc" becomes a candidate again — the cache
+        # must answer without another Loki query.
+        pid = c._session_id_to_pid.pop("abc")
+        c._sessions.pop(pid)
+        with (
+            patch(
+                "claude_dashboard.controller.poll_session_states",
+                return_value={"abc": _remote_state()},
+            ),
+            patch(
+                "claude_dashboard.controller.poll_interactive_sessions",
+                side_effect=spy,
+            ),
+        ):
+            c._update_states_from_otel()
+        assert not calls
+        assert "abc" in c._session_id_to_pid
+
     def test_existing_entry_updates_not_duplicates(self):
         c = _make_controller()
         _poll(c, {"abc": _remote_state(state=StatusState.WORKING)})
@@ -86,6 +146,11 @@ class TestRemoteDiscovery:
 
 
 class TestRemoteLifecycle:
+    def test_ready_renders_as_idle(self):
+        c = _make_controller()
+        _poll(c, {"abc": _remote_state(state=StatusState.READY)})
+        assert _entry_for(c, "abc").state == StatusState.IDLE
+
     def test_ready_removed_when_metric_absent(self):
         c = _make_controller()
         _poll(c, {"abc": _remote_state(state=StatusState.READY)})
@@ -176,13 +241,25 @@ class TestRemotePersistence:
 
 
 class TestRemoteSorting:
-    def test_remote_block_first_sorted_by_host(self):
+    def test_remote_block_first_sorted_by_location(self):
         c = _make_controller()
         local = _SessionEntry(SessionInfo(pid=1, session_id="l", cwd="/tmp/aaa", started_at=0))
+        # r1 sorts after r2 by path even though its host sorts first —
+        # hosts can be opaque truncated identifiers, so visible path wins.
         r1 = _SessionEntry(SessionInfo(pid=-1, session_id="r1", cwd="~/zzz", started_at=0))
-        r1.remote_host = "zebra"
+        r1.remote_host = "ant"
         r2 = _SessionEntry(SessionInfo(pid=-2, session_id="r2", cwd="~/aaa", started_at=0))
-        r2.remote_host = "ant"
+        r2.remote_host = "zebra"
         c._sessions = {1: local, -1: r1, -2: r2}
         ordered = c._sorted_entries()
         assert [e.session.session_id for e in ordered] == ["r2", "r1", "l"]
+
+    def test_same_location_ties_break_by_host(self):
+        c = _make_controller()
+        r1 = _SessionEntry(SessionInfo(pid=-1, session_id="r1", cwd="~/x", started_at=0))
+        r1.remote_host = "zebra"
+        r2 = _SessionEntry(SessionInfo(pid=-2, session_id="r2", cwd="~/x", started_at=0))
+        r2.remote_host = "ant"
+        c._sessions = {-1: r1, -2: r2}
+        ordered = c._sorted_entries()
+        assert [e.session.session_id for e in ordered] == ["r2", "r1"]
