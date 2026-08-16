@@ -124,6 +124,38 @@ Ghost sessions are evicted when total session count exceeds `max_sessions` (defa
 
 `SandboxPhase` enum in `config.py` has values READY, ERROR, CREATING, STOPPING, UNKNOWN. All phases flow through discovery — no filtering by openshell phase. Error sandboxes get phase-specific emoji (⚠️ unattached, 🔥 active) via `_sandbox_emoji()` static method in `main_window.py`. Ready+idle sandboxes use default ghost rendering (🏖️). Error sandboxes are excluded from ghost visibility toggle via `_is_error_sandbox()` helper. Ready sandboxes without VS Code toggle with ghosts — they are functionally ghosts.
 
+### Sandbox identity comes from labels, never from `host_name`
+
+`host_name` is the machine for both host and sandbox sessions (claude.env
+injects the creating host's name into sandboxes, since in-container
+`hostname` is `sandbox-sb-<hash>`). Two labels carry sandbox identity into
+the state metrics: `sandbox_openshell_name` (`sb-<hash>`, the only thing
+that joins to `openshell sandbox list` and hence to dashboard rows, which
+are keyed `sandbox-<openshell name>`) and `sandbox_source` (friendly name,
+equal to the sandbox directory name).
+
+- `_match_sandbox()` tries openshell name, then `sandbox_source` by CWD
+  basename, then the legacy `sandbox-<hash>` host_name — the last is only
+  for sandboxes not yet refreshed and can be dropped once those series age
+  out.
+- Tooltips query Loki by `sandbox_source` (`poll_last_prompts(...,
+  sandbox_sources=)`). A sandbox's own Claude session_id is not visible
+  from the host, and `host_name` no longer identifies the sandbox.
+- **Never test `host_name` patterns or `project` paths to tell sandbox from
+  local** — a host session running inside `~/sandboxes/<name>/` defeats the
+  path test, and the hostname test already broke once, silently.
+- `otel_state._wins()` prefers the series with richer sandbox identity
+  **before** state priority. Adding a label to a recording rule (or an env
+  refresh changing what a session emits) starts a new series while the old
+  label-less one lingers, so one session reports under two label shapes at
+  once. The stale shape can be stuck in a state nothing will supersede —
+  the rules compare timestamps within a label set, and no further events
+  carry the old shape — which is how a false `permission_required` outlived
+  a live `working` for a full 30m window. Identity richness is the closest
+  proxy for recency the metrics offer: `ready`/`permission` values are
+  event timestamps, but `working` is a count, so values are not comparable
+  across metrics. Equal identity falls back to priority.
+
 ### Sandbox rendering model
 
 Sandboxes never render as ghosts — always state color background + state emoji. Grey text (`_COLOR_CONTAINER_FG`) when VS Code disconnected, normal contrast when connected. Connection state comes from the `window-calls` D-Bus window scan only — never from OTEL or PID. That extension is a hard dependency: `__main__.main()` calls `window_calls_available()` on Linux and exits with an install message if D-Bus does not answer. Without the check a missing extension silently dims every sandbox row and drops sandbox tooltips (`_update_last_prompts()` skips `unattached` entries), which reads as a rendering bug. `sandbox_connected` field on SessionRow carries VS Code status. `unattached` passed as False for sandboxes in SessionRow (internally still tracked for VS Code detection). Gone from openshell → removed from dashboard entirely (no ghost state). Sandbox Ready→Idle automatically when VS Code disconnects.
@@ -149,16 +181,21 @@ pid, `remote_host` set). The `location` label (display-normalized path from
 the recording rules) is used as the row CWD. Rules that follow from having no
 local process or working tree:
 
-- **Headless filter is Loki-based.** OTEL telemetry has no headless marker
-  (no entrypoint attribute; `terminal_type` is inherited TERM; `start_type`
-  is fresh/continue) — verified live and against docs. The discriminator:
-  interactive sessions emit api_request events with
-  `query_source="repl_main_thread"`; `claude -p` / Agent SDK runs only ever
-  emit `query_source="sdk"`. Remote row creation requires main-thread proof
-  via `poll_interactive_sessions()` (one batched Loki query per tick for
-  unproven candidates; proofs cached in `_remote_interactive`). Fails
-  closed: Loki down → no new remote rows that tick, retried next tick;
-  existing rows unaffected.
+- **Headless filter reads a label already on the state metrics.** Claude
+  Code emits no native headless marker (no entrypoint attribute;
+  `terminal_type` is inherited TERM; `start_type` is fresh/continue), and
+  the `query_source="repl_main_thread"` discriminator from 2.1.226 broke in
+  2.1.233 (interactive main-thread requests emit `"sdk"` too — verified
+  live, event sets identical). The marker is self-made: `claude-wrapper.sh`
+  appends `headless=true` to `OTEL_RESOURCE_ATTRIBUTES` for `-p`/`--print`
+  runs, and the claude-otel-stack recording rules carry `headless` through
+  their `by()` groupings, so the label rides on `claude_session_*` metrics
+  the dashboard already polls — no extra queries, no cache.
+  `_add_remote_session()` skips `state.headless`. Absent label =
+  interactive, so direct runs and old wrappers fail open by construction.
+  Do not build discriminators on `query_source` — it is version-unstable.
+  Do not resolve headless via separate Loki lookups — the label is in the
+  metric.
 - **Remote READY renders as IDLE.** Dismissal is per-dashboard local state
   with no telemetry to sync it, so a READY remote row would demand dismissal
   on every dashboard watching the session. The session's own host still
@@ -179,9 +216,9 @@ local process or working tree:
 - **No local behaviors.** Remote rows skip git checks, ghost conversion, CWD
   pruning, terminal-activity scan, and click-to-foreground (left-click still
   clears READY→IDLE). They are never ghosts.
-- **Rendering.** Remote rows sort in a block above everything else, by
-  visible path (location) with host as tiebreak — hosts can be opaque
-  truncated sandbox identifiers, so host-first ordering looks random.
+- **Rendering.** Remote rows sort in a block above everything else, grouped
+  by host then display text. (Host-first only became meaningful once
+  `host_name` stopped being the sandbox's own `sandbox-<hash>` hostname.)
   The eye icon is drawn in `color_remote` (settings, default
   `#0891b2`) — the same eye shape as git status, repurposed since remote rows
   have no local git; the right-side truncated host label uses the same

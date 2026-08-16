@@ -18,7 +18,7 @@ from tkinter import filedialog
 
 from claude_dashboard import config
 from claude_dashboard.file_utils import atomic_write_json
-from claude_dashboard.loki import poll_interactive_sessions, poll_last_prompts
+from claude_dashboard.loki import poll_last_prompts
 from claude_dashboard.otel_state import SessionState, poll_session_states
 from claude_dashboard.platform.base import (
     ContainerInfo,
@@ -231,11 +231,6 @@ class AppController:
         # Incremental counter for synthetic PIDs (unattached placeholders)
         self._next_synthetic_pid: int = -1
         self._ghosts_hidden: bool = False
-
-        # Session ids proven interactive (repl_main_thread seen in Loki).
-        # ponytail: grows unbounded, but entries are short strings and
-        # session churn is tens per day — cap it if that ever changes.
-        self._remote_interactive: set[str] = set()
 
         # Load saved session state for restart continuity
         self._saved_state = self._load_session_state()
@@ -860,21 +855,12 @@ class AppController:
         states = poll_session_states(prometheus_url=url)
         changed = False
         otel_matched_pids: set[int] = set()
-        remote_candidates: dict[str, SessionState] = {}
         for session_id, session_state in states.items():
             pid = self._session_id_to_pid.get(session_id)
             if pid is None:
-                pid = self._match_sandbox_by_hostname(session_state.host_name)
+                pid = self._match_sandbox(session_state)
             if pid is None:
-                if self._is_remote_candidate(session_state):
-                    remote_candidates[session_id] = session_state
-                continue
-            otel_matched_pids.add(pid)
-            if self._apply_otel_state(pid=pid, session_state=session_state):
-                changed = True
-
-        for session_id, session_state in self._filter_interactive(remote_candidates).items():
-            pid = self._add_remote_session(session_id=session_id, state=session_state)
+                pid = self._add_remote_session(session_id=session_id, state=session_state)
             if pid is None:
                 continue
             otel_matched_pids.add(pid)
@@ -950,31 +936,6 @@ class AppController:
         )
         return True
 
-    def _is_remote_candidate(self, state: "SessionState") -> bool:
-        """True when an unmatched OTEL session could become a remote row."""
-        if not state.host_name or state.host_name == config.LOCAL_HOSTNAME:
-            return False
-        cwd = state.location or state.project
-        return bool(cwd) and not self._is_ignored(cwd)
-
-    def _filter_interactive(
-        self, candidates: dict[str, "SessionState"]
-    ) -> dict[str, "SessionState"]:
-        """Drop headless sessions (claude -p / Agent SDK) from remote candidates.
-
-        Interactivity is proven by repl_main_thread activity in Loki; proven
-        sessions are cached so each is queried at most until first proof.
-        Unproven candidates are retried every tick — headless sessions simply
-        never prove out and expire from the metrics on their own.
-        """
-        unknown = [sid for sid in candidates if sid not in self._remote_interactive]
-        if unknown:
-            loki_url = config.resolve_loki_url(settings_url=self._settings.loki_url)
-            self._remote_interactive |= poll_interactive_sessions(
-                loki_url=loki_url, session_ids=unknown
-            )
-        return {s: st for s, st in candidates.items() if s in self._remote_interactive}
-
     def _add_remote_session(self, *, session_id: str, state: "SessionState") -> int | None:
         """Register a session seen only in OTEL metrics (running on another host).
 
@@ -984,6 +945,12 @@ class AppController:
         """
         host = state.host_name
         if not host or host == config.LOCAL_HOSTNAME:
+            return None
+        # Headless marker set by claude-wrapper.sh for -p/--print runs and
+        # carried through the recording rules — Claude Code itself emits no
+        # headless attribute (query_source discriminators broke in 2.1.233).
+        # Absent label = interactive, so direct runs and old wrappers pass.
+        if state.headless:
             return None
         # ponytail: a local sandbox whose telemetry lands before openshell
         # lists it would briefly register as remote; local sandbox discovery
@@ -1012,23 +979,25 @@ class AppController:
     def _update_last_prompts(self):
         """Poll Loki for last user prompt per session and cache in entries."""
         local_ids: list[str] = []
-        sandbox_hosts: list[str] = []
-        # Map sandbox host_name back to dashboard session_id for pid lookup
-        host_to_session_id: dict[str, str] = {}
+        sandbox_sources: list[str] = []
+        # Map sandbox_source back to a PID (the source is the sandbox dir name)
+        source_to_pid: dict[str, int] = {}
 
         for entry in self._sessions.values():
             if entry.unattached or not entry.session.session_id:
                 continue
             if entry.sandbox:
-                # Sandbox OTEL events use host_name (e.g. "sandbox-foo-main"),
-                # not the dashboard's synthetic session_id.
-                host = entry.session.session_id  # same format as host_name
-                sandbox_hosts.append(host)
-                host_to_session_id[host] = entry.session.session_id
+                # A sandbox's own Claude session_id lives inside the container
+                # and is unknown here. Its events carry sandbox_source — the
+                # friendly name, equal to the sandbox directory name. host_name
+                # is the machine now, so it cannot identify the sandbox.
+                source = cwd_basename(cwd=entry.session.cwd)
+                sandbox_sources.append(source)
+                source_to_pid[source] = entry.session.pid
             else:
                 local_ids.append(entry.session.session_id)
 
-        if not local_ids and not sandbox_hosts:
+        if not local_ids and not sandbox_sources:
             logger.debug("last_prompts: no active sessions to query")
             return
 
@@ -1037,19 +1006,18 @@ class AppController:
             "last_prompts: querying loki_url=%s local=%s sandbox=%s",
             loki_url,
             local_ids,
-            sandbox_hosts,
+            sandbox_sources,
         )
         prompts = poll_last_prompts(
             loki_url=loki_url,
             session_ids=local_ids or None,
-            host_names=sandbox_hosts or None,
+            sandbox_sources=sandbox_sources or None,
         )
         logger.debug("last_prompts: got %d prompts: %s", len(prompts), list(prompts.keys()))
 
         for key, text in prompts.items():
-            # Key is session_id for local, host_name for sandbox
-            session_id = host_to_session_id.get(key, key)
-            pid = self._session_id_to_pid.get(session_id)
+            # Key is session_id for local, sandbox_source for sandbox
+            pid = source_to_pid.get(key) or self._session_id_to_pid.get(key)
             if pid is None:
                 logger.debug("last_prompts: no pid for key=%s", key)
                 continue
@@ -1064,32 +1032,46 @@ class AppController:
                     text[:60] if text else "(empty)",
                 )
 
-    def _match_sandbox_by_hostname(self, host_name: str) -> int | None:
-        """Match a Prometheus host_name label to a sandbox session PID."""
-        if not host_name.startswith("sandbox-"):
-            return None
-        sandbox_id = f"sandbox-{host_name[len('sandbox-'):]}"
-        return self._session_id_to_pid.get(sandbox_id)
+    def _match_sandbox(self, state: "SessionState") -> int | None:
+        """Match OTEL state labels to a local sandbox session PID.
+
+        Sandbox rows are keyed `sandbox-<openshell name>`, so
+        `sandbox_openshell_name` matches directly. `sandbox_source` is the
+        friendly name and equals the sandbox directory name, so it matches
+        by CWD basename. `host_name` is the machine as of the claude.env
+        change — the old `sandbox-<hash>` hostname is only still emitted by
+        sandboxes not yet refreshed, and that fallback can go once those
+        series age out.
+        """
+        if state.sandbox_openshell_name:
+            pid = self._session_id_to_pid.get(f"sandbox-{state.sandbox_openshell_name}")
+            if pid is not None:
+                return pid
+        if state.sandbox_source:
+            for pid, entry in self._sessions.items():
+                if entry.sandbox and cwd_basename(cwd=entry.session.cwd) == state.sandbox_source:
+                    return pid
+        if state.host_name.startswith("sandbox-"):
+            return self._session_id_to_pid.get(state.host_name)
+        return None
 
     # ------------------------------------------------------------------
     # UI refresh
     # ------------------------------------------------------------------
 
     def _sorted_entries(self) -> list["_SessionEntry"]:
-        """Return all session entries sorted: remote block first, then
-        personal sandboxes, then everything else by name.
+        """Return all session entries sorted: remote block first (grouped by
+        host, then display text), then personal sandboxes, then the rest.
 
-        The remote block sorts by location before host: hosts can be opaque
-        (sandbox identifiers) and are truncated in the row, so ordering by
-        the visible path keeps the list looking consistent. Host breaks ties
-        between identical paths on different machines.
+        Host-first is meaningful again now that `host_name` is the machine —
+        it was opaque `sandbox-<hash>` identifiers when this sorted by path.
         """
         return sorted(
             self._sessions.values(),
             key=lambda e: (
                 0 if e.remote_host else (1 if e.sandbox_profile == "personal" else 2),
-                cwd_relative_to_home(cwd=e.session.cwd).lower(),
                 e.remote_host.lower(),
+                cwd_relative_to_home(cwd=e.session.cwd).lower(),
             ),
         )
 
