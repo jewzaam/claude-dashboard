@@ -18,16 +18,21 @@ def _loki_response(*, streams: list[dict]) -> bytes:
     ).encode()
 
 
-def _stream(*, session_id: str, prompt: str, host_name: str = "myhost") -> dict:
+def _stream(
+    *, session_id: str, prompt: str, host_name: str = "myhost", sandbox_source: str = ""
+) -> dict:
     """Build a single Loki stream entry with prompt in structured metadata labels."""
+    stream = {
+        "service_name": "claude-code",
+        "event_name": "user_prompt",
+        "session_id": session_id,
+        "host_name": host_name,
+        "prompt": prompt,
+    }
+    if sandbox_source:
+        stream["sandbox_source"] = sandbox_source
     return {
-        "stream": {
-            "service_name": "claude-code",
-            "event_name": "user_prompt",
-            "session_id": session_id,
-            "host_name": host_name,
-            "prompt": prompt,
-        },
+        "stream": stream,
         "values": [["1718000000000000000", "claude_code.user_prompt"]],
     }
 
@@ -295,12 +300,12 @@ class TestPollLastPrompts:
         assert "start=" in url
         assert "end=" in url
 
-    def test_host_names_query_returns_by_host(self):
+    def test_sandbox_sources_query_returns_by_source(self):
         streams = [
             _stream(
                 session_id="real-uuid-1",
                 prompt="sandbox prompt",
-                host_name="sandbox-my-project-main",
+                sandbox_source="my-project-main",
             ),
         ]
         with patch(
@@ -309,12 +314,30 @@ class TestPollLastPrompts:
         ):
             result = poll_last_prompts(
                 loki_url="http://localhost:3100",
-                host_names=["sandbox-my-project-main"],
+                sandbox_sources=["my-project-main"],
             )
-        assert result == {"sandbox-my-project-main": "sandbox prompt"}
+        assert result == {"my-project-main": "sandbox prompt"}
 
-    def test_combined_session_and_host_queries(self):
-        """Both session_ids and host_names produce two queries."""
+    def test_sandbox_query_filters_on_sandbox_source(self):
+        """host_name is the machine now — the sandbox query must not use it."""
+        captured: list[str] = []
+
+        def fake_urlopen(req, timeout=None):
+            captured.append(req.full_url)
+            mock = MagicMock()
+            mock.read.return_value = _loki_response(streams=[])
+            mock.__enter__ = lambda s: s
+            mock.__exit__ = MagicMock(return_value=False)
+            return mock
+
+        with patch("claude_dashboard.loki.urllib.request.urlopen", side_effect=fake_urlopen):
+            poll_last_prompts(loki_url="http://localhost:3100", sandbox_sources=["foo-main"])
+
+        assert "sandbox_source" in captured[0]
+        assert "host_name" not in captured[0]
+
+    def test_combined_session_and_sandbox_queries(self):
+        """Both session_ids and sandbox_sources produce two queries."""
         call_count = [0]
 
         def fake_urlopen(req, timeout=None):
@@ -327,7 +350,7 @@ class TestPollLastPrompts:
                     _stream(
                         session_id="uuid",
                         prompt="sandbox prompt",
-                        host_name="sandbox-foo",
+                        sandbox_source="foo",
                     )
                 ]
             mock.read.return_value = _loki_response(streams=streams)
@@ -339,9 +362,9 @@ class TestPollLastPrompts:
             result = poll_last_prompts(
                 loki_url="http://localhost:3100",
                 session_ids=["s1"],
-                host_names=["sandbox-foo"],
+                sandbox_sources=["foo"],
             )
 
         assert call_count[0] == 2
         assert result["s1"] == "local prompt"
-        assert result["sandbox-foo"] == "sandbox prompt"
+        assert result["foo"] == "sandbox prompt"

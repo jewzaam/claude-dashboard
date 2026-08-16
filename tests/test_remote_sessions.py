@@ -31,39 +31,27 @@ def _make_controller() -> AppController:
     c._next_synthetic_pid = -1
     c._settings = Settings()
     c._saved_state = {}
-    c._remote_interactive = set()
     c._refresh_ui = lambda: None  # type: ignore[method-assign]
     return c
 
 
 def _remote_state(
-    *, state: StatusState = StatusState.WORKING, host: str = "remote-host-1"
+    *,
+    state: StatusState = StatusState.WORKING,
+    host: str = "remote-host-1",
+    headless: bool = False,
 ) -> SessionState:
     return SessionState(
-        state=state, host_name=host, project="/home/user/src/foo", location="~/src/foo"
+        state=state,
+        host_name=host,
+        project="/home/user/src/foo",
+        location="~/src/foo",
+        headless=headless,
     )
 
 
-def _poll(
-    controller: AppController,
-    states: dict[str, SessionState],
-    *,
-    interactive_ids: set[str] | None = None,
-) -> None:
-    """Run one OTEL poll. By default every session proves interactive."""
-
-    def fake_interactive(*, loki_url: str, session_ids: list[str]) -> set[str]:
-        if interactive_ids is None:
-            return set(session_ids)
-        return interactive_ids & set(session_ids)
-
-    with (
-        patch("claude_dashboard.controller.poll_session_states", return_value=states),
-        patch(
-            "claude_dashboard.controller.poll_interactive_sessions",
-            side_effect=fake_interactive,
-        ),
-    ):
+def _poll(controller: AppController, states: dict[str, SessionState]) -> None:
+    with patch("claude_dashboard.controller.poll_session_states", return_value=states):
         controller._update_states_from_otel()
 
 
@@ -96,46 +84,19 @@ class TestRemoteDiscovery:
         _poll(c, {"abc": _remote_state()})
         assert not c._sessions
 
-    def test_headless_session_is_skipped(self):
-        # claude -p / SDK runs never emit repl_main_thread — no row
+    def test_headless_marked_session_is_skipped(self):
+        # claude-wrapper.sh sets headless=true for -p runs; recording rules
+        # carry the label into the state metrics — no row.
         c = _make_controller()
-        _poll(c, {"abc": _remote_state()}, interactive_ids=set())
+        _poll(c, {"abc": _remote_state(headless=True)})
         assert not c._sessions
 
-    def test_headless_then_proven_interactive(self):
-        c = _make_controller()
-        _poll(c, {"abc": _remote_state()}, interactive_ids=set())
-        assert not c._sessions
-        _poll(c, {"abc": _remote_state()}, interactive_ids={"abc"})
-        assert _entry_for(c, "abc").remote_host == "remote-host-1"
-
-    def test_interactive_proof_is_cached(self):
+    def test_unmarked_session_passes(self):
+        # No headless label (direct run, old wrapper) — interactive by
+        # construction, row created.
         c = _make_controller()
         _poll(c, {"abc": _remote_state()})
-        assert "abc" in c._remote_interactive
-        calls: list[list[str]] = []
-
-        def spy(*, loki_url: str, session_ids: list[str]) -> set[str]:
-            calls.append(session_ids)
-            return set(session_ids)
-
-        # Remove the entry so "abc" becomes a candidate again — the cache
-        # must answer without another Loki query.
-        pid = c._session_id_to_pid.pop("abc")
-        c._sessions.pop(pid)
-        with (
-            patch(
-                "claude_dashboard.controller.poll_session_states",
-                return_value={"abc": _remote_state()},
-            ),
-            patch(
-                "claude_dashboard.controller.poll_interactive_sessions",
-                side_effect=spy,
-            ),
-        ):
-            c._update_states_from_otel()
-        assert not calls
-        assert "abc" in c._session_id_to_pid
+        assert _entry_for(c, "abc").remote_host == "remote-host-1"
 
     def test_existing_entry_updates_not_duplicates(self):
         c = _make_controller()
@@ -241,25 +202,77 @@ class TestRemotePersistence:
 
 
 class TestRemoteSorting:
-    def test_remote_block_first_sorted_by_location(self):
+    def test_remote_block_first_grouped_by_host(self):
         c = _make_controller()
         local = _SessionEntry(SessionInfo(pid=1, session_id="l", cwd="/tmp/aaa", started_at=0))
-        # r1 sorts after r2 by path even though its host sorts first —
-        # hosts can be opaque truncated identifiers, so visible path wins.
+        # Host wins over path: rows group per machine.
         r1 = _SessionEntry(SessionInfo(pid=-1, session_id="r1", cwd="~/zzz", started_at=0))
         r1.remote_host = "ant"
         r2 = _SessionEntry(SessionInfo(pid=-2, session_id="r2", cwd="~/aaa", started_at=0))
         r2.remote_host = "zebra"
         c._sessions = {1: local, -1: r1, -2: r2}
         ordered = c._sorted_entries()
-        assert [e.session.session_id for e in ordered] == ["r2", "r1", "l"]
+        assert [e.session.session_id for e in ordered] == ["r1", "r2", "l"]
 
-    def test_same_location_ties_break_by_host(self):
+    def test_same_host_sorted_by_display_text(self):
         c = _make_controller()
-        r1 = _SessionEntry(SessionInfo(pid=-1, session_id="r1", cwd="~/x", started_at=0))
-        r1.remote_host = "zebra"
-        r2 = _SessionEntry(SessionInfo(pid=-2, session_id="r2", cwd="~/x", started_at=0))
-        r2.remote_host = "ant"
+        r1 = _SessionEntry(SessionInfo(pid=-1, session_id="r1", cwd="~/zzz", started_at=0))
+        r1.remote_host = "same-host"
+        r2 = _SessionEntry(SessionInfo(pid=-2, session_id="r2", cwd="~/aaa", started_at=0))
+        r2.remote_host = "same-host"
         c._sessions = {-1: r1, -2: r2}
         ordered = c._sorted_entries()
         assert [e.session.session_id for e in ordered] == ["r2", "r1"]
+
+
+class TestSandboxMatching:
+    @staticmethod
+    def _sandbox_entry(*, cwd: str, pid: int = -9) -> _SessionEntry:
+        entry = _SessionEntry(
+            SessionInfo(pid=pid, session_id="sandbox-sb-abc123", cwd=cwd, started_at=0)
+        )
+        entry.sandbox = True
+        return entry
+
+    def _controller_with_sandbox(self) -> AppController:
+        c = _make_controller()
+        entry = self._sandbox_entry(cwd="/home/u/sandboxes/proj-main")
+        c._sessions = {entry.session.pid: entry}
+        c._session_id_to_pid = {entry.session.session_id: entry.session.pid}
+        return c
+
+    def test_match_by_openshell_name(self):
+        c = self._controller_with_sandbox()
+        state = SessionState(
+            state=StatusState.WORKING,
+            host_name="a-machine",
+            project="/sandbox/source",
+            sandbox_openshell_name="sb-abc123",
+        )
+        assert c._match_sandbox(state) == -9
+
+    def test_match_by_sandbox_source(self):
+        # Sandbox refreshed for sandbox_source but not openshell name yet.
+        c = self._controller_with_sandbox()
+        state = SessionState(
+            state=StatusState.WORKING,
+            host_name="a-machine",
+            project="/sandbox/source",
+            sandbox_source="proj-main",
+        )
+        assert c._match_sandbox(state) == -9
+
+    def test_match_by_legacy_sandbox_hostname(self):
+        # Pre-refresh sandboxes still emit host_name=sandbox-<openshell name>.
+        c = self._controller_with_sandbox()
+        state = SessionState(
+            state=StatusState.WORKING, host_name="sandbox-sb-abc123", project="/sandbox/source"
+        )
+        assert c._match_sandbox(state) == -9
+
+    def test_no_match_for_plain_host_session(self):
+        c = self._controller_with_sandbox()
+        state = SessionState(
+            state=StatusState.WORKING, host_name="a-machine", project="/home/u/src/x"
+        )
+        assert c._match_sandbox(state) is None

@@ -5,7 +5,7 @@ import json
 from unittest.mock import patch, MagicMock
 
 from claude_dashboard.config import StatusState
-from claude_dashboard.otel_state import SessionState, poll_session_states, _parse_value
+from claude_dashboard.otel_state import SessionState, poll_session_states, _parse_value, _wins
 
 
 def _prom_response(*, metric: str, results: list[dict]) -> bytes:
@@ -251,3 +251,91 @@ class TestParseValue:
 
     def test_non_numeric_string(self):
         assert _parse_value({"value": [123, "NaN"]}) is None
+
+
+class TestHeadlessLabel:
+    def test_headless_true_parsed(self):
+        responses = {
+            "claude_session_permission": _prom_response(
+                metric="claude_session_permission", results=[]
+            ),
+            "claude_session_working": _prom_response(
+                metric="claude_session_working",
+                results=[
+                    {
+                        "metric": {
+                            "__name__": "claude_session_working",
+                            "session_id": "abc",
+                            "host_name": "h",
+                            "headless": "true",
+                        },
+                        "value": [1234567890, "3"],
+                    }
+                ],
+            ),
+            "claude_session_ready": _prom_response(metric="claude_session_ready", results=[]),
+        }
+
+        def fake_urlopen(req, timeout=None):
+            for metric, data in responses.items():
+                if metric in req.full_url:
+                    mock = MagicMock()
+                    mock.read.return_value = data
+                    mock.__enter__ = lambda s: s
+                    mock.__exit__ = MagicMock(return_value=False)
+                    return mock
+            raise ValueError(f"unexpected url: {req.full_url}")
+
+        with patch("claude_dashboard.otel_state.urllib.request.urlopen", side_effect=fake_urlopen):
+            result = poll_session_states(prometheus_url="http://localhost:9090")
+
+        assert result["abc"].headless is True
+
+    def test_absent_label_is_interactive(self):
+        assert SessionState(state=StatusState.WORKING, host_name="h", project="").headless is False
+
+
+class TestSeriesPreference:
+    """Adding a label to a rule starts a new series; the old one lingers,
+    stuck in a state no later event can supersede (see _wins docstring)."""
+
+    def test_labelled_series_wins_over_bare_one(self):
+        bare = SessionState(state=StatusState.READY, host_name="h", project="p")
+        labelled = SessionState(
+            state=StatusState.READY,
+            host_name="h",
+            project="p",
+            sandbox_openshell_name="sb-abc",
+        )
+        assert _wins(labelled, bare) is True
+        assert _wins(bare, labelled) is False
+
+    def test_richer_identity_beats_higher_priority_state(self):
+        # The real failure: a stale-shape permission_required outranked the
+        # live-shape working state and stuck until its 30m window expired.
+        stale_permission = SessionState(
+            state=StatusState.PERMISSION_REQUIRED, host_name="h", project="p"
+        )
+        live_working = SessionState(
+            state=StatusState.WORKING,
+            host_name="h",
+            project="p",
+            sandbox_source="proj-main",
+            sandbox_openshell_name="sb-abc",
+        )
+        assert _wins(live_working, stale_permission) is True
+
+    def test_equal_identity_falls_back_to_priority(self):
+        ready = SessionState(
+            state=StatusState.READY, host_name="h", project="p", sandbox_source="s"
+        )
+        permission = SessionState(
+            state=StatusState.PERMISSION_REQUIRED, host_name="h", project="p", sandbox_source="s"
+        )
+        assert _wins(permission, ready) is True
+        assert _wins(ready, permission) is False
+
+    def test_host_session_without_sandbox_labels_uses_priority(self):
+        ready = SessionState(state=StatusState.READY, host_name="h", project="p")
+        permission = SessionState(state=StatusState.PERMISSION_REQUIRED, host_name="h", project="p")
+        assert _wins(permission, ready) is True

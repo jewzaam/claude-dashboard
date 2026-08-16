@@ -30,6 +30,9 @@ class SessionState(NamedTuple):
     host_name: str
     project: str
     location: str = ""
+    headless: bool = False
+    sandbox_source: str = ""
+    sandbox_openshell_name: str = ""
 
 
 def poll_session_states(*, prometheus_url: str) -> dict[str, SessionState]:
@@ -59,13 +62,50 @@ def poll_session_states(*, prometheus_url: str) -> dict[str, SessionState]:
             host_name = labels.get("host_name", "")
             project = labels.get("project", "")
             location = labels.get("location", "")
+            # Self-made marker: claude-wrapper.sh sets headless=true for
+            # -p/--print runs; recording rules carry it through. Absent
+            # label (direct runs, old wrappers) = interactive.
+            headless = labels.get("headless", "") == "true"
+            candidate = SessionState(
+                state=state,
+                host_name=host_name,
+                project=project,
+                location=location,
+                headless=headless,
+                sandbox_source=labels.get("sandbox_source", ""),
+                sandbox_openshell_name=labels.get("sandbox_openshell_name", ""),
+            )
             existing = candidates.get(session_id)
-            if existing is None or _STATE_PRIORITY[state] < _STATE_PRIORITY[existing.state]:
-                candidates[session_id] = SessionState(
-                    state=state, host_name=host_name, project=project, location=location
-                )
+            if existing is None or _wins(candidate, existing):
+                candidates[session_id] = candidate
 
     return candidates
+
+
+def _identity_labels(state: SessionState) -> int:
+    """Count sandbox identity labels present — a proxy for label-shape age."""
+    return bool(state.sandbox_openshell_name) + bool(state.sandbox_source)
+
+
+def _wins(candidate: SessionState, existing: SessionState) -> bool:
+    """True when candidate should replace existing for the same session_id.
+
+    Richer sandbox identity wins BEFORE state priority. Adding a label to a
+    recording rule starts a new series while the old label-less one lingers,
+    so one session reports under two label shapes at once — and the stale
+    shape can be stuck in a state that will never be superseded, because the
+    rules compare timestamps within a label set and no further events carry
+    the old shape. A false permission_required outlives its window that way.
+    Preferring the richer shape is the closest thing to "most recent" the
+    metrics offer: `ready`/`permission` values are event timestamps but
+    `working` is a count, so values are not comparable across metrics.
+
+    Equal identity (both shapes the same, or a plain host session with no
+    sandbox labels at all) falls through to state priority as before.
+    """
+    if _identity_labels(candidate) != _identity_labels(existing):
+        return _identity_labels(candidate) > _identity_labels(existing)
+    return _STATE_PRIORITY[candidate.state] < _STATE_PRIORITY[existing.state]
 
 
 def _query_metric(*, prometheus_url: str, metric: str) -> list[dict]:
