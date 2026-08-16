@@ -203,7 +203,7 @@ Uses PID file lock (`~/.claude/claude-dashboard/dashboard.pid`) to prevent multi
 
 ### Terminal Activity Detection
 
-`detect_terminal_activity()` in `session.py` scans VS Code terminal child processes (psutil-based, Linux-only). When a non-Claude process runs in a VS Code terminal matching a session CWD, the flag icon (leftmost) changes from the git eye to a yellow circular arrow (`emoji_terminal_activity.png`). Excluded processes: claude-wrapper.sh, claude, openshell, node, code, pgrep, ps, grep. Checked every ~30s on the sandbox vscode tick.
+`detect_terminal_activity()` in `session.py` scans VS Code terminal child processes (psutil-based, Linux-only). When a non-Claude process runs in a VS Code terminal matching a session CWD, the flag icon (leftmost) changes from the git eye to a circular arrow (`emoji_terminal_activity.png`), tinted with the same git status color the eye would use (`_tint_image()` swaps RGB, keeps alpha — the asset is a single flat color). A clean tree keeps the asset's own yellow. Excluded processes: claude-wrapper.sh, claude, openshell, node, code, pgrep, ps, grep. Checked every ~30s on the sandbox vscode tick.
 
 ### UI Interactions
 
@@ -218,7 +218,7 @@ Uses PID file lock (`~/.claude/claude-dashboard/dashboard.pid`) to prevent multi
 - **Left-click (title bar)**: Window shade toggle — collapse to title bar only; shaded bar uses highest-priority state color
 - **Middle-click (title bar)**: Toggle ghost session visibility (hide/show all ghosts) — includes disconnected sandboxes alongside local ghosts; flagged and error sandboxes excluded
 - **Drag (counts label)**: Horizontal window resize; width persisted to settings
-- **Flag eye icon**: Eye shape left of emoji — outer color = git status, pupil = manual flag (middle-click). Terminal activity changes flag icon from git eye to yellow circular arrow (`emoji_terminal_activity.png`) when non-Claude process runs in VS Code terminal matching session CWD
+- **Flag eye icon**: Eye shape left of emoji — outer color = git status, pupil = manual flag (middle-click). Terminal activity changes flag icon from git eye to a circular arrow (`emoji_terminal_activity.png`) when non-Claude process runs in VS Code terminal matching session CWD — arrow is tinted by git status, yellow when clean. Manual flag is not shown while the arrow is displayed
 - **Tray menu**: Fully dynamic with "Unhide: (session)" items when sessions are hidden
 
 ### State Persistence

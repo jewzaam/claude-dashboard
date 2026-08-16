@@ -122,6 +122,13 @@ def _pil_to_photoimage(pil_image: Any) -> tk.PhotoImage:
     return tk.PhotoImage(data=buf.getvalue())
 
 
+def _tint_image(image: Any, rgb: tuple[int, int, int]) -> Any:
+    """Recolor a flat single-color RGBA image, preserving its alpha channel."""
+    tinted = Image.new("RGBA", image.size, rgb + (255,))
+    tinted.putalpha(image.getchannel("A"))
+    return tinted
+
+
 def _point_in_widget(widget: Any, x_root: int, y_root: int) -> bool:
     """True if a screen coordinate falls inside a widget's on-screen bounds."""
     x0 = widget.winfo_rootx()
@@ -1330,12 +1337,17 @@ class MainWindow:
         icon_size = self._icon_size
 
         if row.has_terminal_activity:
-            activity_key = ("terminal_activity", None, icon_size)
+            # Arrow carries git status the same way the eye does; keep the asset's
+            # own color when the tree is clean and there is no status to show.
+            arrow_color = self._git_status_color(row)
+            activity_key = ("terminal_activity", arrow_color, icon_size)
             cached = self._icon_cache.get(activity_key)
             if cached is not None:
                 return cached
             fg = Image.open(config.ICON_TERMINAL_ACTIVITY).convert("RGBA")
             fg = fg.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
+            if arrow_color is not None:
+                fg = _tint_image(fg, config.hex_to_rgb(hex_color=arrow_color))
             result = _pil_to_photoimage(fg)
             self._icon_cache[activity_key] = result
             return result
