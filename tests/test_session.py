@@ -34,6 +34,44 @@ class TestDiscoverSessions:
         assert sessions[0].session_id == "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         assert sessions[0].cwd == "C:\\Users\\user\\source\\my-project"
 
+    def test_skips_headless_sdk_cli_session(self, tmp_path):
+        """`claude -p` runs (entrypoint sdk-cli) must not become rows or ghosts."""
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        (sessions_dir / "13888.json").write_text(
+            json.dumps(
+                {
+                    "pid": 13888,
+                    "sessionId": "046819c2-6cc1-4007-8b8e-c5b238f4fad6",
+                    "cwd": "/home/u/sandboxes/proj-main/proj",
+                    "startedAt": 1786884782728,
+                    "kind": "interactive",
+                    "entrypoint": "sdk-cli",
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert discover_sessions(sessions_dir=sessions_dir) == []
+
+    def test_keeps_interactive_and_unknown_entrypoints(self, tmp_path):
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        for pid, entrypoint in ((100, "cli"), (200, "something-new")):
+            (sessions_dir / f"{pid}.json").write_text(
+                json.dumps(
+                    {
+                        "pid": pid,
+                        "sessionId": f"sid-{pid}",
+                        "cwd": f"/home/u/p{pid}",
+                        "startedAt": 0,
+                        "entrypoint": entrypoint,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        pids = {s.pid for s in discover_sessions(sessions_dir=sessions_dir)}
+        assert pids == {100, 200}
+
     def test_returns_empty_for_missing_dir(self, tmp_path):
         sessions = discover_sessions(sessions_dir=tmp_path / "nonexistent")
         assert sessions == []

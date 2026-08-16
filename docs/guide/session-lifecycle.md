@@ -87,9 +87,13 @@ Sessions can have multiple agents (subprocesses spawned by Claude). The dashboar
 - Agent permission requests are debounced 5 seconds before surfacing (most are auto-resolved by skills)
 - Agents are removed when `SubagentStop` fires or the parent session dies
 
-## Auto-Hidden Sessions
+## Headless Sessions
 
-Sessions with a non-CLI entrypoint (e.g., `claude -p` for programmatic use) are automatically hidden. They still exist and receive hook events, but don't appear in the dashboard unless unhidden via the Sessions menu.
+Headless runs (`claude -p`, Agent SDK) write `entrypoint: "sdk-cli"` in their session file and are skipped at discovery — no row, no ghost, no entry in the Sessions menu. They have no window to foreground and typically finish in seconds, so a row that appears and immediately ghosts is noise. A wrapper script that shells out to `claude -p` from a subdirectory would otherwise add a second row for that subdirectory.
+
+Their OpenTelemetry data is unaffected: Claude Code exports metrics, logs, and traces itself, independently of the session files the dashboard reads. Headless runs still show up in Prometheus, Loki, and Grafana.
+
+Only `sdk-cli` is treated as headless (`HEADLESS_ENTRYPOINTS` in `session.py`). Unrecognized entrypoints stay visible, so a new Claude Code entrypoint never disappears silently.
 
 ## Session Filtering
 

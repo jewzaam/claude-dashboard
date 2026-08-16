@@ -198,7 +198,8 @@ Uses PID file lock (`~/.claude/claude-dashboard/dashboard.pid`) to prevent multi
 - `sys.excepthook` captures uncaught stack traces in log files
 - Makefile `run` target logs to `~/.claude/claude-dashboard/dashboard.log`
 - Single-instance enforcement via PID file lock
-- All sessions start visible — `entrypoint != "cli"` no longer hides sessions automatically
+- All discovered sessions start visible — nothing is auto-hidden
+- Headless runs are not discovered at all: `discover_sessions()` skips `HEADLESS_ENTRYPOINTS` (`sdk-cli`, written by `claude -p` and the Agent SDK). Verified against Claude Code 2.1.226 — the interactive TUI writes `cli`. Unknown entrypoints stay visible so a new one never vanishes silently. OTEL telemetry is emitted by Claude Code itself and is unaffected
 
 ### Terminal Activity Detection
 
