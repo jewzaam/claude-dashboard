@@ -58,6 +58,10 @@ class Settings:
     color_flag_unpushed: str = config.DEFAULT_COLOR_FLAG_UNPUSHED
     color_flag_unmerged: str = config.DEFAULT_COLOR_FLAG_UNMERGED
     color_unattached: str = config.DEFAULT_COLOR_UNATTACHED
+    color_remote: str = config.DEFAULT_COLOR_REMOTE
+
+    # Remote sessions (discovered from OTEL metrics, not local processes)
+    show_remote: bool = config.DEFAULT_SHOW_REMOTE
 
     # General UI
     window_bg: str = config.DEFAULT_WINDOW_BG

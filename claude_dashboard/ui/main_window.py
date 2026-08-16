@@ -1377,6 +1377,14 @@ class MainWindow:
         self._icon_cache[cache_key] = result
         return result
 
+    def _container_fg(self, row: SessionRow) -> str:
+        """Foreground for the right-side container/host label."""
+        if row.remote_host:
+            return self._settings.color_remote
+        if row.sandbox_profile == "personal":
+            return _COLOR_PROFILE_PERSONAL
+        return _COLOR_CONTAINER_FG
+
     def _git_status_color(self, row: SessionRow) -> str | None:
         """Return color for git working tree status (excludes manual flag)."""
         return self._git_status_color_for(row.git_status)
@@ -1420,6 +1428,9 @@ class MainWindow:
         if row.sandbox_phase:
             os_name = row.session.session_id.removeprefix("sandbox-")
             container_text = f"{os_name[:8]}.." if len(os_name) > 8 else os_name
+        elif row.remote_host:
+            host = row.remote_host
+            container_text = f"{host[:8]}.." if len(host) > 8 else host
 
         sandbox_emoji = (
             self._sandbox_emoji(sandbox_phase=row.sandbox_phase) if row.sandbox_phase else None
@@ -1432,11 +1443,14 @@ class MainWindow:
         row_frame.pack_propagate(False)
 
         # Pack LEFT: flag eye icon → emoji (visual indicators grouped together)
+        # Remote rows mark the flag slot with the remote color — the slot is
+        # otherwise dead space for them (no local git or terminal detection).
+        flag_bg = self._settings.color_remote if row.remote_host else bg
         flag_image = self._flag_icon(row)
         flag_label = tk.Label(
             row_frame,
             image=flag_image,
-            bg=bg,
+            bg=flag_bg,
             anchor=tk.CENTER,
         )
         flag_label.pack(side=tk.LEFT, padx=(_MARGIN_LEFT, 0))
@@ -1453,9 +1467,7 @@ class MainWindow:
         status_label.pack(side=tk.LEFT, padx=(0, _ELEMENT_GAP))
 
         # Pack RIGHT: container label
-        container_fg = (
-            _COLOR_PROFILE_PERSONAL if row.sandbox_profile == "personal" else _COLOR_CONTAINER_FG
-        )
+        container_fg = self._container_fg(row)
         container_var = tk.StringVar(value=container_text)
         container_label = tk.Label(
             row_frame,
@@ -1609,6 +1621,9 @@ class MainWindow:
         if row_data.sandbox_phase:
             os_name = row_data.session.session_id.removeprefix("sandbox-")
             container_text = f"{os_name[:8]}.." if len(os_name) > 8 else os_name
+        elif row_data.remote_host:
+            host = row_data.remote_host
+            container_text = f"{host[:8]}.." if len(host) > 8 else host
 
         sandbox_emoji = (
             self._sandbox_emoji(sandbox_phase=row_data.sandbox_phase)
@@ -1631,15 +1646,11 @@ class MainWindow:
         row["branch_label"].configure(
             fg=self._branch_color(merged=row_data.merged, fg=fg), font=self._font_body
         )
-        container_fg = (
-            _COLOR_PROFILE_PERSONAL
-            if row_data.sandbox_profile == "personal"
-            else _COLOR_CONTAINER_FG
-        )
-        row["container_label"].configure(font=self._font_container, fg=container_fg)
+        row["container_label"].configure(font=self._font_container, fg=self._container_fg(row_data))
+        flag_bg = self._settings.color_remote if row_data.remote_host else bg
         flag_image = self._flag_icon(row_data)
         row["flag_image"] = flag_image  # prevent GC
-        row["flag_label"].configure(image=flag_image, bg=bg)
+        row["flag_label"].configure(image=flag_image, bg=flag_bg)
 
         row["last_prompt"] = row_data.last_prompt
 
@@ -1655,7 +1666,6 @@ class MainWindow:
             "cwd_label",
             "branch_label",
             "container_label",
-            "flag_label",
         ):
             try:
                 row[key].configure(bg=bg)

@@ -140,6 +140,42 @@ When `discover_sandbox_sessions()` returns empty but sandbox entries exist, skip
 
 `_list_windows_dbus()` in `platform/linux.py` must unescape `\\"` → `\"` in gdbus output before JSON parsing. gdbus output can use double-quote wrapper `("...",)` in addition to single-quote `('...',)` — both formats handled. Escaping unified: `\"` → `"` for both quote styles. Window titles containing literal quotes (e.g., music player track names) break JSON parse without this fix. This affects ALL D-Bus window features (sandbox VS Code detection, live session foregrounding).
 
+### Remote sessions — OTEL-only discovery, sticky attention states
+
+Sessions running on another host (same OTEL stack) are discovered purely from
+Prometheus state metrics: a `session_id` unmatched by local discovery whose
+`host_name` differs from the local hostname becomes a remote row (synthetic
+pid, `remote_host` set). The `location` label (display-normalized path from
+the recording rules) is used as the row CWD. Rules that follow from having no
+local process or working tree:
+
+- **Lifecycle is metric-driven with sticky exceptions.** A remote row whose
+  metrics expired is removed — unless its state is PERMISSION_REQUIRED /
+  AWAITING_INPUT or it is flagged; those persist until the user dismisses
+  (double-click → IDLE → removed next poll). The local stale-WORKING→READY
+  flip is NOT applied to remote rows; an absent WORKING remote row is removed
+  directly. Do not add TTLs or auto-clear for sticky remote states.
+- **Sticky states survive restarts.** Remote entries persist to
+  `session-state.json` under a host-qualified key (`host:cwd`) with
+  `remote_host`, `cwd`, and `session_id` stored in the value.
+  `_restore_remote_from_state()` recreates only sticky/flagged rows on
+  startup — everything else is rediscovered from OTEL. The host-qualified key
+  prevents a remote project sharing a path with a local one from
+  cross-applying hidden/flagged/cleared state.
+- **No local behaviors.** Remote rows skip git checks, ghost conversion, CWD
+  pruning, terminal-activity scan, and click-to-foreground (left-click still
+  clears READY→IDLE). They are never ghosts.
+- **Rendering.** Remote rows sort in a block above everything else, by host
+  then path. The flag/eye slot background and the right-side truncated host
+  label use `color_remote` (settings, default `#0891b2`). Tooltips are
+  prefixed with `[host]`. "Show remote sessions" checkbox at the top of the
+  title-bar right-click menu toggles visibility (`show_remote` setting);
+  entries are still tracked while hidden so sticky states are not lost.
+- **Local sandbox race (accepted).** A local sandbox whose telemetry arrives
+  before openshell lists it would briefly register as remote; in practice
+  local sandbox discovery runs earlier in the same tick and OTEL lags by
+  15-30s, so local sandboxes always claim their session_id first.
+
 ### Single-instance enforcement
 
 Uses PID file lock (`~/.claude/claude-dashboard/dashboard.pid`) to prevent multiple dashboard instances. Stale PID files (process dead) are removed on startup. Replaces previous port-based lock (hook server socket binding).

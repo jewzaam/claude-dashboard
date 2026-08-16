@@ -66,7 +66,7 @@ def main():
         print("  (none found)")
 
     # Test sandbox matching
-    sandbox_names = ["nexus-1176", "nexus-ui-main", "nexus-pr-1208", "nexus-AAP-77243"]
+    sandbox_names = ["myapp-1176", "myapp-ui-main", "myapp-pr-1208", "myapp-issue-77243"]
     print(f"\n=== Sandbox match test ===")
     vscode_titles = set()
     for w in windows:
