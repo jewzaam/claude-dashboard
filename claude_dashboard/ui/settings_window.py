@@ -180,6 +180,13 @@ class SettingsWindow:
             settings.color_unattached,
             row,
         )
+        row = self._add_color_field(
+            frame,
+            "Remote session",
+            "color_remote",
+            settings.color_remote,
+            row,
+        )
         row = self._add_color_field(frame, "Background", "window_bg", settings.window_bg, row)
 
         btn_frame = tk.Frame(frame, bg=_CHROME_BG)

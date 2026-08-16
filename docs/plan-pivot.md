@@ -258,20 +258,21 @@ picks highest priority — same pattern as current `_STATE_PRIORITY`.
 
 ### State Encoding
 
-Prometheus gauge per session:
+One Prometheus gauge per state signal (as implemented in claude-otel-stack
+`config/loki-rules/fake/rules.yaml` — this superseded the single
+`claude_session_state` 0-5 encoding from v1 of this plan):
 
 ```text
-claude_session_state{session_id="abc", project="/home/user/source/foo", host_name="...", sandbox_name="..."} = 1
+claude_session_working{session_id="abc", host_name="...", project="/home/user/source/foo", location="~/source/foo"}
+claude_session_ready{...}
+claude_session_permission{...}
 ```
 
-| Value | State |
-|---|---|
-| 0 | Unknown |
-| 1 | Working |
-| 2 | Ready |
-| 3 | Idle |
-| 4 | Permission Required |
-| 5 | Awaiting Input |
+Values are "truthy positive", not enums: `claude_session_working` is the
+activity event count in the last 60s; `claude_session_ready` and
+`claude_session_permission` carry the winning `observed_timestamp` in
+nanoseconds (LogQL `>` comparison returns the left side's value). The
+dashboard only checks `value > 0` and maps metric name to state.
 
 ### Staleness Handling
 

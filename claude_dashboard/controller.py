@@ -19,7 +19,7 @@ from tkinter import filedialog
 from claude_dashboard import config
 from claude_dashboard.file_utils import atomic_write_json
 from claude_dashboard.loki import poll_last_prompts
-from claude_dashboard.otel_state import poll_session_states
+from claude_dashboard.otel_state import SessionState, poll_session_states
 from claude_dashboard.platform.base import (
     ContainerInfo,
     ContainerType,
@@ -113,6 +113,7 @@ class _SessionEntry:
         "has_terminal_activity",
         "state_cleared_from",
         "last_prompt",
+        "remote_host",
     )
 
     def __init__(self, session: SessionInfo):
@@ -132,6 +133,7 @@ class _SessionEntry:
         self.last_active: float = 0.0
         self.state_cleared_from: str = ""
         self.last_prompt: str = ""
+        self.remote_host: str = ""
 
 
 class AppController:
@@ -325,7 +327,7 @@ class AppController:
             dead_pids = set(self._sessions.keys()) - alive_pids
             for pid in dead_pids:
                 entry = self._sessions.get(pid)
-                if entry and not entry.unattached and not entry.sandbox:
+                if entry and not entry.unattached and not entry.sandbox and not entry.remote_host:
                     cwd = entry.session.cwd
                     flagged = entry.flagged
                     last_active = entry.last_active
@@ -416,6 +418,8 @@ class AppController:
                 if self._tick_expired(tick_start):
                     logger.debug("tick deadline: skipping remaining git checks")
                     break
+                if entry.remote_host:
+                    continue  # no local working tree to inspect
                 is_ghost = entry.unattached
                 if is_ghost and entry.sandbox and not sandbox_vscode_tick:
                     continue
@@ -707,6 +711,13 @@ class AppController:
         """Create ghost entries from state file for CWDs without live sessions."""
         live_cwds = {e.session.cwd for e in self._sessions.values()}
         for cwd, saved in self._saved_state.items():
+            if saved.get("remote_host"):
+                # Remote entries re-register from OTEL, never as local ghosts.
+                # Sticky states (permission/awaiting) and flags are restored
+                # so a dashboard restart cannot silently drop a pending ask
+                # whose metrics have already expired.
+                self._restore_remote_from_state(saved)
+                continue
             if cwd in live_cwds:
                 continue
             if self._is_ignored(cwd):
@@ -737,6 +748,42 @@ class AppController:
             self._sessions[synthetic_pid] = entry
             logger.debug("created unattached placeholder for %s pid=%d", cwd, synthetic_pid)
         self._evict_oldest_ghosts()
+
+    def _restore_remote_from_state(self, saved: dict):
+        """Recreate a remote row from the state file if it still needs attention.
+
+        Only sticky states and flagged rows are restored — anything else is
+        rediscovered from OTEL metrics when the session is actually active.
+        """
+        sticky = saved.get("state") in (
+            StatusState.PERMISSION_REQUIRED.value,
+            StatusState.AWAITING_INPUT.value,
+        )
+        if not sticky and not saved.get("flagged"):
+            return
+        host = saved.get("remote_host", "")
+        cwd = saved.get("cwd", "")
+        session_id = saved.get("session_id", "")
+        if not host or not cwd or not session_id:
+            return
+        if session_id in self._session_id_to_pid:
+            return
+        self._next_synthetic_pid -= 1
+        synthetic_pid = self._next_synthetic_pid
+        session = SessionInfo(
+            pid=synthetic_pid,
+            session_id=session_id,
+            cwd=cwd,
+            started_at=0,
+        )
+        entry = _SessionEntry(session)
+        entry.remote_host = host
+        self._apply_saved_state(entry)
+        if saved.get("hidden"):
+            entry.hidden = True
+        self._sessions[synthetic_pid] = entry
+        self._session_id_to_pid[session_id] = synthetic_pid
+        logger.info("remote session restored host=%s cwd=%s state=%s", host, cwd, entry.state.value)
 
     def _create_ghost(self, *, cwd: str, flagged: bool = False, last_active: float = 0.0):
         """Create an unattached ghost for a CWD if no live session or ghost exists for it."""
@@ -813,6 +860,8 @@ class AppController:
             if pid is None:
                 pid = self._match_sandbox_by_hostname(session_state.host_name)
             if pid is None:
+                pid = self._add_remote_session(session_id=session_id, state=session_state)
+            if pid is None:
                 continue
             otel_matched_pids.add(pid)
             entry = self._sessions.get(pid)
@@ -843,7 +892,7 @@ class AppController:
         # PERMISSION_REQUIRED and AWAITING_INPUT are left alone — stale metric
         # doesn't mean the user answered; those persist until explicitly cleared.
         for entry in self._sessions.values():
-            if entry.session.pid_alive:
+            if entry.session.pid_alive or entry.remote_host:
                 continue
             if entry.state != StatusState.WORKING:
                 continue
@@ -852,8 +901,65 @@ class AppController:
             entry.state = StatusState.READY
             changed = True
 
+        # Remote lifecycle: OTEL metrics are the only liveness signal, so a
+        # remote row whose metrics expired is removed — except sticky states:
+        # PERMISSION_REQUIRED / AWAITING_INPUT and flagged rows persist until
+        # the user dismisses them (dismiss sets IDLE, removed next poll).
+        stale_remote = [
+            pid
+            for pid, entry in self._sessions.items()
+            if entry.remote_host
+            and pid not in otel_matched_pids
+            and not entry.flagged
+            and entry.state not in (StatusState.PERMISSION_REQUIRED, StatusState.AWAITING_INPUT)
+        ]
+        for pid in stale_remote:
+            entry = self._sessions[pid]
+            logger.info(
+                "remote session expired host=%s cwd=%s state=%s",
+                entry.remote_host,
+                entry.session.cwd,
+                entry.state.value,
+            )
+            self._remove_session(pid)
+            changed = True
+
         if changed:
             self._refresh_ui()
+
+    def _add_remote_session(self, *, session_id: str, state: "SessionState") -> int | None:
+        """Register a session seen only in OTEL metrics (running on another host).
+
+        Returns the synthetic PID, or None when the metric belongs to this
+        host (local sessions are discovered from process state, and headless
+        runs are intentionally not shown).
+        """
+        host = state.host_name
+        if not host or host == config.LOCAL_HOSTNAME:
+            return None
+        # ponytail: a local sandbox whose telemetry lands before openshell
+        # lists it would briefly register as remote; local sandbox discovery
+        # runs earlier in the same tick and OTEL lags it by 15-30s, so in
+        # practice local sandboxes always claim their session_id first.
+        cwd = state.location or state.project
+        if not cwd or self._is_ignored(cwd):
+            return None
+        self._next_synthetic_pid -= 1
+        synthetic_pid = self._next_synthetic_pid
+        session = SessionInfo(
+            pid=synthetic_pid,
+            session_id=session_id,
+            cwd=cwd,
+            started_at=0,
+        )
+        entry = _SessionEntry(session)
+        entry.remote_host = host
+        entry.last_active = _now_epoch()
+        self._apply_saved_state(entry)
+        self._sessions[synthetic_pid] = entry
+        self._session_id_to_pid[session_id] = synthetic_pid
+        logger.info("remote session registered host=%s cwd=%s", host, cwd)
+        return synthetic_pid
 
     def _update_last_prompts(self):
         """Poll Loki for last user prompt per session and cache in entries."""
@@ -901,6 +1007,8 @@ class AppController:
                 continue
             entry = self._sessions.get(pid)
             if entry is not None:
+                if entry.remote_host and text:
+                    text = f"[{entry.remote_host}] {text}"
                 entry.last_prompt = text
                 logger.debug(
                     "last_prompts: pid=%d prompt=%s",
@@ -920,11 +1028,13 @@ class AppController:
     # ------------------------------------------------------------------
 
     def _sorted_entries(self) -> list["_SessionEntry"]:
-        """Return all session entries sorted: personal sandboxes first, then by name."""
+        """Return all session entries sorted: remote block first (by host,
+        then name), then personal sandboxes, then everything else by name."""
         return sorted(
             self._sessions.values(),
             key=lambda e: (
-                0 if e.sandbox_profile == "personal" else 1,
+                0 if e.remote_host else (1 if e.sandbox_profile == "personal" else 2),
+                e.remote_host,
                 cwd_relative_to_home(cwd=e.session.cwd).lower(),
             ),
         )
@@ -991,9 +1101,11 @@ class AppController:
                 has_terminal_activity=entry.has_terminal_activity,
                 last_prompt=entry.last_prompt,
                 sandbox_profile=entry.sandbox_profile,
+                remote_host=entry.remote_host,
             )
             for entry in all_entries
-            if not entry.hidden or self._main_window._filter_text
+            if (not entry.hidden or self._main_window._filter_text)
+            and (self._settings.show_remote or not entry.remote_host)
         ]
         self._main_window.update_sessions(visible_states)
 
@@ -1030,6 +1142,10 @@ class AppController:
             entry.state = StatusState.IDLE
             logger.debug("pid=%d clicked, cleared ready to idle", session.pid)
             self._refresh_ui()
+
+        # Remote sessions have no local window, terminal, or VS Code to open
+        if entry and entry.remote_host:
+            return
 
         # Error sandbox: podman start to recover stopped container
         if entry and self._is_error_sandbox(entry):
@@ -1345,6 +1461,22 @@ class AppController:
     def _build_sessions_menu(self, menu: tk.Menu):
         """Populate a menu with session visibility checkboxes (live sessions only)."""
         self._session_vars.clear()
+
+        remote_var = tk.BooleanVar(value=self._settings.show_remote)
+        self._session_vars.append(remote_var)
+
+        def toggle_remote():
+            self._settings.show_remote = remote_var.get()
+            self._save_settings_safe()
+            self._refresh_ui()
+
+        menu.add_checkbutton(
+            label="Show remote sessions",
+            variable=remote_var,
+            command=toggle_remote,
+        )
+        menu.add_separator()
+
         all_entries = self._sorted_entries()
         for entry in all_entries:
             if entry.unattached and not entry.sandbox:
@@ -1352,6 +1484,8 @@ class AppController:
             var = tk.BooleanVar(value=not entry.hidden)
             self._session_vars.append(var)
             display_name = cwd_relative_to_home(cwd=entry.session.cwd)
+            if entry.remote_host:
+                display_name = f"{entry.remote_host}: {display_name}"
 
             def make_toggle(e=entry, v=var):
                 def toggle():
@@ -1395,6 +1529,15 @@ class AppController:
             pass
         return {}
 
+    @staticmethod
+    def _state_key(entry: "_SessionEntry") -> str:
+        """Persistence key: CWD, host-qualified for remote sessions so a
+        remote project sharing a path with a local one never cross-applies
+        hidden/flagged/cleared state."""
+        if entry.remote_host:
+            return f"{entry.remote_host}:{entry.session.cwd}"
+        return entry.session.cwd
+
     def _save_session_state(self):
         """Snapshot mutable session state to disk."""
         state: dict[str, dict] = {}
@@ -1402,19 +1545,24 @@ class AppController:
             cwd = entry.session.cwd
             if self._is_ignored(cwd):
                 continue
-            if cwd in state:
+            key = self._state_key(entry)
+            if key in state:
                 if not entry.hidden:
-                    state[cwd]["hidden"] = False
-                if entry.last_active > state[cwd].get("last_active", 0.0):
-                    state[cwd]["last_active"] = entry.last_active
+                    state[key]["hidden"] = False
+                if entry.last_active > state[key].get("last_active", 0.0):
+                    state[key]["last_active"] = entry.last_active
             else:
-                state[cwd] = {
+                state[key] = {
                     "state": entry.state.value,
                     "hidden": entry.hidden,
                     "flagged": entry.flagged,
                     "last_active": entry.last_active,
                     "state_cleared_from": entry.state_cleared_from,
                 }
+                if entry.remote_host:
+                    state[key]["remote_host"] = entry.remote_host
+                    state[key]["cwd"] = cwd
+                    state[key]["session_id"] = entry.session.session_id
 
         try:
             atomic_write_json(data=state, path=config.STATE_FILE)
@@ -1423,7 +1571,7 @@ class AppController:
 
     def _apply_saved_state(self, entry: "_SessionEntry"):
         """Apply saved state from a previous run to a newly discovered session."""
-        saved = self._saved_state.get(entry.session.cwd)
+        saved = self._saved_state.get(self._state_key(entry))
         if not saved:
             return
         if saved.get("flagged"):

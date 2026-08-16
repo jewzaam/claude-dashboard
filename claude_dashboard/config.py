@@ -11,6 +11,10 @@ from pathlib import Path
 IS_WINDOWS = platform.system() == "Windows"
 IS_LINUX = platform.system() == "Linux"
 
+# Hostname as it appears in the OTEL host_name label for sessions on this
+# machine — used to tell local sessions apart from remote ones.
+LOCAL_HOSTNAME = platform.node()
+
 # Subprocess creation flags: prevent console window flash on Windows when
 # the parent process is pythonw.exe (no inherited console).
 SUBPROCESS_FLAGS: int = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -130,6 +134,8 @@ DEFAULT_COLOR_FLAG_UNPUSHED = "#dc2626"
 DEFAULT_COLOR_FLAG_UNMERGED = "#93c5fd"
 DEFAULT_COLOR_UNATTACHED = "#2a2a2a"
 DEFAULT_COLOR_BRANCH_MERGED = "#ef4444"
+DEFAULT_COLOR_REMOTE = "#0891b2"
+DEFAULT_SHOW_REMOTE = True
 DEFAULT_IGNORE_REGEX = ""
 DEFAULT_MAX_SESSIONS = 40
 

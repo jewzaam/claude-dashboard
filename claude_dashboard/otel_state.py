@@ -29,6 +29,7 @@ class SessionState(NamedTuple):
     state: StatusState
     host_name: str
     project: str
+    location: str = ""
 
 
 def poll_session_states(*, prometheus_url: str) -> dict[str, SessionState]:
@@ -57,10 +58,11 @@ def poll_session_states(*, prometheus_url: str) -> dict[str, SessionState]:
                 continue
             host_name = labels.get("host_name", "")
             project = labels.get("project", "")
+            location = labels.get("location", "")
             existing = candidates.get(session_id)
             if existing is None or _STATE_PRIORITY[state] < _STATE_PRIORITY[existing.state]:
                 candidates[session_id] = SessionState(
-                    state=state, host_name=host_name, project=project
+                    state=state, host_name=host_name, project=project, location=location
                 )
 
     return candidates

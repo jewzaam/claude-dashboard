@@ -25,3 +25,4 @@ class SessionRow(NamedTuple):
     has_terminal_activity: bool = False
     last_prompt: str = ""
     sandbox_profile: str = ""
+    remote_host: str = ""
