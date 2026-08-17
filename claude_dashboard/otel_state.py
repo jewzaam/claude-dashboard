@@ -26,10 +26,22 @@ _TIMEOUT_SECONDS = 2
 
 
 class SessionState(NamedTuple):
+    """One session's state plus the labels needed to identify it.
+
+    ``host_name`` is always the machine, never the sandbox — sandbox identity
+    lives in ``sandbox_source`` (friendly name) and ``sandbox_openshell_name``
+    (``sb-<hash>``, the only label that joins to ``openshell sandbox list``).
+    ``headless`` comes from the wrapper's own resource attribute; Claude Code
+    emits no native headless marker.
+    """
+
     state: StatusState
     host_name: str
     project: str
     location: str = ""
+    sandbox_openshell_name: str = ""
+    sandbox_source: str = ""
+    headless: bool = False
 
 
 def poll_session_states(*, prometheus_url: str) -> dict[str, SessionState]:
@@ -56,13 +68,16 @@ def poll_session_states(*, prometheus_url: str) -> dict[str, SessionState]:
             value = _parse_value(result)
             if value is None or value <= 0:
                 continue
-            host_name = labels.get("host_name", "")
-            project = labels.get("project", "")
-            location = labels.get("location", "")
             existing = candidates.get(session_id)
             if existing is None or _STATE_PRIORITY[state] < _STATE_PRIORITY[existing.state]:
                 candidates[session_id] = SessionState(
-                    state=state, host_name=host_name, project=project, location=location
+                    state=state,
+                    host_name=labels.get("host_name", ""),
+                    project=labels.get("project", ""),
+                    location=labels.get("location", ""),
+                    sandbox_openshell_name=labels.get("sandbox_openshell_name", ""),
+                    sandbox_source=labels.get("sandbox_source", ""),
+                    headless=labels.get("headless", "") == "true",
                 )
 
     return candidates

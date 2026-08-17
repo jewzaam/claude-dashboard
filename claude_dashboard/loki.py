@@ -77,18 +77,20 @@ def poll_last_prompts(
     *,
     loki_url: str,
     session_ids: list[str] | None = None,
-    host_names: list[str] | None = None,
+    sandbox_names: list[str] | None = None,
     max_chars: int = config.DEFAULT_TOOLTIP_MAX_CHARS,
 ) -> dict[str, str]:
     """Query Loki for the most recent user_prompt event per session.
 
     Returns dict mapping identifier to truncated prompt text.
-    Local sessions are matched by ``session_id``; sandboxes by ``host_name``
-    (sandbox OTEL events carry the container hostname, not the dashboard's
-    synthetic session_id).
+    Local sessions are matched by ``session_id``; sandboxes by
+    ``sandbox_openshell_name`` (``sb-<hash>``), the only label that joins
+    telemetry to ``openshell sandbox list``, which is where sandbox rows get
+    their session_id. Never match sandboxes on ``host_name`` — that is the
+    creating machine, not the sandbox.
 
-    Results are keyed by session_id for local sessions and host_name for
-    sandboxes — the caller maps these back to internal PIDs.
+    Results are keyed by session_id for local sessions and by
+    sandbox_openshell_name for sandboxes — the caller maps these back to PIDs.
     """
     prompts: dict[str, str] = {}
 
@@ -106,52 +108,23 @@ def poll_last_prompts(
         except Exception:
             logger.debug("loki session query failed", exc_info=True)
 
-    if host_names:
+    if sandbox_names:
         query = (
             '{service_name="claude-code"}'
             ' | event_name = "user_prompt"'
-            f' | host_name =~ "{"|".join(host_names)}"'
+            f' | sandbox_openshell_name =~ "{"|".join(sandbox_names)}"'
         )
         logger.debug("loki sandbox query: %s", query)
         try:
-            results = _query_loki(loki_url=loki_url, query=query, limit=len(host_names) * 20)
+            results = _query_loki(loki_url=loki_url, query=query, limit=len(sandbox_names) * 20)
             logger.debug("loki sandbox results: %d streams", len(results))
-            prompts.update(_extract_prompts(results, key="host_name", max_chars=max_chars))
+            prompts.update(
+                _extract_prompts(results, key="sandbox_openshell_name", max_chars=max_chars)
+            )
         except Exception:
             logger.debug("loki sandbox query failed", exc_info=True)
 
     return prompts
-
-
-def poll_interactive_sessions(*, loki_url: str, session_ids: list[str]) -> set[str]:
-    """Return the subset of session_ids with interactive main-thread activity.
-
-    Headless runs (``claude -p``, Agent SDK) emit api_request events whose
-    query_source is only ever "sdk"; an interactive TUI session always
-    produces query_source="repl_main_thread". OTEL telemetry carries no
-    explicit headless marker, so this is the discriminator — the remote
-    counterpart of the local HEADLESS_ENTRYPOINTS session-file filter.
-
-    Fails closed: on query failure returns an empty set (no remote rows
-    created that tick; retried next tick).
-    """
-    if not session_ids:
-        return set()
-    query = (
-        '{service_name="claude-code"}'
-        ' | event_name = "api_request"'
-        ' | query_source = "repl_main_thread"'
-        f' | session_id =~ "{"|".join(session_ids)}"'
-    )
-    logger.debug("loki interactive query: %s", query)
-    results = _query_loki(loki_url=loki_url, query=query, limit=len(session_ids) * 10)
-    found = set()
-    for stream in results:
-        sid = stream.get("stream", {}).get("session_id", "")
-        if sid:
-            found.add(sid)
-    logger.debug("loki interactive sessions: %d of %d", len(found), len(session_ids))
-    return found
 
 
 def _query_loki(*, loki_url: str, query: str, limit: int = 100) -> list[dict]:

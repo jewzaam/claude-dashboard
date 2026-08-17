@@ -2,6 +2,7 @@
 """Tests for Loki-based last user prompt polling."""
 
 import json
+import urllib.parse
 from unittest.mock import patch, MagicMock
 
 from claude_dashboard.loki import (
@@ -18,7 +19,13 @@ def _loki_response(*, streams: list[dict]) -> bytes:
     ).encode()
 
 
-def _stream(*, session_id: str, prompt: str, host_name: str = "myhost") -> dict:
+def _stream(
+    *,
+    session_id: str,
+    prompt: str,
+    host_name: str = "myhost",
+    sandbox_openshell_name: str = "",
+) -> dict:
     """Build a single Loki stream entry with prompt in structured metadata labels."""
     return {
         "stream": {
@@ -26,6 +33,7 @@ def _stream(*, session_id: str, prompt: str, host_name: str = "myhost") -> dict:
             "event_name": "user_prompt",
             "session_id": session_id,
             "host_name": host_name,
+            "sandbox_openshell_name": sandbox_openshell_name,
             "prompt": prompt,
         },
         "values": [["1718000000000000000", "claude_code.user_prompt"]],
@@ -295,26 +303,41 @@ class TestPollLastPrompts:
         assert "start=" in url
         assert "end=" in url
 
-    def test_host_names_query_returns_by_host(self):
+    def test_sandbox_query_keys_by_openshell_name(self):
+        """Sandbox prompts join on sandbox_openshell_name, not host_name.
+
+        host_name is the creating machine for sandbox telemetry, so it is
+        the same value as every other session on that machine.
+        """
         streams = [
             _stream(
                 session_id="real-uuid-1",
                 prompt="sandbox prompt",
-                host_name="sandbox-my-project-main",
+                host_name="phantom",
+                sandbox_openshell_name="sb-afd920f5c568",
             ),
         ]
-        with patch(
-            "claude_dashboard.loki.urllib.request.urlopen",
-            side_effect=_fake_urlopen_factory(streams),
-        ):
+        captured: list[str] = []
+
+        def fake_urlopen(req, timeout=None):
+            captured.append(req.full_url)
+            mock = MagicMock()
+            mock.read.return_value = _loki_response(streams=streams)
+            mock.__enter__ = lambda s: s
+            mock.__exit__ = MagicMock(return_value=False)
+            return mock
+
+        with patch("claude_dashboard.loki.urllib.request.urlopen", side_effect=fake_urlopen):
             result = poll_last_prompts(
                 loki_url="http://localhost:3100",
-                host_names=["sandbox-my-project-main"],
+                sandbox_names=["sb-afd920f5c568"],
             )
-        assert result == {"sandbox-my-project-main": "sandbox prompt"}
+        assert result == {"sb-afd920f5c568": "sandbox prompt"}
+        assert "sandbox_openshell_name" in urllib.parse.unquote(captured[0])
+        assert "host_name" not in urllib.parse.unquote(captured[0])
 
-    def test_combined_session_and_host_queries(self):
-        """Both session_ids and host_names produce two queries."""
+    def test_combined_session_and_sandbox_queries(self):
+        """Both session_ids and sandbox_names produce two queries."""
         call_count = [0]
 
         def fake_urlopen(req, timeout=None):
@@ -327,7 +350,8 @@ class TestPollLastPrompts:
                     _stream(
                         session_id="uuid",
                         prompt="sandbox prompt",
-                        host_name="sandbox-foo",
+                        host_name="phantom",
+                        sandbox_openshell_name="sb-foo",
                     )
                 ]
             mock.read.return_value = _loki_response(streams=streams)
@@ -339,9 +363,9 @@ class TestPollLastPrompts:
             result = poll_last_prompts(
                 loki_url="http://localhost:3100",
                 session_ids=["s1"],
-                host_names=["sandbox-foo"],
+                sandbox_names=["sb-foo"],
             )
 
         assert call_count[0] == 2
         assert result["s1"] == "local prompt"
-        assert result["sandbox-foo"] == "sandbox prompt"
+        assert result["sb-foo"] == "sandbox prompt"

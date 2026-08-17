@@ -18,7 +18,7 @@ from tkinter import filedialog
 
 from claude_dashboard import config
 from claude_dashboard.file_utils import atomic_write_json
-from claude_dashboard.loki import poll_interactive_sessions, poll_last_prompts
+from claude_dashboard.loki import poll_last_prompts
 from claude_dashboard.otel_state import SessionState, poll_session_states
 from claude_dashboard.platform.base import (
     ContainerInfo,
@@ -231,11 +231,6 @@ class AppController:
         # Incremental counter for synthetic PIDs (unattached placeholders)
         self._next_synthetic_pid: int = -1
         self._ghosts_hidden: bool = False
-
-        # Session ids proven interactive (repl_main_thread seen in Loki).
-        # ponytail: grows unbounded, but entries are short strings and
-        # session churn is tens per day — cap it if that ever changes.
-        self._remote_interactive: set[str] = set()
 
         # Load saved session state for restart continuity
         self._saved_state = self._load_session_state()
@@ -864,7 +859,7 @@ class AppController:
         for session_id, session_state in states.items():
             pid = self._session_id_to_pid.get(session_id)
             if pid is None:
-                pid = self._match_sandbox_by_hostname(session_state.host_name)
+                pid = self._match_sandbox(session_state)
             if pid is None:
                 if self._is_remote_candidate(session_state):
                     remote_candidates[session_id] = session_state
@@ -873,7 +868,7 @@ class AppController:
             if self._apply_otel_state(pid=pid, session_state=session_state):
                 changed = True
 
-        for session_id, session_state in self._filter_interactive(remote_candidates).items():
+        for session_id, session_state in remote_candidates.items():
             pid = self._add_remote_session(session_id=session_id, state=session_state)
             if pid is None:
                 continue
@@ -951,29 +946,21 @@ class AppController:
         return True
 
     def _is_remote_candidate(self, state: "SessionState") -> bool:
-        """True when an unmatched OTEL session could become a remote row."""
+        """True when an unmatched OTEL session could become a remote row.
+
+        Headless runs (`claude -p`, Agent SDK) are excluded via the `headless`
+        resource attribute the wrapper sets — the remote counterpart of the
+        local HEADLESS_ENTRYPOINTS session-file filter. Absent label means
+        interactive. Do not infer headlessness from `query_source`: it is
+        version-unstable (2.1.226 interactive emits `repl_main_thread`,
+        2.1.233 emits `sdk`, identical to headless).
+        """
+        if state.headless:
+            return False
         if not state.host_name or state.host_name == config.LOCAL_HOSTNAME:
             return False
         cwd = state.location or state.project
         return bool(cwd) and not self._is_ignored(cwd)
-
-    def _filter_interactive(
-        self, candidates: dict[str, "SessionState"]
-    ) -> dict[str, "SessionState"]:
-        """Drop headless sessions (claude -p / Agent SDK) from remote candidates.
-
-        Interactivity is proven by repl_main_thread activity in Loki; proven
-        sessions are cached so each is queried at most until first proof.
-        Unproven candidates are retried every tick — headless sessions simply
-        never prove out and expire from the metrics on their own.
-        """
-        unknown = [sid for sid in candidates if sid not in self._remote_interactive]
-        if unknown:
-            loki_url = config.resolve_loki_url(settings_url=self._settings.loki_url)
-            self._remote_interactive |= poll_interactive_sessions(
-                loki_url=loki_url, session_ids=unknown
-            )
-        return {s: st for s, st in candidates.items() if s in self._remote_interactive}
 
     def _add_remote_session(self, *, session_id: str, state: "SessionState") -> int | None:
         """Register a session seen only in OTEL metrics (running on another host).
@@ -1012,23 +999,23 @@ class AppController:
     def _update_last_prompts(self):
         """Poll Loki for last user prompt per session and cache in entries."""
         local_ids: list[str] = []
-        sandbox_hosts: list[str] = []
-        # Map sandbox host_name back to dashboard session_id for pid lookup
-        host_to_session_id: dict[str, str] = {}
+        sandbox_names: list[str] = []
+        # Map sandbox_openshell_name back to the dashboard session_id
+        sandbox_to_session_id: dict[str, str] = {}
 
         for entry in self._sessions.values():
             if entry.unattached or not entry.session.session_id:
                 continue
             if entry.sandbox:
-                # Sandbox OTEL events use host_name (e.g. "sandbox-foo-main"),
-                # not the dashboard's synthetic session_id.
-                host = entry.session.session_id  # same format as host_name
-                sandbox_hosts.append(host)
-                host_to_session_id[host] = entry.session.session_id
+                # Sandbox telemetry is keyed by sandbox_openshell_name; the
+                # dashboard session_id is that name with a "sandbox-" prefix.
+                openshell_name = entry.session.session_id.removeprefix("sandbox-")
+                sandbox_names.append(openshell_name)
+                sandbox_to_session_id[openshell_name] = entry.session.session_id
             else:
                 local_ids.append(entry.session.session_id)
 
-        if not local_ids and not sandbox_hosts:
+        if not local_ids and not sandbox_names:
             logger.debug("last_prompts: no active sessions to query")
             return
 
@@ -1037,18 +1024,18 @@ class AppController:
             "last_prompts: querying loki_url=%s local=%s sandbox=%s",
             loki_url,
             local_ids,
-            sandbox_hosts,
+            sandbox_names,
         )
         prompts = poll_last_prompts(
             loki_url=loki_url,
             session_ids=local_ids or None,
-            host_names=sandbox_hosts or None,
+            sandbox_names=sandbox_names or None,
         )
         logger.debug("last_prompts: got %d prompts: %s", len(prompts), list(prompts.keys()))
 
         for key, text in prompts.items():
-            # Key is session_id for local, host_name for sandbox
-            session_id = host_to_session_id.get(key, key)
+            # Key is session_id for local, sandbox_openshell_name for sandboxes
+            session_id = sandbox_to_session_id.get(key, key)
             pid = self._session_id_to_pid.get(session_id)
             if pid is None:
                 logger.debug("last_prompts: no pid for key=%s", key)
@@ -1064,12 +1051,17 @@ class AppController:
                     text[:60] if text else "(empty)",
                 )
 
-    def _match_sandbox_by_hostname(self, host_name: str) -> int | None:
-        """Match a Prometheus host_name label to a sandbox session PID."""
-        if not host_name.startswith("sandbox-"):
+    def _match_sandbox(self, state: "SessionState") -> int | None:
+        """Match a state metric to a sandbox row via sandbox_openshell_name.
+
+        `sb-<hash>` is the only label that joins telemetry to
+        `openshell sandbox list`, which is where sandbox rows get their
+        session_id. Do not match on a `host_name` prefix — host_name is the
+        machine now, so sandbox telemetry carries the creating host's name.
+        """
+        if not state.sandbox_openshell_name:
             return None
-        sandbox_id = f"sandbox-{host_name[len('sandbox-'):]}"
-        return self._session_id_to_pid.get(sandbox_id)
+        return self._session_id_to_pid.get(f"sandbox-{state.sandbox_openshell_name}")
 
     # ------------------------------------------------------------------
     # UI refresh
