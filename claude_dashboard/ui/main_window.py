@@ -91,6 +91,7 @@ class MainWindowCallbacks:
     on_open_folder: Callable[[], None] | None = None
     on_ghost_toggle: Callable[..., None] | None = None
     on_width_save: Callable[[int], None] | None = None
+    on_filter_exit: Callable[[], None] | None = None
 
 
 def _load_title_emoji(
@@ -310,6 +311,7 @@ class MainWindow:
         self._on_open_folder = cb.on_open_folder
         self._on_ghost_toggle = cb.on_ghost_toggle
         self._on_width_save = cb.on_width_save
+        self._on_filter_exit = cb.on_filter_exit
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._rows: dict[int, dict[str, Any]] = {}
         self._row_order: list[int] = []
@@ -714,7 +716,7 @@ class MainWindow:
                 )
 
     def _on_ghost_toggle_click(self, event: Any):
-        """Middle-click on title bar — toggle ghost session visibility.
+        """Middle-click on title bar — clear an active filter, else toggle ghosts.
 
         Interaction with shade state:
         - Shaded + ghosts hidden: unshade and show ghosts
@@ -722,6 +724,9 @@ class MainWindow:
         - Unshaded + ghosts hidden: show ghosts
         - Unshaded + ghosts shown: hide ghosts (flagged excluded)
         """
+        if self._filter_text:
+            self._exit_filter_mode()
+            return "break"
         if self._shaded:
             self._shaded = False
             self._apply_shade_state()
@@ -1150,7 +1155,14 @@ class MainWindow:
             text=config.TITLE_TEXT,
             fg=self._title_fg,
         )
-        self._do_filter_render()
+        # Filter mode reveals hidden sessions (controller passes them through while
+        # _filter_text is set).  Ask the controller to re-supply so the pre-filter
+        # view comes back; rendering _last_sessions here would keep them on screen
+        # until the next 5s poll.
+        if self._on_filter_exit:
+            self._on_filter_exit()
+        else:
+            self._do_filter_render()
 
     def _apply_filter(self):
         """Debounced re-render with current filter applied."""
