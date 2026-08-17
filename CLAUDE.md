@@ -4,17 +4,7 @@ Cross-platform Tkinter dashboard that monitors running Claude Code sessions. Sho
 
 ## Quick Start
 
-```bash
-make install-dev    # Install package + dev deps
-make check          # test-format, test-lint, test-typecheck, test-unit, test-coverage
-make run            # Run the app (logging to file)
-make run DEBUG=1    # Run with debug logging (rotated at 2 MB, 1 backup)
-python -m claude_dashboard                     # Run with console output
-python -m claude_dashboard --debug             # Run with debug logging to console
-python -m claude_dashboard --log-file <path>   # Redirect logs to file (append mode)
-```
-
-Requires OTEL stack running — see [claude-otel-stack](https://github.com/jewzaam/claude-otel-stack)
+`make check` before claiming done (format, lint, typecheck, markdown, links, unit, coverage). Setup and CLI flags: `docs/guide/getting-started.md`.
 
 ## Architecture
 
@@ -98,15 +88,7 @@ When user clears a session state (context menu, click, double-click), `state_cle
 
 ### Tooltip dismissal — timers, not crossing events or pointer position
 
-Tkinter runs under XWayland, where the compositor never reports the global pointer position. `winfo_pointerxy()` freezes at the last coordinate the pointer held over one of our own windows — which is inside the row it just left — so **pointer position cannot prove the pointer left a row**, and `<Leave>` is not reliably delivered when the pointer exits a borderless window. Five rules follow, all in `main_window.py`:
-
-1. **`<Motion>` arms the tooltip, not `<Enter>`.** Destroying a tooltip makes X re-evaluate what is under the (frozen) pointer and fire a synthetic `<Enter>` on the row beneath, which re-armed an endless show/hide loop. Real hovering always produces motion; a synthetic crossing never does. `_show_tooltip()` also returns early if one is already pending or shown for that row, so the repeated motion events do not restack timers.
-2. **Motion not newer than the last `<Leave>` is discarded** (`_tooltip_leave_time`, compared with a `_TOOLTIP_STALE_MS` window so X timestamp wraparound cannot wedge it). Tk dispatches motion after compression, so the final motion of a pointer leaving the window can arrive *after* the `<Leave>` that dismissed the tooltip and re-arm it. This showed as: grow-down mode, exit across the bottom row's own edge → tooltip always returns. Other edges cross a different widget first, so their last motion is not on a tooltip row.
-3. **A pointer reading within `_EDGE_MARGIN_PX` (3 px) of any window border counts as gone.** A pointer that left freezes at its exit point, which is on the outermost pixels; a hover that merely stopped is essentially never parked there. This is what stops the reproducible case — grow-down, exit across the bottom row's own bottom edge — where no other signal distinguishes departure from a stationary hover. Cost: no tooltip while hovering that outer sliver.
-4. **`_TOOLTIP_LIFETIME_MS` (4 s) is the only guarantee.** A displayed tooltip always self-destructs; everything else is a best-effort speedup.
-5. `_pointer_over_row()` (pre-display guard + 150 ms `_watch_pointer()` poll) cannot prove the pointer is present, only that it is plausibly present.
-
-**Do not re-bind tooltips to `<Enter>` and do not treat pointer coordinates as authoritative.**
+Tkinter runs under XWayland, where the compositor never reports the global pointer position: `winfo_pointerxy()` freezes at the last coordinate the pointer held over one of our own windows — inside the row it just left. So **pointer position cannot prove the pointer left a row**, and `<Leave>` is not reliably delivered from a borderless window. Consequences, all enforced in `main_window.py`: tooltips are armed by `<Motion>`, never `<Enter>` (destroying one fires a synthetic `<Enter>` on the row below, which loops), and `_TOOLTIP_LIFETIME_MS` is the only real guarantee of dismissal. **Do not re-bind to `<Enter>` and do not treat pointer coordinates as authoritative.**
 
 ### Text color — auto-contrast, not configurable
 
@@ -144,6 +126,9 @@ equal to the sandbox directory name).
 - **Never test `host_name` patterns or `project` paths to tell sandbox from
   local** — a host session running inside `~/sandboxes/<name>/` defeats the
   path test, and the hostname test already broke once, silently.
+- Re-verify these joins against a live stack after any stack-side label
+  change: `scripts/explore/verify_otel_match.py` (both directions —
+  `--local-hostname` for the hosting machine, `--no-register` for a watcher).
 - `otel_state._wins()` prefers the series with richer sandbox identity
   **before** state priority. Adding a label to a recording rule (or an env
   refresh changing what a session emits) starts a new series while the old
@@ -174,62 +159,15 @@ When `discover_sandbox_sessions()` returns empty but sandbox entries exist, skip
 
 ### Remote sessions — OTEL-only discovery, sticky attention states
 
-Sessions running on another host (same OTEL stack) are discovered purely from
-Prometheus state metrics: a `session_id` unmatched by local discovery whose
-`host_name` differs from the local hostname becomes a remote row (synthetic
-pid, `remote_host` set). The `location` label (display-normalized path from
-the recording rules) is used as the row CWD. Rules that follow from having no
-local process or working tree:
+Sessions on another host in the same OTEL stack are discovered purely from Prometheus state metrics — no process, no working tree. Decisions that get re-proposed as fixes:
 
-- **Headless filter reads a label already on the state metrics.** Claude
-  Code emits no native headless marker (no entrypoint attribute;
-  `terminal_type` is inherited TERM; `start_type` is fresh/continue), and
-  the `query_source="repl_main_thread"` discriminator from 2.1.226 broke in
-  2.1.233 (interactive main-thread requests emit `"sdk"` too — verified
-  live, event sets identical). The marker is self-made: `claude-wrapper.sh`
-  appends `headless=true` to `OTEL_RESOURCE_ATTRIBUTES` for `-p`/`--print`
-  runs, and the claude-otel-stack recording rules carry `headless` through
-  their `by()` groupings, so the label rides on `claude_session_*` metrics
-  the dashboard already polls — no extra queries, no cache.
-  `_add_remote_session()` skips `state.headless`. Absent label =
-  interactive, so direct runs and old wrappers fail open by construction.
-  Do not build discriminators on `query_source` — it is version-unstable.
-  Do not resolve headless via separate Loki lookups — the label is in the
-  metric.
-- **Remote READY renders as IDLE.** Dismissal is per-dashboard local state
-  with no telemetry to sync it, so a READY remote row would demand dismissal
-  on every dashboard watching the session. The session's own host still
-  shows READY. Do not "fix" remote rows to show READY.
-- **Lifecycle is metric-driven with sticky exceptions.** A remote row whose
-  metrics expired is removed — unless its state is PERMISSION_REQUIRED /
-  AWAITING_INPUT or it is flagged; those persist until the user dismisses
-  (double-click → IDLE → removed next poll). The local stale-WORKING→READY
-  flip is NOT applied to remote rows; an absent WORKING remote row is removed
-  directly. Do not add TTLs or auto-clear for sticky remote states.
-- **Sticky states survive restarts.** Remote entries persist to
-  `session-state.json` under a host-qualified key (`host:cwd`) with
-  `remote_host`, `cwd`, and `session_id` stored in the value.
-  `_restore_remote_from_state()` recreates only sticky/flagged rows on
-  startup — everything else is rediscovered from OTEL. The host-qualified key
-  prevents a remote project sharing a path with a local one from
-  cross-applying hidden/flagged/cleared state.
-- **No local behaviors.** Remote rows skip git checks, ghost conversion, CWD
-  pruning, terminal-activity scan, and click-to-foreground (left-click still
-  clears READY→IDLE). They are never ghosts.
-- **Rendering.** Remote rows sort in a block above everything else, grouped
-  by host then display text. (Host-first only became meaningful once
-  `host_name` stopped being the sandbox's own `sandbox-<hash>` hostname.)
-  The eye icon is drawn in `color_remote` (settings, default
-  `#0891b2`) — the same eye shape as git status, repurposed since remote rows
-  have no local git; the right-side truncated host label uses the same
-  color. Tooltips are
-  prefixed with `[host]`. "Show remote sessions" checkbox at the top of the
-  title-bar right-click menu toggles visibility (`show_remote` setting);
-  entries are still tracked while hidden so sticky states are not lost.
-- **Local sandbox race (accepted).** A local sandbox whose telemetry arrives
-  before openshell lists it would briefly register as remote; in practice
-  local sandbox discovery runs earlier in the same tick and OTEL lags by
-  15-30s, so local sandboxes always claim their session_id first.
+- **Headless filter reads a label already on the state metrics.** Claude Code emits no native headless marker, and the `query_source="repl_main_thread"` discriminator from 2.1.226 broke in 2.1.233 (interactive main-thread requests emit `"sdk"` too — verified live). The marker is self-made: `claude-wrapper.sh` appends `headless=true` for `-p`/`--print` runs, and the recording rules carry it through their `by()` groupings, so it rides on metrics the dashboard already polls. `_add_remote_session()` skips `state.headless`; absent label = interactive, so direct runs and old wrappers fail open. **Do not build discriminators on `query_source`** (version-unstable) and **do not resolve headless via separate Loki lookups** — the label is in the metric.
+- **Remote READY renders as IDLE.** Dismissal is per-dashboard local state with no telemetry to sync it, so a READY remote row would demand dismissal on every dashboard watching that session. Its own host still shows READY. Do not "fix" this.
+- **Sticky states outlive their metrics.** PERMISSION_REQUIRED / AWAITING_INPUT and flagged rows survive metric expiry and restarts until dismissed (double-click → IDLE → removed next poll); everything else goes when its metric does. The local stale-WORKING→READY flip does not apply. Do not add TTLs or auto-clear.
+- **Persistence is host-qualified** (`host:cwd`) — a remote project sharing a path with a local one would otherwise cross-apply hidden/flagged/cleared state. Only sticky/flagged rows are restored on startup; the rest is rediscovered from OTEL.
+- **No local behaviors.** Remote rows skip git checks, ghost conversion, CWD pruning, terminal-activity scan, and click-to-foreground (left-click still clears READY→IDLE). They are never ghosts.
+- **Rendering.** Remote rows sort in a block above everything else, grouped by host then display text — host-first only became meaningful once `host_name` stopped being the sandbox's own `sandbox-<hash>` hostname. The eye icon and host label use `color_remote` (default `#0891b2`), reusing the git-status eye shape since remote rows have no local git. Tooltips are prefixed `[host]`. The "Show remote sessions" toggle (`show_remote`) hides rows without dropping them, so sticky states are not lost.
+- **Local sandbox race (accepted).** A local sandbox whose telemetry arrives before openshell lists it would briefly register as remote; sandbox discovery runs earlier in the same tick and OTEL lags 15-30s, so it does not happen in practice.
 
 ### Single-instance enforcement
 
@@ -237,35 +175,7 @@ Uses PID file lock (`~/.claude/claude-dashboard/dashboard.pid`) to prevent multi
 
 ## Docs
 
-### Feature Specs (per-feature directories)
-
-| Directory | Content |
-|-----------|---------|
-| `specs/001-session-dashboard/` | US1-US5 spec, plan, tasks, session detection research |
-| `specs/002-hide-apply-autostart/` | US6-US8 spec (hide sessions, Apply button, auto-start) |
-| `specs/003-agent-awareness/` | US9 spec, plan, agent hook research |
-| `docs/plan-pivot.md` | OTEL-based state detection pivot plan — full cutover from HTTP hooks to OTEL log entries, recording rules, Prometheus metrics, session source configuration (Layer 4) |
-
-### Project-Wide Docs
-
-| File | Content |
-|------|---------|
-| `docs/state-transitions.md` | Mermaid state machine + known gaps |
-| `.specify/memory/constitution.md` | Project principles |
-| `docs/future.md` | Deferred features (permission handling, input injection, voice) |
-| `docs/spec-future.md` | Deferred user stories (P2/P3) |
-| `docs/document-dependencies.md` | Cascade rules for doc updates |
-| `docs/raw-prompt.md` | Original voice transcript |
-
-### User Guides
-
-| File | Content |
-|------|---------|
-| `docs/guide/getting-started.md` | Installation and first-run walkthrough |
-| `docs/guide/visual-guide.md` | Annotated screenshots of the dashboard UI |
-| `docs/guide/session-lifecycle.md` | How sessions are discovered and tracked |
-| `docs/guide/interactions.md` | Click/hover/menu interactions reference |
-| `docs/guide/settings.md` | Settings dialog and configuration options |
+Feature specs in `specs/<nnn>-<name>/`, project-wide design notes in `docs/`, user guides in `docs/guide/`. `docs/document-dependencies.md` defines which docs must be updated together.
 
 ## Do Not
 
@@ -294,23 +204,7 @@ Uses PID file lock (`~/.claude/claude-dashboard/dashboard.pid`) to prevent multi
 
 ### Terminal Activity Detection
 
-`detect_terminal_activity()` in `session.py` scans VS Code terminal child processes (psutil-based, Linux-only). When a non-Claude process runs in a VS Code terminal matching a session CWD, the flag icon (leftmost) changes from the git eye to a circular arrow (`emoji_terminal_activity.png`), tinted with the same git status color the eye would use (`_tint_image()` swaps RGB, keeps alpha — the asset is a single flat color). A clean tree has no status color, and every status color doubles as a row background, so the fallback is the row's auto-contrast text color (`_contrast_text_for_bg()`) — the one value guaranteed to stay visible on its own row. Excluded processes: claude-wrapper.sh, claude, openshell, node, code, pgrep, ps, grep. Checked every ~30s on the sandbox vscode tick.
-
-### UI Interactions
-
-- **Left-click (live)**: Foreground the session's VS Code/terminal window; clear Ready→Idle
-- **Left-click (ghost)**: Open in VS Code with tasks.json (auto-launch Claude)
-- **Double-click**: Toggle IDLE↔READY (re-flag for attention or clear state)
-- **Middle-click**: Toggle manual flag on clicked row
-- **Right-click (live)**: Hide, Clear State
-- **Right-click (sandbox)**: Hide, Clear State, Delete Sandbox
-- **Right-click (ghost local)**: Hide, Dismiss
-- **Right-click (title bar)**: Sessions visibility toggles, Open... (folder picker → VS Code), Settings, Restart, Quit
-- **Left-click (title bar)**: Window shade toggle — collapse to title bar only; shaded bar uses highest-priority state color
-- **Middle-click (title bar)**: Toggle ghost session visibility (hide/show all ghosts) — includes disconnected sandboxes alongside local ghosts; flagged and error sandboxes excluded
-- **Drag (counts label)**: Horizontal window resize; width persisted to settings
-- **Flag eye icon**: Eye shape left of emoji — outer color = git status, pupil = manual flag (middle-click). Terminal activity changes flag icon from git eye to a circular arrow (`emoji_terminal_activity.png`) when non-Claude process runs in VS Code terminal matching session CWD — arrow is tinted by git status, auto-contrast text color when clean. Manual flag is not shown while the arrow is displayed
-- **Tray menu**: Fully dynamic with "Unhide: (session)" items when sessions are hidden
+`detect_terminal_activity()` (`session.py`) scans VS Code terminal child processes — psutil-based, Linux-only, checked every ~30s on the sandbox vscode tick, so a command finishing between ticks is missed. Excluded process names live in `_TERMINAL_ACTIVITY_EXCLUDE`.
 
 ### State Persistence
 
