@@ -10,58 +10,45 @@
 |--------|--------|
 | Live session | Foreground the VS Code or terminal window containing the session |
 | Live session (Ready) | Same as above, plus clear Ready → Idle |
-| Ghost session | Open project in VS Code with Claude auto-launch |
+| Ghost session | Open project in VS Code with `tasks.json` written for Claude auto-launch |
 
 Window foregrounding uses platform-specific methods: Win32 API on Windows, Window Calls D-Bus extension on GNOME/Wayland, or `code` CLI fallback for VS Code.
 
 ### Double-Click
 
-Opens the GitHub PR for the session's branch (if pushed and not merged):
-
-- First tries `gh pr view --web` to open an existing PR
-- If no PR exists, falls back to `gh pr create --web` (GitHub's create-PR page)
-- Requires the [GitHub CLI](https://cli.github.com/) (`gh`) installed
+Toggles between Idle and Ready. From Idle it sets Ready, re-flagging the row for attention; from any other state it clears to Idle. Clearing records the state that was cleared so a stale metric reporting the same value cannot immediately undo it — see [Session Lifecycle](session-lifecycle.md).
 
 ### Middle-Click
 
 Toggles the manual flag on the clicked row. The flag appears as a purple pupil in the eye icon and persists across restarts.
 
-### Right-Click (Live Session)
+### Right-Click
 
-| Item | Action |
-|------|--------|
-| Open PR | Open PR in browser (only shown for pushed-not-merged branches) |
-| Hide | Hide row from dashboard |
-| Clear State | Reset to Idle, clear all agents |
+The menu depends on the row type. Every menu opens with the row's path as a disabled header.
 
-### Right-Click (Ghost Session)
+| Row type | Items |
+|----------|-------|
+| Live session | Hide, Clear State |
+| Sandbox | Hide, Clear State, Delete Sandbox |
+| Ghost | Hide, Dismiss |
 
-| Item | Action |
-|------|--------|
-| Open PR | Open PR in browser (only shown for pushed-not-merged branches) |
-| Open in VS Code | Write tasks.json and launch VS Code |
-| Hide | Hide from dashboard |
-| Dismiss | Remove ghost permanently |
+Hide removes the row from the dashboard but keeps it in the Sessions menu for unhiding. Dismiss removes a ghost permanently. Delete Sandbox removes the OpenShell sandbox itself.
 
 ## Title Bar
 
 ### Left-Click (Text / Icon / Empty Area)
 
-Toggle window shade — collapse to title bar only, or expand to show all rows. See [Visual Guide](visual-guide.md#window-shade) for details.
-
-### Left-Click (Cost / Usage Labels)
-
-Open a popup showing daily cost for the last 14 days with proportional bars. The popup dismisses when the mouse leaves the cost label area.
+Toggle window shade — collapse to title bar only, or expand to show all rows. While shaded, the bar takes the color of the highest-priority session state, so a permission request is still visible. See [Visual Guide](visual-guide.md#window-shade).
 
 ### Middle-Click
 
-Toggle ghost (unattached) session visibility. Middle-click to hide all ghosts, middle-click again to show them. Live hidden sessions are not affected.
+Toggle ghost session visibility — hide all ghosts, or show them again. Disconnected sandboxes toggle alongside local ghosts. Flagged rows and error sandboxes are never hidden this way. Live hidden sessions are unaffected.
 
 ### Right-Click
 
 | Item | Action |
 |------|--------|
-| Sessions | Submenu with visibility checkbox per session |
+| Sessions | Submenu with a visibility checkbox per session |
 | Open... | Folder picker → open selected folder in VS Code |
 | Settings | Open settings dialog |
 | Restart | Save state and restart the dashboard process |
@@ -69,7 +56,22 @@ Toggle ghost (unattached) session visibility. Middle-click to hide all ghosts, m
 
 ### Drag
 
-Click and drag anywhere on the title bar (or any row) to move the borderless window. A 5-pixel movement threshold prevents accidental drags from triggering on clicks.
+| Target | Action |
+|--------|--------|
+| Title bar or any row | Move the borderless window. A 5-pixel threshold prevents accidental drags on clicks |
+| Counts label (right side) | Resize the window horizontally. Width persists to settings |
+
+## Flag Eye Icon
+
+Leftmost element of each row, immediately left of the state emoji.
+
+| Element | Meaning |
+|---------|---------|
+| Eye outline | Git working tree status — color configurable per state in Settings |
+| Pupil | Manual flag, set by middle-click |
+| Circular arrow (replaces the eye) | A non-Claude process is running in a VS Code terminal whose directory matches the session |
+
+The arrow takes the same git status color the eye would use, falling back to the row's auto-contrast text color when the tree is clean. The manual flag is not shown while the arrow is displayed.
 
 ## System Tray
 
@@ -81,4 +83,4 @@ Click and drag anywhere on the title bar (or any row) to move the borderless win
 | Restart | Save state and restart |
 | Quit | Save state and exit |
 
-The tray menu dynamically includes "Unhide" entries for each hidden session.
+The tray menu is rebuilt on each open and includes one "Unhide" entry per hidden session. The icon color reflects the highest-priority state across all sessions.
