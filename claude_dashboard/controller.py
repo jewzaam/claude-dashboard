@@ -184,6 +184,7 @@ class AppController:
                 on_open_folder=self._open_folder,
                 on_ghost_toggle=self._on_ghost_toggle,
                 on_width_save=self._on_width_save,
+                on_filter_exit=self._refresh_ui,
             ),
         )
 
