@@ -635,7 +635,7 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
         )
 
     if sessions:
-        logger.info(
+        logger.debug(
             "sandbox discovery found %d: %s",
             len(sessions),
             [s.session_id for s in sessions],
