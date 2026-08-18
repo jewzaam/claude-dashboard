@@ -656,7 +656,12 @@ class AppController:
             if entry.unattached == has_vscode:
                 was_connected = not entry.unattached
                 entry.unattached = not has_vscode
-                if was_connected and entry.unattached:
+                # Only stamp the guard when there is a state to clear. An
+                # already-IDLE sandbox was dismissed by the user, and
+                # overwriting their guard with "idle" guards nothing (an OTEL
+                # idle on an idle row is already a no-op) while unblocking the
+                # stale READY that dismissal was meant to suppress.
+                if was_connected and entry.unattached and entry.state != StatusState.IDLE:
                     entry.state_cleared_from = entry.state.value
                     entry.state = StatusState.IDLE
                 logger.debug(

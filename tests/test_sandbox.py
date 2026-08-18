@@ -475,3 +475,65 @@ class TestSandboxEmoji:
 
     def test_creating_returns_none(self):
         assert self._call(sandbox_phase="Creating") is None
+
+
+class TestSandboxVSCodeDisconnect:
+    """VS Code closing must not resurrect a state the user already dismissed."""
+
+    @staticmethod
+    def _controller(*, state, cleared_from):
+        from claude_dashboard.controller import AppController, _SessionEntry
+        from claude_dashboard.session import SessionInfo
+
+        c = object.__new__(AppController)
+        c._sessions = {}
+        entry = _SessionEntry(
+            SessionInfo(
+                pid=-1,
+                session_id="sandbox-sb-abc",
+                cwd="/home/u/sandboxes/my-sandbox",
+                started_at=0,
+                entrypoint="cli",
+            )
+        )
+        entry.sandbox = True
+        entry.unattached = False
+        entry.state = state
+        entry.state_cleared_from = cleared_from
+        c._sessions[-1] = entry
+        return c, entry
+
+    @staticmethod
+    def _close_vscode(controller):
+        # No windows reported == VS Code gone. IS_LINUX off keeps D-Bus out.
+        with patch("claude_dashboard.config.IS_LINUX", False):
+            controller._update_sandbox_vscode_state()
+
+    def test_dismissed_ready_stays_idle_after_vscode_closes(self):
+        from claude_dashboard.config import StatusState
+        from claude_dashboard.otel_state import SessionState
+
+        # User double-clicked a READY sandbox, then closed VS Code.
+        c, entry = self._controller(state=StatusState.IDLE, cleared_from="ready")
+        self._close_vscode(c)
+
+        assert entry.unattached is True
+        assert entry.state_cleared_from == "ready"
+
+        # Stale OTEL still reports READY for 15-30s. It must not get through.
+        c._apply_otel_state(
+            pid=-1,
+            session_state=SessionState(
+                state=StatusState.READY, host_name="h", project="/home/u/sandboxes/my-sandbox"
+            ),
+        )
+        assert entry.state == StatusState.IDLE
+
+    def test_undismissed_ready_clears_to_idle_and_guards(self):
+        from claude_dashboard.config import StatusState
+
+        c, entry = self._controller(state=StatusState.READY, cleared_from="")
+        self._close_vscode(c)
+
+        assert entry.state == StatusState.IDLE
+        assert entry.state_cleared_from == "ready"
