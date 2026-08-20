@@ -1468,11 +1468,10 @@ class AppController:
     def _is_error_sandbox(entry: "_SessionEntry") -> bool:
         return entry.sandbox and entry.sandbox_phase == "Error"
 
-    def _on_ghost_toggle(self, *, force_show: bool = False):
+    def _on_ghost_toggle(self):
         """Middle-click on title bar — toggle ghost session visibility.
 
-        If force_show is True, always show ghosts (used when unshading).
-        Otherwise: if any non-flagged ghosts are visible, hide them.
+        If any non-flagged ghosts are visible, hide them.
         Flagged ghosts are never hidden by this toggle.
         """
 
@@ -1483,11 +1482,7 @@ class AppController:
                 return False
             return True
 
-        if force_show:
-            hide = False
-        else:
-            any_visible = any(_is_toggleable(e) and not e.hidden for e in self._sessions.values())
-            hide = any_visible
+        hide = any(_is_toggleable(e) and not e.hidden for e in self._sessions.values())
         for entry in self._sessions.values():
             if _is_toggleable(entry):
                 entry.hidden = hide

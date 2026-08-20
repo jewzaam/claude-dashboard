@@ -51,6 +51,25 @@ def test_middle_click_without_filter_toggles_ghosts():
         win._on_filter_exit.assert_not_called()
 
 
+def test_middle_click_while_shaded_only_unshades():
+    """Shaded title bar treats middle-click as a left-click — no ghost toggle."""
+    from claude_dashboard.ui.main_window import MainWindow
+
+    with (
+        patch("claude_dashboard.ui.main_window.tk"),
+        patch.object(MainWindow, "_apply_shade_state") as apply_shade,
+    ):
+        win = _make_window()
+        win._shaded = True
+        win._dragged = False
+
+        win._on_ghost_toggle_click(MagicMock())
+
+        assert win._shaded is False
+        apply_shade.assert_called_once_with()
+        win._on_ghost_toggle.assert_not_called()
+
+
 def test_exit_filter_falls_back_to_local_render_without_callback():
     with patch("claude_dashboard.ui.main_window.tk"):
         from claude_dashboard.ui.main_window import MainWindow
