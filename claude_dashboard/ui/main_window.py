@@ -783,15 +783,9 @@ class MainWindow:
         if not self._filter_text:
             self._title_text_label.configure(text=config.TITLE_TEXT)
 
-        # Right-side counts
-        counts = ""
-        if active > 0:
-            counts += f" {{{active}}}"
-        if hidden_live > 0:
-            counts += f" (+{hidden_live})"
-        if hidden_ghost > 0:
-            counts += f" [+{hidden_ghost}]"
-        self._title_counts_label.configure(text=counts.strip(), fg=fg)
+        # Right-side counts — always shown, even at zero
+        counts = f"{{{active}}} ({hidden_live}) [{hidden_ghost}]"
+        self._title_counts_label.configure(text=counts, fg=fg)
 
         # Update title bar height
         try:
