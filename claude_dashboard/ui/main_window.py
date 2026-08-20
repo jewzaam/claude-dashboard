@@ -719,8 +719,7 @@ class MainWindow:
         """Middle-click on title bar — clear an active filter, else toggle ghosts.
 
         Interaction with shade state:
-        - Shaded + ghosts hidden: unshade and show ghosts
-        - Shaded + ghosts shown: unshade only (keep ghosts shown)
+        - Shaded: unshade only — same as a left-click, ghosts untouched
         - Unshaded + ghosts hidden: show ghosts
         - Unshaded + ghosts shown: hide ghosts (flagged excluded)
         """
@@ -728,13 +727,9 @@ class MainWindow:
             self._exit_filter_mode()
             return "break"
         if self._shaded:
-            self._shaded = False
-            self._apply_shade_state()
-            if self._on_ghost_toggle:
-                self._on_ghost_toggle(force_show=True)
-        else:
-            if self._on_ghost_toggle:
-                self._on_ghost_toggle()
+            self._on_shade_toggle(event)
+        elif self._on_ghost_toggle:
+            self._on_ghost_toggle()
 
     def _on_title_bar_right_click(self, event: Any):
         """Show session visibility toggles + Settings / Restart / Quit on title bar right-click."""

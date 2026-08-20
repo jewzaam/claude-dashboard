@@ -44,6 +44,8 @@ Toggle window shade — collapse to title bar only, or expand to show all rows. 
 
 Toggle ghost session visibility — hide all ghosts, or show them again. Disconnected sandboxes toggle alongside local ghosts. Flagged rows and error sandboxes are never hidden this way. Live hidden sessions are unaffected.
 
+While shaded, middle-click acts as a left-click: it expands the window and leaves ghost visibility as it was.
+
 ### Right-Click
 
 | Item | Action |
