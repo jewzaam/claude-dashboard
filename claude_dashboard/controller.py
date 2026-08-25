@@ -114,6 +114,7 @@ class _SessionEntry:
         "state_cleared_from",
         "last_prompt",
         "remote_host",
+        "otel_missing_since",
     )
 
     def __init__(self, session: SessionInfo):
@@ -134,6 +135,10 @@ class _SessionEntry:
         self.state_cleared_from: str = ""
         self.last_prompt: str = ""
         self.remote_host: str = ""
+        # Epoch of the first OTEL poll that did not report this session; 0
+        # while it is being reported. Remote rows are only removed once this
+        # is older than config.REMOTE_METRIC_GRACE_SECONDS.
+        self.otel_missing_since: float = 0.0
 
 
 class AppController:
@@ -886,19 +891,44 @@ class AppController:
             entry.state = StatusState.READY
             changed = True
 
-        # Remote lifecycle: OTEL metrics are the only liveness signal, so a
-        # remote row whose metrics expired is removed — except sticky states:
-        # PERMISSION_REQUIRED / AWAITING_INPUT and flagged rows persist until
-        # the user dismisses them (dismiss sets IDLE, removed next poll).
-        stale_remote = [
-            pid
-            for pid, entry in self._sessions.items()
-            if entry.remote_host
-            and pid not in otel_matched_pids
-            and not entry.flagged
-            and entry.state not in (StatusState.PERMISSION_REQUIRED, StatusState.AWAITING_INPUT)
-        ]
-        for pid in stale_remote:
+        if self._expire_stale_remotes(matched_pids=otel_matched_pids):
+            changed = True
+
+        if changed:
+            self._refresh_ui()
+
+    def _expire_stale_remotes(self, *, matched_pids: set[int]) -> bool:
+        """Remove remote rows whose state metric has been absent past the grace.
+
+        OTEL metrics are the only liveness signal for a remote session, but
+        absence is not proof it ended: every idle→working transition has a real
+        hole where the session is in none of the three state metrics (`ready`
+        goes false the moment user_prompt outranks Stop, `working` has counted
+        no event yet). Removing on the first miss makes the row blink out
+        mid-transition. Sticky states (PERMISSION_REQUIRED / AWAITING_INPUT)
+        and flagged rows are never removed here — they persist until dismissed.
+        """
+        now = _now_epoch()
+        stale: list[int] = []
+        for pid, entry in self._sessions.items():
+            if not entry.remote_host:
+                continue
+            if pid in matched_pids:
+                entry.otel_missing_since = 0.0
+                continue
+            if entry.flagged or entry.state in (
+                StatusState.PERMISSION_REQUIRED,
+                StatusState.AWAITING_INPUT,
+            ):
+                continue
+            if not entry.otel_missing_since:
+                entry.otel_missing_since = now
+            # A dismissed row is one the user already told to go away — no
+            # grace, it goes on the poll that finds its metric gone.
+            grace = 0 if entry.state_cleared_from else config.REMOTE_METRIC_GRACE_SECONDS
+            if now - entry.otel_missing_since >= grace:
+                stale.append(pid)
+        for pid in stale:
             entry = self._sessions[pid]
             logger.info(
                 "remote session expired host=%s cwd=%s state=%s",
@@ -907,10 +937,7 @@ class AppController:
                 entry.state.value,
             )
             self._remove_session(pid)
-            changed = True
-
-        if changed:
-            self._refresh_ui()
+        return bool(stale)
 
     def _apply_otel_state(self, *, pid: int, session_state: "SessionState") -> bool:
         """Apply an OTEL-reported state to an entry. Returns True on change."""
