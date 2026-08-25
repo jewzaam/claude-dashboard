@@ -1389,7 +1389,7 @@ class MainWindow:
         """Foreground for the right-side container/host label."""
         if row.remote_host:
             return self._settings.color_remote
-        if row.sandbox_profile == "personal":
+        if config.is_personal_profile(profile=row.sandbox_profile):
             return _COLOR_PROFILE_PERSONAL
         return _COLOR_CONTAINER_FG
 
