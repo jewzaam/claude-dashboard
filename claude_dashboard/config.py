@@ -103,6 +103,20 @@ class SandboxPhase(Enum):
     UNKNOWN = "Unknown"
 
 
+# Sandbox profiles: only "work" is treated as non-personal. openshell-sandbox
+# grows profiles ("personal", "home", …) and the dashboard should not need a
+# release to learn each one — enumerate the exception, not the members.
+WORK_PROFILE = "work"
+
+
+def is_personal_profile(*, profile: str) -> bool:
+    """True for a sandbox profile that is not the work one.
+
+    Empty means "not a sandbox" (local and remote sessions), never personal.
+    """
+    return bool(profile) and profile != WORK_PROFILE
+
+
 class GitStatus(Enum):
     """Git working tree status for flag dot display."""
 

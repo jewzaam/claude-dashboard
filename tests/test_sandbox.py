@@ -537,3 +537,71 @@ class TestSandboxVSCodeDisconnect:
 
         assert entry.state == StatusState.IDLE
         assert entry.state_cleared_from == "ready"
+
+
+class TestSandboxProfileGrouping:
+    """Any profile but "work" is personal — openshell-sandbox adds profiles
+    ("home", …) without the dashboard shipping a release per name."""
+
+    def test_is_personal_profile(self):
+        from claude_dashboard import config
+
+        assert config.is_personal_profile(profile="personal") is True
+        assert config.is_personal_profile(profile="home") is True
+        assert config.is_personal_profile(profile="anything-new") is True
+        assert config.is_personal_profile(profile="work") is False
+        # Empty means "not a sandbox" — local and remote rows must not group
+        # or colour as personal.
+        assert config.is_personal_profile(profile="") is False
+
+    @staticmethod
+    def _entry(*, pid, profile):
+        from claude_dashboard.controller import _SessionEntry
+        from claude_dashboard.session import SessionInfo
+
+        entry = _SessionEntry(
+            SessionInfo(pid=pid, session_id=f"s{pid}", cwd=f"~/zz{pid}", started_at=0)
+        )
+        entry.sandbox = True
+        entry.sandbox_profile = profile
+        return entry
+
+    def test_home_sorts_with_personal_above_work(self):
+        from claude_dashboard.controller import AppController
+
+        c = object.__new__(AppController)
+        work = self._entry(pid=-1, profile="work")
+        home = self._entry(pid=-2, profile="home")
+        personal = self._entry(pid=-3, profile="personal")
+        c._sessions = {-1: work, -2: home, -3: personal}
+        ordered = [e.sandbox_profile for e in c._sorted_entries()]
+        assert ordered.index("work") == 2
+
+    def test_home_gets_personal_foreground(self):
+        from claude_dashboard.config import StatusState
+        from claude_dashboard.models import SessionRow
+        from claude_dashboard.session import SessionInfo
+        from claude_dashboard.ui.main_window import (
+            _COLOR_CONTAINER_FG,
+            _COLOR_PROFILE_PERSONAL,
+            MainWindow,
+        )
+
+        def fg(profile):
+            row = SessionRow(
+                session=SessionInfo(pid=-1, session_id="s", cwd="~/x", started_at=0),
+                state=StatusState.IDLE,
+                container=None,
+                branch="",
+                flagged=False,
+                git_status=GitStatus.CLEAN,
+                merged=False,
+                agent_count=0,
+                unattached=False,
+                sandbox_profile=profile,
+            )
+            return MainWindow._container_fg(MagicMock(), row)
+
+        assert fg("home") == _COLOR_PROFILE_PERSONAL
+        assert fg("personal") == _COLOR_PROFILE_PERSONAL
+        assert fg("work") == _COLOR_CONTAINER_FG

@@ -145,6 +145,15 @@ equal to the sandbox directory name).
 
 Sandboxes never render as ghosts — always state color background + state emoji. Grey text (`_COLOR_CONTAINER_FG`) when VS Code disconnected, normal contrast when connected. Connection state comes from the `window-calls` D-Bus window scan only — never from OTEL or PID. That extension is a hard dependency: `__main__.main()` calls `window_calls_available()` on Linux and exits with an install message if D-Bus does not answer. Without the check a missing extension silently dims every sandbox row and drops sandbox tooltips (`_update_last_prompts()` skips `unattached` entries), which reads as a rendering bug. `sandbox_connected` field on SessionRow carries VS Code status. `unattached` passed as False for sandboxes in SessionRow (internally still tracked for VS Code detection). Gone from openshell → removed from dashboard entirely (no ghost state). Sandbox Ready→Idle automatically when VS Code disconnects.
 
+### Sandbox profiles — "work" is the exception, everything else is personal
+
+`config.is_personal_profile()` is the single test (used by `_sorted_entries()`
+for the grouping and `_container_fg()` for the purple label). It returns true
+for any non-empty profile except `work`, so a new openshell-sandbox profile
+(`home`, whatever comes next) groups and colours correctly with no dashboard
+change. Empty profile means "not a sandbox" — local and remote rows — and is
+never personal. **Do not turn this into a list of personal profile names.**
+
 ### Sandbox removal protection
 
 When `discover_sandbox_sessions()` returns empty but sandbox entries exist, skip removal — likely a transient openshell failure, not all sandboxes vanishing. Protects against spurious removal on openshell errors.

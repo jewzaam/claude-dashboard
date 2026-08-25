@@ -1075,7 +1075,11 @@ class AppController:
         return sorted(
             self._sessions.values(),
             key=lambda e: (
-                0 if e.remote_host else (1 if e.sandbox_profile == "personal" else 2),
+                (
+                    0
+                    if e.remote_host
+                    else (1 if config.is_personal_profile(profile=e.sandbox_profile) else 2)
+                ),
                 e.remote_host.lower(),
                 cwd_relative_to_home(cwd=e.session.cwd).lower(),
             ),
