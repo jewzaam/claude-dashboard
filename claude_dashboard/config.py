@@ -42,6 +42,14 @@ STATE_FILE = CLAUDE_HOME / "claude-dashboard" / "session-state.json"
 # Poll interval
 DEFAULT_POLL_INTERVAL_SECONDS = 3
 
+# Grace period before a remote row is removed for having no state metric.
+# A prompt submitted after >60s idle leaves the session in none of the three
+# state metrics until its first api_request lands: `ready` goes false the
+# moment user_prompt outranks Stop, `working` counts no event yet. Measured
+# against live Loki: median 21s, max 80s. Without a grace the row disappears
+# and reappears on every idle→working transition.
+REMOTE_METRIC_GRACE_SECONDS = 120
+
 # OTEL state source
 DEFAULT_PROMETHEUS_URL = "http://localhost:9090"
 # Explicit env override (None when unset) — takes precedence over the saved

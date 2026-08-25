@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from claude_dashboard import config
 from claude_dashboard.config import StatusState
 from claude_dashboard.controller import AppController, _SessionEntry
 from claude_dashboard.otel_state import SessionState
@@ -50,9 +51,17 @@ def _remote_state(
     )
 
 
-def _poll(controller: AppController, states: dict[str, SessionState]) -> None:
+def _poll(
+    controller: AppController, states: dict[str, SessionState], *, at: float = 1000.0
+) -> None:
+    """Run one OTEL poll. `at` is the wall clock the poll sees — advance it
+    past REMOTE_METRIC_GRACE_SECONDS to age a missing remote row out."""
     with patch("claude_dashboard.controller.poll_session_states", return_value=states):
-        controller._update_states_from_otel()
+        with patch("claude_dashboard.controller._now_epoch", return_value=at):
+            controller._update_states_from_otel()
+
+
+_AFTER_GRACE = 1000.0 + config.REMOTE_METRIC_GRACE_SECONDS
 
 
 def _entry_for(controller: AppController, session_id: str) -> _SessionEntry:
@@ -116,14 +125,34 @@ class TestRemoteLifecycle:
         c = _make_controller()
         _poll(c, {"abc": _remote_state(state=StatusState.READY)})
         _poll(c, {})
+        _poll(c, {}, at=_AFTER_GRACE)
         assert not c._sessions
 
     def test_working_removed_when_metric_absent(self):
         c = _make_controller()
         _poll(c, {"abc": _remote_state(state=StatusState.WORKING)})
         _poll(c, {})
+        _poll(c, {}, at=_AFTER_GRACE)
         assert not c._sessions
         assert "abc" not in c._session_id_to_pid
+
+    def test_kept_during_grace_when_metric_absent(self):
+        # The idle→working metric hole: ready has gone false, working has not
+        # counted an event yet. Row must survive it.
+        c = _make_controller()
+        _poll(c, {"abc": _remote_state(state=StatusState.READY)})
+        _poll(c, {}, at=1090.0)
+        assert "abc" in c._session_id_to_pid
+
+    def test_grace_resets_when_metric_returns(self):
+        c = _make_controller()
+        _poll(c, {"abc": _remote_state(state=StatusState.READY)})
+        _poll(c, {}, at=1090.0)
+        _poll(c, {"abc": _remote_state(state=StatusState.WORKING)}, at=1100.0)
+        assert _entry_for(c, "abc").otel_missing_since == 0.0
+        # Absence restarts from the return, not from the first miss.
+        _poll(c, {}, at=1150.0)
+        assert "abc" in c._session_id_to_pid
 
     def test_permission_sticky_when_metric_absent(self):
         c = _make_controller()
