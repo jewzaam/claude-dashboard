@@ -19,6 +19,8 @@ Claude Code emits native OTEL events → OTEL collector exports to Loki → Prom
 
 Session state metrics aggregate all activity (main + agents) by session_id. No per-agent tracking. State values: `working`, `idle`, `permission_required`, `awaiting_input`, `unknown`.
 
+Orchestrated headless children (the jewzaam-reviews `review` skill spawns `claude -p` agents carrying a `review.orchestrating_session_id` resource attribute) are counted under the launching session by the `claude_session_working` recording rule, not under their own session_id. The launching session backgrounds the run and stops, so without this it reports READY for the whole 15-50 minute review. They also get no rows of their own — nothing to attach to. `claude_session_ready` is deliberately left alone: it stays truthy for the orchestrator, and WORKING outranks READY in `STATE_PRIORITY`. Rule lives in claude-otel-stack `config/loki-rules/fake/rules.yaml`.
+
 ### Key Files
 
 | File | Purpose |
