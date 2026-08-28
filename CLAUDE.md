@@ -19,7 +19,9 @@ Claude Code emits native OTEL events → OTEL collector exports to Loki → Prom
 
 Session state metrics aggregate all activity (main + agents) by session_id. No per-agent tracking. State values: `working`, `idle`, `permission_required`, `awaiting_input`, `unknown`.
 
-Orchestrated headless children (the jewzaam-reviews `review` skill spawns `claude -p` agents carrying a `review.orchestrating_session_id` resource attribute) are counted under the launching session by the `claude_session_working` recording rule, not under their own session_id. The launching session backgrounds the run and stops, so without this it reports READY for the whole 15-50 minute review. They also get no rows of their own — nothing to attach to. `claude_session_ready` is deliberately left alone: it stays truthy for the orchestrator, and WORKING outranks READY in `STATE_PRIORITY`. Rule lives in claude-otel-stack `config/loki-rules/fake/rules.yaml`.
+Orchestrated headless children (the jewzaam-reviews `review` skill spawns `claude -p` agents carrying a `review.orchestrating_session_id` resource attribute) are folded into the launching session by the `claude_session_working` and `claude_session_ready` recording rules and dropped from `claude_session_permission`, so they publish no series of their own. The launching session backgrounds the run and stops, so without the WORKING fold it reports READY for the whole 15-50 minute review.
+
+Folding WORKING alone is not enough, and the reason is a dashboard behavior worth knowing: **every session_id whose labels match a sandbox row is applied to that one row, last poll result wins** (`_match_sandbox()` → `_apply_otel_state()`, no priority arbitration across session_ids). Children inherit the parent's environment, so their labels match the parent's sandbox row exactly; each child that finished fired its own Stop and published READY, and the last one applied overwrote the parent's WORKING. The same last-wins path means two genuinely interactive sessions in one sandbox already share a row — unrelated to reviews, not fixed. Rules live in claude-otel-stack `config/loki-rules/fake/rules.yaml`.
 
 ### Key Files
 
