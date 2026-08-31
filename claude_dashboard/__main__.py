@@ -36,6 +36,25 @@ def _is_already_running() -> bool:
         return True
 
 
+def _send_toggle() -> int:
+    """Tell the running dashboard to toggle visibility, then exit.
+
+    This is the keyboard-shortcut entry point: bind `claude-dashboard --toggle`.
+    """
+    if config.IS_WINDOWS:
+        print("ERROR: --toggle is not supported on Windows", file=sys.stderr)
+        return EXIT_ERROR
+    import signal
+
+    try:
+        pid = int(config.PID_FILE.read_text(encoding="utf-8").strip())
+        os.kill(pid, signal.SIGUSR1)
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: no running dashboard to toggle: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    return EXIT_SUCCESS
+
+
 def _install_excepthook(*, logger: logging.Logger) -> None:
     """Route uncaught exceptions through the logger so they reach --log-file."""
 
@@ -67,7 +86,15 @@ def main():
         action="store_true",
         help="ignore the saved window position and start centered on screen",
     )
+    parser.add_argument(
+        "--toggle",
+        action="store_true",
+        help="toggle visibility of the running dashboard and exit (for keyboard shortcuts)",
+    )
     args = parser.parse_args()
+
+    if args.toggle:
+        sys.exit(_send_toggle())
 
     log_fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
     if args.log_file:

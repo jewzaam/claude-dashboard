@@ -80,6 +80,16 @@ The dashboard starts an HTTP server on port 17384, discovers running sessions fr
 | `--log-file <path>` | Redirect logs to file (append mode, rotates at 2 MB) |
 | `--quiet` / `-q` | Suppress non-essential output |
 | `--reset-position` | Ignore the saved window position and start centered on screen |
+| `--toggle` | Toggle the running dashboard's visibility and exit (Linux/macOS only) |
+
+### Keyboard Shortcut for Show/Hide
+
+`claude-dashboard --toggle` does the same thing as clicking the tray icon. It reads
+`~/.claude/claude-dashboard/dashboard.pid` and sends `SIGUSR1` to the running instance,
+which toggles within 200 ms. Bind it to a key in your desktop's keyboard settings
+(GNOME: Settings → Keyboard → Custom Shortcuts).
+
+If the dashboard is not running, it prints an error and exits 1 — it does not start one.
 
 ### Recovering an Off-Screen Window
 

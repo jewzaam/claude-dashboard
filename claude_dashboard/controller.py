@@ -227,6 +227,7 @@ class AppController:
             on_toggle=lambda icon, item: self._root.after(0, self._toggle_window),
         )
         self._tray_state: StatusState | None = None
+        self._toggle_requested = False
 
         # Session visibility menu (rebuilt dynamically in _on_right_click)
         self._context_menu = tk.Menu(self._root, tearoff=0)
@@ -285,6 +286,8 @@ class AppController:
         if self._ttl_seconds > 0:
             self._root.after(self._ttl_seconds * 1000, self._quit)
 
+        self._install_toggle_signal()
+
         # Session discovery tick
         self._discovery_tick()
 
@@ -299,6 +302,33 @@ class AppController:
                 except Exception:
                     pass
         logger.info("Claude Dashboard stopped")
+
+    _SIGNAL_POLL_MS = 200
+
+    def _install_toggle_signal(self) -> None:
+        """Toggle window visibility on SIGUSR1, same as a tray click.
+
+        Lets a keyboard shortcut run:
+            kill -USR1 $(cat ~/.claude/claude-dashboard/dashboard.pid)
+
+        No-op on Windows — SIGUSR1 does not exist there.
+        """
+        if config.IS_WINDOWS:
+            return
+        import signal
+
+        signal.signal(signal.SIGUSR1, lambda *_: setattr(self, "_toggle_requested", True))
+
+        # ponytail: poll a flag instead of touching Tk from the handler. Tcl
+        # blocks in select(), so Python only runs the handler when a timer
+        # returns control to it — hence the poll, and the <=200ms latency.
+        def _pump() -> None:
+            if self._toggle_requested:
+                self._toggle_requested = False
+                self._toggle_window()
+            self._root.after(self._SIGNAL_POLL_MS, _pump)
+
+        _pump()
 
     _TICK_DEADLINE_SECONDS = 8
 
