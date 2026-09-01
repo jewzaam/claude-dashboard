@@ -31,7 +31,7 @@ Folding WORKING alone is not enough, and the reason is a dashboard behavior wort
 | `claude_dashboard/otel_state.py` | Prometheus poller for session state metrics from OTEL recording rules |
 | `claude_dashboard/loki.py` | Loki query client for session user prompt extraction (tooltips) |
 | `claude_dashboard/controller.py` | Session lifecycle, OTEL poller wiring, UI coordination, session state persistence, PID file lock |
-| `claude_dashboard/session.py` | Session discovery, PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()`, `detect_terminal_activity()` |
+| `claude_dashboard/session.py` | Session discovery (Claude + Codex), PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()`, `detect_terminal_activity()` |
 | `claude_dashboard/file_utils.py` | Atomic JSON file writes (shared by settings + state persistence) |
 | `claude_dashboard/ui/main_window.py` | Dashboard window with session rows |
 | `claude_dashboard/ui/settings_window.py` | Modal settings editor |
@@ -182,6 +182,53 @@ Sessions on another host in the same OTEL stack are discovered purely from Prome
 - **No local behaviors.** Remote rows skip git checks, ghost conversion, CWD pruning, terminal-activity scan, and click-to-foreground (left-click still clears READY→IDLE). They are never ghosts.
 - **Rendering.** Remote rows sort in a block above everything else, grouped by host then display text — host-first only became meaningful once `host_name` stopped being the sandbox's own `sandbox-<hash>` hostname. The eye icon and host label use `color_remote` (default `#0891b2`), reusing the git-status eye shape since remote rows have no local git. Tooltips are prefixed `[host]`. The "Show remote sessions" toggle (`show_remote`) hides rows without dropping them, so sticky states are not lost.
 - **Local sandbox race (accepted).** A local sandbox whose telemetry arrives before openshell lists it would briefly register as remote; sandbox discovery runs earlier in the same tick and OTEL lags 15-30s, so it does not happen in practice.
+
+### Codex sessions — the flock is the only PID handle
+
+Codex writes **no PID anywhere on disk**. Not in the rollout jsonl
+(`~/.codex/sessions/<y>/<m>/<d>/rollout-*.jsonl`), not in
+`session_index.jsonl` or `history.jsonl`, and not in any of the 38 columns of
+`threads` in `~/.codex/state_<n>.sqlite`. `logs_<n>.sqlite` has a
+`process_uuid`, which is not a PID. Do not go looking again.
+
+What exists is an exclusive flock Codex holds on
+`~/.codex/thread-writer-locks/<session_id>.lock` for the life of the session.
+`discover_codex_sessions()` stats each lock file for its inode and joins it to
+`/proc/locks`, which names the owning PID. Verified live: PID 529 (`comm` =
+`codex`) held the flock on inode 141615701, which stat'd to that session's lock
+file; the file is removed when the session ends.
+
+- **The lock is the liveness test, not the file.** A file left behind by a
+  crash resolves to no PID and the session correctly reads as gone. Do not
+  add staleness heuristics on the file.
+- **`cwd` comes from `threads.cwd`, never from `/proc/<pid>/cwd`.** Codex's
+  `/cd` moves the session's working directory without moving the process's.
+- **Linux only.** `/proc/locks` has no Windows equivalent, and psutil's
+  open-file enumeration does not report flocks there. Windows Codex sessions
+  arrive over OTEL as remote rows instead — see below.
+- **`state_<n>.sqlite` is schema-versioned**, so several can coexist. Highest
+  `n` is live (`_codex_state_db()`).
+- `SessionInfo.harness` doubles as the process name `validate_pid()` matches
+  ("claude", "codex"). Everything else in the local path is already
+  harness-agnostic: git status, ghosts, foregrounding (PID parent-walk, no
+  title matching), dtach detection, and terminal-activity scanning needed no
+  change.
+
+### Codex state metrics carry no host_name
+
+The `codex_session_*` recording rules group by
+`(session_id, project, cwd, model)` only. No `host_name`, so
+`_add_remote_session()` bails on the empty host and a Codex session on another
+machine never becomes a remote row. Local Codex is unaffected — it is matched
+by `session_id` from `discover_codex_sessions()` before the remote path is
+reached. Fixing remote Codex is stack-side work in claude-otel-stack
+(`codex/observe-hook.py` must emit `host_name`, `location`, `headless`,
+`sandbox_source`, `sandbox_openshell_name` for parity with the Claude rules).
+
+Tooltips are also Claude-only: `loki.py` queries
+`{service_name="claude-code"} | event_name="user_prompt"`, and the Codex
+observer posts the whole hook payload as an unparsed log body, so there is no
+`prompt` field to extract.
 
 ### Single-instance enforcement
 
