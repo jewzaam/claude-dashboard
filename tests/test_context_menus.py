@@ -195,16 +195,32 @@ class TestHiddenStatePersistence:
             entry.hidden = True
         assert entry.hidden is False
 
-    def test_hidden_preserved_when_sandbox_replaces_ghost(self):
-        """Ghost→sandbox transition must not unhide a hidden session."""
-        ghost = _SessionEntry(_make_session(pid=-1))
+    def test_sandbox_unhidden_when_it_replaces_hidden_ghost(self):
+        """Ghost→sandbox must unhide, same as ghost→live. A hide applied to a
+        dead ghost must not follow a new sandbox session in."""
+        from claude_dashboard.controller import AppController
+
+        ghost = _SessionEntry(_make_session(pid=-1, cwd="/tmp/sb"))
         ghost.unattached = True
         ghost.hidden = True
-        sandbox = _SessionEntry(_make_session(pid=-2))
-        sandbox.sandbox = True
-        sandbox.flagged = ghost.flagged
-        sandbox.hidden = ghost.hidden
-        assert sandbox.hidden is True
+        ghost.flagged = True
+
+        stub = object.__new__(AppController)
+        stub._sessions = {-1: ghost}
+        stub._session_id_to_pid = {}
+        stub._next_synthetic_pid = -1
+        stub._settings = MagicMock(ignore_regex="")
+        with patch(
+            "claude_dashboard.controller.sandbox_git_check",
+            return_value=(None, False, ""),
+        ):
+            stub._add_sandbox_session(_make_session(pid=0, cwd="/tmp/sb"))
+
+        new_entry = stub._sessions[-2]
+        assert new_entry.sandbox is True
+        assert new_entry.hidden is False
+        assert new_entry.flagged is True  # flag still carries over
+        assert -1 not in stub._sessions  # ghost consumed
 
 
 class TestLaunchVscode:

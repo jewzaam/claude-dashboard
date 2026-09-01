@@ -14,10 +14,19 @@ logger = logging.getLogger(__name__)
 
 _STATE_PRIORITY = config.STATE_PRIORITY
 
+# Codex publishes its own metric family from the same Loki ruler. Session ids
+# are UUIDs and do not collide across harnesses, so both families feed one dict.
+# The codex rules currently group by (session_id, project, cwd, model) only —
+# no host_name, so a codex session on another machine never registers as a
+# remote row (_add_remote_session bails on an empty host). Local codex is
+# matched by session_id from discover_codex_sessions() and is unaffected.
 _METRIC_TO_STATE = {
     "claude_session_permission": StatusState.PERMISSION_REQUIRED,
     "claude_session_working": StatusState.WORKING,
     "claude_session_ready": StatusState.READY,
+    "codex_session_permission": StatusState.PERMISSION_REQUIRED,
+    "codex_session_working": StatusState.WORKING,
+    "codex_session_ready": StatusState.READY,
 }
 
 _METRICS = list(_METRIC_TO_STATE.keys())

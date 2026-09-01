@@ -4,6 +4,8 @@
 import json
 import logging
 import os
+import re
+import sqlite3
 import subprocess
 import time
 from dataclasses import dataclass
@@ -30,6 +32,8 @@ class SessionInfo:
     entrypoint: str = "cli"
     sandbox_phase: str = ""
     sandbox_profile: str = ""
+    # Also the process name validate_pid() matches on — true for both harnesses.
+    harness: str = "claude"
 
 
 # Entrypoints written by non-interactive runs (`claude -p`, Agent SDK). They have
@@ -80,18 +84,152 @@ def discover_sessions(*, sessions_dir: Path | None = None) -> list[SessionInfo]:
     return sorted(sessions, key=lambda s: cwd_relative_to_home(cwd=s.cwd).lower())
 
 
-def validate_pid(*, pid: int) -> bool:
-    """Check if a process with the given PID is alive and is a Claude process.
+# /proc/locks device:inode column, e.g. "00:25:141615701". Major/minor are hex,
+# the inode is decimal.
+_PROC_LOCK_DEV_INODE = re.compile(r"^[0-9a-f]+:[0-9a-f]+:(\d+)$")
 
-    On Linux, also checks dtach: if Claude is running under dtach and no client
-    is attached, returns False so the session renders as a ghost.
+
+def _flock_owners() -> dict[int, int]:
+    """Map inode -> owning PID for every advisory lock the kernel holds.
+
+    Linux only. Blocked-waiter lines are prefixed with "->", which shifts every
+    column, so the device:inode token is located by shape rather than by index
+    and the PID is read from the token before it.
+    """
+    owners: dict[int, int] = {}
+    try:
+        with open("/proc/locks", encoding="utf-8") as handle:
+            for line in handle:
+                fields = line.split()
+                for i, token in enumerate(fields):
+                    if i == 0:
+                        continue
+                    match = _PROC_LOCK_DEV_INODE.match(token)
+                    if not match:
+                        continue
+                    try:
+                        owners.setdefault(int(match.group(1)), int(fields[i - 1]))
+                    except ValueError:
+                        pass
+                    break
+    except OSError as exc:
+        logger.debug("cannot read /proc/locks: %s", exc)
+    return owners
+
+
+def _state_db_version(path: Path) -> int:
+    match = re.search(r"_(\d+)\.", path.name)
+    return int(match.group(1)) if match else -1
+
+
+def _codex_state_db(*, codex_home: Path) -> Path | None:
+    """Newest schema-versioned Codex state DB, or None."""
+    candidates = sorted(codex_home.glob(config.CODEX_STATE_DB_GLOB), key=_state_db_version)
+    return candidates[-1] if candidates else None
+
+
+def _codex_threads(*, db: Path, session_ids: list[str]) -> dict[str, tuple[str, int, str]]:
+    """Look up cwd, created_at_ms and source for the given Codex thread ids.
+
+    Opened read-only against the live database. `cwd` tracks Codex's `/cd`,
+    which the process working directory does not.
+    """
+    placeholders = ",".join("?" * len(session_ids))
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1)
+    except sqlite3.Error as exc:
+        logger.debug("cannot open codex state db %s: %s", db, exc)
+        return {}
+    try:
+        rows = conn.execute(
+            f"SELECT id, cwd, created_at_ms, source FROM threads WHERE id IN ({placeholders})",
+            session_ids,
+        ).fetchall()
+    except sqlite3.Error as exc:
+        logger.debug("codex threads query failed: %s", exc)
+        return {}
+    finally:
+        conn.close()
+    return {row[0]: (row[1] or "", int(row[2] or 0), row[3] or "cli") for row in rows}
+
+
+def discover_codex_sessions(*, codex_home: Path | None = None) -> list[SessionInfo]:
+    """Discover live Codex sessions from the flocks Codex holds per session.
+
+    Codex writes no PID anywhere: not in the rollout jsonl, not in
+    session_index.jsonl, not in any column of the state DB (38 columns on
+    `threads`, none process-related). The one handle on a running session is
+    the exclusive flock it takes on
+    `~/.codex/thread-writer-locks/<session_id>.lock`; /proc/locks names the
+    owning PID, and the lock file's inode is the join. Verified live: PID 529
+    held the flock on inode 141615701, which stat'd to that session's lock file.
+
+    The lock is released and the file removed when the session ends, but the
+    lock is what proves liveness — a file left behind by a crash resolves to no
+    PID and the session correctly reads as gone.
+
+    Returns [] off Linux: /proc/locks does not exist, and psutil's open-file
+    enumeration is the only alternative — slow, and it does not report flocks on
+    Windows anyway. Those sessions still arrive over OTEL as remote rows.
+    """
+    if not config.IS_LINUX:
+        return []
+    home = codex_home or config.CODEX_HOME
+    locks_dir = home / "thread-writer-locks"
+    if not locks_dir.is_dir():
+        return []
+
+    owners = _flock_owners()
+    if not owners:
+        return []
+
+    live: dict[str, int] = {}
+    for lock_file in locks_dir.glob("*.lock"):
+        try:
+            pid = owners.get(lock_file.stat().st_ino)
+        except OSError:
+            continue
+        if pid:
+            live[lock_file.stem] = pid
+    if not live:
+        return []
+
+    db = _codex_state_db(codex_home=home)
+    threads = _codex_threads(db=db, session_ids=list(live)) if db else {}
+
+    sessions = []
+    for session_id, pid in live.items():
+        cwd, started_at, source = threads.get(session_id, ("", 0, "cli"))
+        if not cwd:
+            logger.debug("codex session %s has no cwd in state db", session_id)
+            continue
+        sessions.append(
+            SessionInfo(
+                pid=pid,
+                session_id=session_id,
+                cwd=cwd,
+                started_at=started_at,
+                entrypoint=source,
+                harness="codex",
+            )
+        )
+    return sorted(sessions, key=lambda s: cwd_relative_to_home(cwd=s.cwd).lower())
+
+
+def validate_pid(*, pid: int, harness: str = "claude") -> bool:
+    """Check if a process with the given PID is alive and belongs to `harness`.
+
+    `harness` doubles as the process name to match ("claude", "codex").
+
+    On Linux, also checks dtach: if the process is running under dtach and no
+    client is attached, returns False so the session renders as a ghost.
     """
     try:
         if not psutil.pid_exists(pid):
             return False
         proc = psutil.Process(pid)
         name = proc.name().lower()
-        if "claude" not in name:
+        if harness not in name:
             return False
         if config.IS_LINUX and not _is_dtach_attached(proc):
             return False

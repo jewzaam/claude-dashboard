@@ -34,6 +34,7 @@ from claude_dashboard.session import (
     detect_branch,
     detect_terminal_activity,
     discover_sandbox_sessions,
+    discover_codex_sessions,
     discover_sessions,
     git_check,
     read_trunk_info,
@@ -347,12 +348,12 @@ class AppController:
         """
         try:
             tick_start = time.monotonic()
-            discovered = discover_sessions()
+            discovered = discover_sessions() + discover_codex_sessions()
             alive_pids = set()
 
             # 1. Register new live sessions
             for session in discovered:
-                if not validate_pid(pid=session.pid):
+                if not validate_pid(pid=session.pid, harness=session.harness):
                     continue
                 session.pid_alive = True
                 alive_pids.add(session.pid)
@@ -602,6 +603,8 @@ class AppController:
             if old:
                 entry.flagged = old.flagged
                 # Live session replaces ghost — always unhide so it's visible
+                if old.hidden:
+                    logger.info("hide: unhide %s (live session replaced ghost)", session.cwd)
                 entry.hidden = False
                 logger.debug(
                     "pid=%d replaced unattached placeholder for %s", session.pid, session.cwd
@@ -651,7 +654,11 @@ class AppController:
             old = self._sessions.pop(unattached_pid, None)
             if old:
                 entry.flagged = old.flagged
-                entry.hidden = old.hidden
+                # Live sandbox replaces ghost — always unhide, same as _add_session.
+                # A hide applied to a dead ghost must not follow a new session in.
+                if old.hidden:
+                    logger.info("hide: unhide %s (sandbox session replaced ghost)", session.cwd)
+                entry.hidden = False
         else:
             self._apply_saved_state(entry)
 
@@ -777,6 +784,7 @@ class AppController:
             if saved.get("flagged"):
                 entry.flagged = True
             if saved.get("hidden"):
+                logger.info("hide: ghost %s restored hidden from state file", cwd)
                 entry.hidden = True
             last_active = saved.get("last_active")
             if isinstance(last_active, (int, float)):
@@ -821,6 +829,7 @@ class AppController:
         entry.remote_host = host
         self._apply_saved_state(entry)
         if saved.get("hidden"):
+            logger.info("hide: remote %s:%s restored hidden from state file", host, cwd)
             entry.hidden = True
         self._sessions[synthetic_pid] = entry
         self._session_id_to_pid[session_id] = synthetic_pid
@@ -1362,7 +1371,7 @@ class AppController:
 
         def hide():
             entry.hidden = True
-            logger.info("pid=%d hidden via context menu", session.pid)
+            logger.info("hide: pid=%d hidden via context menu", session.pid)
             self._save_session_state()
             self._refresh_ui()
 
@@ -1391,7 +1400,7 @@ class AppController:
         def hide():
             if entry:
                 entry.hidden = True
-                logger.info("sandbox %s hidden via context menu", cwd_display)
+                logger.info("hide: sandbox %s hidden via context menu", cwd_display)
                 self._save_session_state()
                 self._refresh_ui()
 
@@ -1440,7 +1449,7 @@ class AppController:
             entry = self._sessions.get(session.pid)
             if entry:
                 entry.hidden = True
-                logger.info("pid=%d ghost hidden via context menu", session.pid)
+                logger.info("hide: pid=%d ghost hidden via context menu", session.pid)
                 self._save_session_state()
                 self._refresh_ui()
 
@@ -1548,7 +1557,7 @@ class AppController:
             if _is_toggleable(entry):
                 entry.hidden = hide
         self._ghosts_hidden = hide
-        logger.info("ghosts %s via title bar", "hidden" if hide else "shown")
+        logger.info("hide: all ghosts %s via title bar middle-click", "hidden" if hide else "shown")
         self._save_session_state()
         self._refresh_ui()
 
@@ -1587,6 +1596,9 @@ class AppController:
 
             def make_toggle(e=entry, v=var):
                 def toggle():
+                    logger.info(
+                        "hide: %s set hidden=%s via sessions menu", e.session.cwd, not v.get()
+                    )
                     e.hidden = not v.get()
                     self._save_session_state()
                     self._refresh_ui()

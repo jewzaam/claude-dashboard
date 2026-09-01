@@ -23,6 +23,15 @@ SUBPROCESS_FLAGS: int = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 CLAUDE_HOME = Path.home() / ".claude"
 SESSIONS_DIR = CLAUDE_HOME / "sessions"
 
+# Codex CLI paths. Codex records no PID anywhere on disk; the only handle on a
+# live session is the flock it holds on thread-writer-locks/<session_id>.lock,
+# resolved to a PID through /proc/locks. Linux only — see discover_codex_sessions.
+CODEX_HOME = Path.home() / ".codex"
+CODEX_LOCKS_DIR = CODEX_HOME / "thread-writer-locks"
+# state_<n>.sqlite — n is a schema version, so a machine can carry several.
+# The highest is the live one.
+CODEX_STATE_DB_GLOB = "state_*.sqlite"
+
 # Application settings path
 if IS_WINDOWS:
     _appdata = Path.home() / "AppData" / "Roaming"
