@@ -272,6 +272,7 @@ Feature specs in `specs/<nnn>-<name>/`, project-wide design notes in `docs/`, us
 - Session state (flagged, hidden, state) saved to `~/.claude/claude-dashboard/session-state.json`
 - All persisted across dashboard restarts
 - Duplicate-CWD sessions: hidden only persists as true if ALL sessions with that CWD are hidden
+- A live session replacing a ghost is **always** unhidden — sandbox and non-sandbox alike (`_add_sandbox_session` / `_add_session`). `hidden` is keyed by CWD only, so preserving it across the ghost→live transition makes one old hide silently swallow every future session in that directory. Was once "fixed" the other way for sandboxes (4c4e4df); that is the regression. Flagged does carry over; hidden does not.
 - Flag color determined by git status, configurable via 5 `color_flag_*` settings (manual, unstaged, staged, unpushed, unmerged)
 - Sandboxes always appear in sessions visibility menu regardless of `unattached` state, so they can be unhidden
 
