@@ -34,6 +34,7 @@ from claude_dashboard.session import (
     detect_branch,
     detect_terminal_activity,
     discover_sandbox_sessions,
+    discover_codex_sessions,
     discover_sessions,
     git_check,
     read_trunk_info,
@@ -347,12 +348,12 @@ class AppController:
         """
         try:
             tick_start = time.monotonic()
-            discovered = discover_sessions()
+            discovered = discover_sessions() + discover_codex_sessions()
             alive_pids = set()
 
             # 1. Register new live sessions
             for session in discovered:
-                if not validate_pid(pid=session.pid):
+                if not validate_pid(pid=session.pid, harness=session.harness):
                     continue
                 session.pid_alive = True
                 alive_pids.add(session.pid)
