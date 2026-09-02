@@ -37,6 +37,21 @@ def _stream(
     }
 
 
+def _codex_stream(*, session_id: str, prompt: str, sandbox_source: str = "") -> dict:
+    """Build a Codex UserPromptSubmit stream with its payload in the body."""
+    stream = {
+        "service_name": "codex-hook-observer",
+        "event_name": "codex.hook.UserPromptSubmit",
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": session_id,
+        "observed_timestamp": "1718000000000000000",
+    }
+    if sandbox_source:
+        stream["sandbox_source"] = sandbox_source
+    body = json.dumps({"hook_event_name": "UserPromptSubmit", "prompt": prompt})
+    return {"stream": stream, "values": [["1718000000000000000", body]]}
+
+
 def _fake_urlopen_factory(streams: list[dict]):
     """Create a fake urlopen that returns the given streams for any request."""
 
@@ -163,6 +178,15 @@ class TestPollLastPrompts:
         ):
             result = poll_last_prompts(loki_url="http://localhost:3100", session_ids=["s1", "s2"])
         assert result == {"s1": "fix bug", "s2": "add feature"}
+
+    def test_returns_codex_prompt_from_log_body(self):
+        streams = [_codex_stream(session_id="codex-1", prompt="inspect the tooltip")]
+        with patch(
+            "claude_dashboard.loki.urllib.request.urlopen",
+            side_effect=_fake_urlopen_factory(streams),
+        ):
+            result = poll_last_prompts(loki_url="http://localhost:3100", session_ids=["codex-1"])
+        assert result == {"codex-1": "inspect the tooltip"}
 
     def test_empty_args_returns_empty(self):
         result = poll_last_prompts(loki_url="http://localhost:3100")
@@ -317,6 +341,24 @@ class TestPollLastPrompts:
                 sandbox_sources=["my-project-main"],
             )
         assert result == {"my-project-main": "sandbox prompt"}
+
+    def test_sandbox_sources_query_returns_codex_prompt(self):
+        streams = [
+            _codex_stream(
+                session_id="codex-1",
+                prompt="sandbox codex prompt",
+                sandbox_source="my-project-main",
+            )
+        ]
+        with patch(
+            "claude_dashboard.loki.urllib.request.urlopen",
+            side_effect=_fake_urlopen_factory(streams),
+        ):
+            result = poll_last_prompts(
+                loki_url="http://localhost:3100",
+                sandbox_sources=["my-project-main"],
+            )
+        assert result == {"my-project-main": "sandbox codex prompt"}
 
     def test_sandbox_query_filters_on_sandbox_source(self):
         """host_name is the machine now — the sandbox query must not use it."""
