@@ -55,7 +55,7 @@ When a session's PID dies or a `SessionEnd` hook fires, the dashboard converts i
 - Ghost emoji (`👻`) instead of status emoji
 - Dimmed text color
 - Left-click opens the project in VS Code (with a `.vscode/tasks.json` template that auto-launches Claude)
-- Right-click offers: Open in VS Code, Open PR, Hide, Dismiss
+- Right-click offers: Open in VS Code, Open PR, Dismiss
 
 Ghosts persist across dashboard restarts via `session-state.json`. Dismissing a ghost removes it permanently.
 
@@ -71,7 +71,6 @@ When you run many Claude sessions across different projects, sessions end throug
 
 Session state is saved to `~/.claude/claude-dashboard/session-state.json` on every UI refresh. This preserves across dashboard restarts:
 
-- **Hidden state** — which sessions you've hidden from view
 - **Flagged state** — manual flags you've toggled
 - **Session state** — last known state (ready, idle, etc.)
 - **Agent state** — active agents and their states
@@ -97,4 +96,4 @@ Only `sdk-cli` is treated as headless (`HEADLESS_ENTRYPOINTS` in `session.py`). 
 
 ## Session Filtering
 
-The `ignore_regex` setting filters sessions by CWD. Sessions whose CWD matches the regex are excluded entirely from the dashboard (not just hidden — they don't appear in menus or state files).
+The `ignore_regex` setting filters sessions by CWD. Sessions whose CWD matches the regex are excluded entirely from the dashboard — they don't appear in menus or state files.

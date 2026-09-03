@@ -63,6 +63,9 @@ class Settings:
     # Remote sessions (discovered from OTEL metrics, not local processes)
     show_remote: bool = config.DEFAULT_SHOW_REMOTE
 
+    # Ghost row visibility — title-bar middle-click toggles this
+    hide_ghosts: bool = config.DEFAULT_HIDE_GHOSTS
+
     # General UI
     window_bg: str = config.DEFAULT_WINDOW_BG
 

@@ -28,11 +28,11 @@ The menu depends on the row type. Every menu opens with the row's path as a disa
 
 | Row type | Items |
 |----------|-------|
-| Live session | Hide, Clear State |
-| Sandbox | Hide, Clear State, Delete Sandbox |
-| Ghost | Hide, Dismiss |
+| Live session | Clear State |
+| Sandbox | Clear State, Delete Sandbox |
+| Ghost | Dismiss |
 
-Hide removes the row from the dashboard but keeps it in the Sessions menu for unhiding. Dismiss removes a ghost permanently. Delete Sandbox removes the OpenShell sandbox itself.
+Dismiss removes a ghost row. Delete Sandbox removes the OpenShell sandbox itself. There is no Hide: an active session is always visible.
 
 ## Title Bar
 
@@ -42,7 +42,7 @@ Toggle window shade — collapse to title bar only, or expand to show all rows. 
 
 ### Middle-Click
 
-Toggle ghost session visibility — hide all ghosts, or show them again. Disconnected sandboxes toggle alongside local ghosts. Flagged rows and error sandboxes are never hidden this way. Live hidden sessions are unaffected.
+Toggle ghost row visibility — hide all ghosts, or show them again. Sandboxes with no VS Code window attached toggle alongside local ghosts, as do error sandboxes. Flagged rows stay pinned, and rows with VS Code connected are unaffected. Nothing is remembered per session: attach VS Code to a concealed sandbox and its row returns with the toggle still on.
 
 While shaded, middle-click acts as a left-click: it expands the window and leaves ghost visibility as it was.
 
@@ -80,9 +80,8 @@ The arrow takes the same git status color the eye would use, falling back to the
 | Action | Result |
 |--------|--------|
 | Left-click (or "Toggle" menu item) | Show or hide the dashboard window |
-| Unhide: \<session\> | Unhide a specific hidden session |
 | Settings | Open settings dialog |
 | Restart | Save state and restart |
 | Quit | Save state and exit |
 
-The tray menu is rebuilt on each open and includes one "Unhide" entry per hidden session. The icon color reflects the highest-priority state across all sessions.
+The icon color reflects the highest-priority state across all visible sessions.

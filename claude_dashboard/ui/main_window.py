@@ -517,7 +517,7 @@ class MainWindow:
         )
         self._title_text_label.pack(side=tk.LEFT, padx=(_ELEMENT_GAP, 0))
 
-        # Right side: session counts ({active} (+hidden) [+ghost])
+        # Right side: session counts ({active} [+concealed ghosts])
         self._title_counts_label = tk.Label(
             frame,
             text="",
@@ -720,8 +720,7 @@ class MainWindow:
 
         Interaction with shade state:
         - Shaded: unshade only — same as a left-click, ghosts untouched
-        - Unshaded + ghosts hidden: show ghosts
-        - Unshaded + ghosts shown: hide ghosts (flagged excluded)
+        - Unshaded: toggle ghost visibility (flagged ghosts stay pinned)
         """
         if self._filter_text:
             self._exit_filter_mode()
@@ -764,7 +763,6 @@ class MainWindow:
         self,
         *,
         active: int = 0,
-        hidden_live: int = 0,
         hidden_ghost: int = 0,
         highest_state_color: str = "",
         highest_git_status: "GitStatus | None" = None,
@@ -779,7 +777,7 @@ class MainWindow:
             self._title_text_label.configure(text=config.TITLE_TEXT)
 
         # Right-side counts — always shown, even at zero
-        counts = f"{{{active}}} ({hidden_live}) [{hidden_ghost}]"
+        counts = f"{{{active}}} [{hidden_ghost}]"
         self._title_counts_label.configure(text=counts, fg=fg)
 
         # Update title bar height
@@ -1144,10 +1142,10 @@ class MainWindow:
             text=config.TITLE_TEXT,
             fg=self._title_fg,
         )
-        # Filter mode reveals hidden sessions (controller passes them through while
-        # _filter_text is set).  Ask the controller to re-supply so the pre-filter
-        # view comes back; rendering _last_sessions here would keep them on screen
-        # until the next 5s poll.
+        # Filter mode reveals concealed ghosts (controller passes them through
+        # while _filter_text is set).  Ask the controller to re-supply so the
+        # pre-filter view comes back; rendering _last_sessions here would keep
+        # them on screen until the next 5s poll.
         if self._on_filter_exit:
             self._on_filter_exit()
         else:

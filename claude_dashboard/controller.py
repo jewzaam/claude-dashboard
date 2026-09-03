@@ -101,7 +101,6 @@ class _SessionEntry:
         "session",
         "container",
         "state",
-        "hidden",
         "branch",
         "flagged",
         "git_status",
@@ -122,7 +121,6 @@ class _SessionEntry:
         self.session = session
         self.container: ContainerInfo | None = None
         self.state: StatusState = StatusState.IDLE
-        self.hidden: bool = False
         self.branch: str = ""
         self.flagged: bool = False
         self.git_status: GitStatus = GitStatus.CLEAN
@@ -238,7 +236,6 @@ class AppController:
 
         # Incremental counter for synthetic PIDs (unattached placeholders)
         self._next_synthetic_pid: int = -1
-        self._ghosts_hidden: bool = False
 
         # Load saved session state for restart continuity
         self._saved_state = self._load_session_state()
@@ -602,10 +599,6 @@ class AppController:
             old = self._sessions.pop(unattached_pid, None)
             if old:
                 entry.flagged = old.flagged
-                # Live session replaces ghost — always unhide so it's visible
-                if old.hidden:
-                    logger.info("hide: unhide %s (live session replaced ghost)", session.cwd)
-                entry.hidden = False
                 logger.debug(
                     "pid=%d replaced unattached placeholder for %s", session.pid, session.cwd
                 )
@@ -654,11 +647,6 @@ class AppController:
             old = self._sessions.pop(unattached_pid, None)
             if old:
                 entry.flagged = old.flagged
-                # Live sandbox replaces ghost — always unhide, same as _add_session.
-                # A hide applied to a dead ghost must not follow a new session in.
-                if old.hidden:
-                    logger.info("hide: unhide %s (sandbox session replaced ghost)", session.cwd)
-                entry.hidden = False
         else:
             self._apply_saved_state(entry)
 
@@ -783,9 +771,6 @@ class AppController:
             entry.unattached = True
             if saved.get("flagged"):
                 entry.flagged = True
-            if saved.get("hidden"):
-                logger.info("hide: ghost %s restored hidden from state file", cwd)
-                entry.hidden = True
             last_active = saved.get("last_active")
             if isinstance(last_active, (int, float)):
                 entry.last_active = float(last_active)
@@ -828,9 +813,6 @@ class AppController:
         entry = _SessionEntry(session)
         entry.remote_host = host
         self._apply_saved_state(entry)
-        if saved.get("hidden"):
-            logger.info("hide: remote %s:%s restored hidden from state file", host, cwd)
-            entry.hidden = True
         self._sessions[synthetic_pid] = entry
         self._session_id_to_pid[session_id] = synthetic_pid
         logger.info("remote session restored host=%s cwd=%s state=%s", host, cwd, entry.state.value)
@@ -1157,7 +1139,7 @@ class AppController:
         bypass = any(
             entry.state in (StatusState.PERMISSION_REQUIRED, StatusState.AWAITING_INPUT)
             for entry in all_entries
-            if not entry.hidden
+            if not self._is_concealed(entry)
         )
 
         if bypass:
@@ -1188,7 +1170,7 @@ class AppController:
     def _do_refresh_ui(self, all_entries: list["_SessionEntry"]):
         """Actual UI refresh logic."""
         for entry in all_entries:
-            if not entry.hidden:
+            if not self._is_concealed(entry):
                 logger.debug(
                     "ROW cwd=%s sandbox=%s unattached=%s state=%s pid=%d",
                     cwd_basename(cwd=entry.session.cwd),
@@ -1216,7 +1198,7 @@ class AppController:
                 remote_host=entry.remote_host,
             )
             for entry in all_entries
-            if (not entry.hidden or self._main_window._filter_text)
+            if (not self._is_concealed(entry) or self._main_window._filter_text)
             and (self._settings.show_remote or not entry.remote_host)
         ]
         self._main_window.update_sessions(visible_states)
@@ -1226,13 +1208,11 @@ class AppController:
             self._tray_state = highest
             update_tray_icon(self._tray_icon, color=self._tray_color_for_state(highest))
 
-        active = sum(1 for e in all_entries if not e.hidden and not e.unattached)
-        hidden_live = sum(1 for e in all_entries if e.hidden and not e.unattached)
-        hidden_ghost = sum(1 for e in all_entries if e.hidden and e.unattached)
+        active = sum(1 for e in all_entries if not e.unattached)
+        hidden_ghost = sum(1 for e in all_entries if self._is_concealed(e))
         highest_git = self._highest_title_git_status(visible_states)
         self._main_window.update_title_bar(
             active=active,
-            hidden_live=hidden_live,
             hidden_ghost=hidden_ghost,
             highest_state_color=self._tray_color_hex_for_state(highest),
             highest_git_status=highest_git,
@@ -1359,7 +1339,7 @@ class AppController:
         return True
 
     def _show_live_context_menu(self, session: SessionInfo, x: int, y: int):
-        """Live session menu: Hide, Clear State."""
+        """Live session menu: Clear State."""
         if not self._begin_context_menu():
             return
 
@@ -1369,12 +1349,6 @@ class AppController:
 
         cwd_display = cwd_relative_to_home(cwd=session.cwd)
 
-        def hide():
-            entry.hidden = True
-            logger.info("hide: pid=%d hidden via context menu", session.pid)
-            self._save_session_state()
-            self._refresh_ui()
-
         def clear_state():
             entry.state_cleared_from = entry.state.value
             entry.state = StatusState.IDLE
@@ -1383,26 +1357,18 @@ class AppController:
 
         self._context_menu.add_command(label=cwd_display, state=tk.DISABLED)
         self._context_menu.add_separator()
-        self._context_menu.add_command(label="Hide", command=hide)
         self._context_menu.add_command(label="Clear State", command=clear_state)
 
         self._context_menu_open = True
         popup_menu_clamped(self._context_menu, x=x, y=y)
 
     def _show_sandbox_context_menu(self, session: SessionInfo, x: int, y: int):
-        """Live sandbox menu: Hide, Clear State."""
+        """Live sandbox menu: Clear State, Delete Sandbox."""
         if not self._begin_context_menu():
             return
 
         cwd_display = cwd_relative_to_home(cwd=session.cwd)
         entry = self._sessions.get(session.pid)
-
-        def hide():
-            if entry:
-                entry.hidden = True
-                logger.info("hide: sandbox %s hidden via context menu", cwd_display)
-                self._save_session_state()
-                self._refresh_ui()
 
         def clear_state():
             if entry:
@@ -1426,7 +1392,6 @@ class AppController:
 
         self._context_menu.add_command(label=f"Sandbox: {cwd_display}", state=tk.DISABLED)
         self._context_menu.add_separator()
-        self._context_menu.add_command(label="Hide", command=hide)
         self._context_menu.add_command(label="Clear State", command=clear_state)
         self._context_menu.add_command(label="Delete Sandbox", command=delete_sandbox)
 
@@ -1434,7 +1399,7 @@ class AppController:
         popup_menu_clamped(self._context_menu, x=x, y=y)
 
     def _show_ghost_context_menu(self, session: SessionInfo, x: int, y: int):
-        """Ghost (local) menu: Hide, Dismiss."""
+        """Ghost (local) menu: Dismiss."""
         if not self._begin_context_menu():
             return
 
@@ -1445,17 +1410,8 @@ class AppController:
             logger.info("pid=%d ghost dismissed via context menu", session.pid)
             self._refresh_ui()
 
-        def hide():
-            entry = self._sessions.get(session.pid)
-            if entry:
-                entry.hidden = True
-                logger.info("hide: pid=%d ghost hidden via context menu", session.pid)
-                self._save_session_state()
-                self._refresh_ui()
-
         self._context_menu.add_command(label=f"Ghost: {cwd_display}", state=tk.DISABLED)
         self._context_menu.add_separator()
-        self._context_menu.add_command(label="Hide", command=hide)
         self._context_menu.add_command(label="Dismiss", command=dismiss)
 
         self._context_menu_open = True
@@ -1538,27 +1494,38 @@ class AppController:
     def _is_error_sandbox(entry: "_SessionEntry") -> bool:
         return entry.sandbox and entry.sandbox_phase == "Error"
 
-    def _on_ghost_toggle(self):
-        """Middle-click on title bar — toggle ghost session visibility.
+    def _is_concealed(self, entry: "_SessionEntry") -> bool:
+        """True when the title-bar ghost toggle is concealing this row.
 
-        If any non-flagged ghosts are visible, hide them.
-        Flagged ghosts are never hidden by this toggle.
+        The set is unchanged from when concealment was a persisted per-session
+        flag: unattached rows (dead-session placeholders, and sandboxes with no
+        VS Code window) plus Error sandboxes, minus flagged rows, which stay
+        pinned.
+
+        Being a view flag rather than session state is what makes it safe. A
+        sandbox that attaches VS Code, or a D-Bus poll that comes back with
+        windows after returning none, reappears on the next render — the old
+        `hidden` field would have kept it concealed indefinitely.
         """
+        if entry.flagged:
+            return False
+        if not (entry.unattached or self._is_error_sandbox(entry)):
+            return False
+        return self._settings.hide_ghosts
 
-        def _is_toggleable(entry: _SessionEntry) -> bool:
-            if not entry.unattached and not self._is_error_sandbox(entry):
-                return False
-            if entry.flagged:
-                return False
-            return True
+    def _on_ghost_toggle(self):
+        """Middle-click on title bar — toggle ghost row visibility.
 
-        hide = any(_is_toggleable(e) and not e.hidden for e in self._sessions.values())
-        for entry in self._sessions.values():
-            if _is_toggleable(entry):
-                entry.hidden = hide
-        self._ghosts_hidden = hide
-        logger.info("hide: all ghosts %s via title bar middle-click", "hidden" if hide else "shown")
-        self._save_session_state()
+        A single view flag, not per-session state: there is no way to conceal
+        an individual row, and nothing about concealment is stamped onto a
+        session. Flagged ghosts stay pinned through the toggle.
+        """
+        self._settings.hide_ghosts = not self._settings.hide_ghosts
+        self._save_settings_safe()
+        logger.info(
+            "ghosts %s via title bar middle-click",
+            "hidden" if self._settings.hide_ghosts else "shown",
+        )
         self._refresh_ui()
 
     # ------------------------------------------------------------------
@@ -1566,7 +1533,11 @@ class AppController:
     # ------------------------------------------------------------------
 
     def _build_sessions_menu(self, menu: tk.Menu):
-        """Populate a menu with session visibility checkboxes (live sessions only)."""
+        """Populate a menu with the global visibility toggles.
+
+        Per-session visibility checkboxes used to live here. There is no
+        per-session visibility any more — an active session is always visible.
+        """
         self._session_vars.clear()
 
         remote_var = tk.BooleanVar(value=self._settings.show_remote)
@@ -1582,34 +1553,15 @@ class AppController:
             variable=remote_var,
             command=toggle_remote,
         )
-        menu.add_separator()
 
-        all_entries = self._sorted_entries()
-        for entry in all_entries:
-            if entry.unattached and not entry.sandbox:
-                continue
-            var = tk.BooleanVar(value=not entry.hidden)
-            self._session_vars.append(var)
-            display_name = cwd_relative_to_home(cwd=entry.session.cwd)
-            if entry.remote_host:
-                display_name = f"{entry.remote_host}: {display_name}"
+        ghosts_var = tk.BooleanVar(value=not self._settings.hide_ghosts)
+        self._session_vars.append(ghosts_var)
 
-            def make_toggle(e=entry, v=var):
-                def toggle():
-                    logger.info(
-                        "hide: %s set hidden=%s via sessions menu", e.session.cwd, not v.get()
-                    )
-                    e.hidden = not v.get()
-                    self._save_session_state()
-                    self._refresh_ui()
-
-                return toggle
-
-            menu.add_checkbutton(
-                label=display_name,
-                variable=var,
-                command=make_toggle(),
-            )
+        menu.add_checkbutton(
+            label="Show ghost sessions",
+            variable=ghosts_var,
+            command=self._on_ghost_toggle,
+        )
 
     def _on_right_click(self, x: int, y: int):
         """Window-level right-click on empty areas — show sessions visibility menu."""
@@ -1643,7 +1595,7 @@ class AppController:
     def _state_key(entry: "_SessionEntry") -> str:
         """Persistence key: CWD, host-qualified for remote sessions so a
         remote project sharing a path with a local one never cross-applies
-        hidden/flagged/cleared state."""
+        flagged/cleared state."""
         if entry.remote_host:
             return f"{entry.remote_host}:{entry.session.cwd}"
         return entry.session.cwd
@@ -1657,14 +1609,11 @@ class AppController:
                 continue
             key = self._state_key(entry)
             if key in state:
-                if not entry.hidden:
-                    state[key]["hidden"] = False
                 if entry.last_active > state[key].get("last_active", 0.0):
                     state[key]["last_active"] = entry.last_active
             else:
                 state[key] = {
                     "state": entry.state.value,
-                    "hidden": entry.hidden,
                     "flagged": entry.flagged,
                     "last_active": entry.last_active,
                     "state_cleared_from": entry.state_cleared_from,

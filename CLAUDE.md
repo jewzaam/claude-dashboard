@@ -36,7 +36,7 @@ Folding WORKING alone is not enough, and the reason is a dashboard behavior wort
 | `claude_dashboard/ui/main_window.py` | Dashboard window with session rows |
 | `claude_dashboard/ui/settings_window.py` | Modal settings editor |
 | `claude_dashboard/ui/color_picker.py` | Custom color picker with palette grid, hex entry, live preview |
-| `claude_dashboard/tray.py` | System tray icon, dynamic menu with unhide items |
+| `claude_dashboard/tray.py` | System tray icon, color reflects highest-priority state |
 | `claude_dashboard/platform/base.py` | Platform dispatch (ContainerType enum) |
 | `claude_dashboard/platform/windows.py` | Win32 window foregrounding |
 | `claude_dashboard/platform/linux.py` | Window foregrounding via `window-calls` D-Bus, xdotool fallback |
@@ -90,6 +90,31 @@ Decisions recorded here exist because they were non-obvious, caused confusion, o
 
 When user clears a session state (context menu, click, double-click), `state_cleared_from` records the state value that was cleared (e.g., `"working"`). OTEL poller rejects updates that report the same state — stale metrics keep reporting what was cleared and get blocked. A genuinely different state (e.g., PERMISSION_REQUIRED after clearing WORKING) is accepted, and `state_cleared_from` resets to `""`. No timestamps or cooldowns — pure state identity comparison. Persisted to `session-state.json` so protection survives dashboard restarts.
 
+### Per-session hide — removed, do not re-add
+
+Sessions could once be hidden individually (row context menu, a per-session
+checkbox menu, and a `hidden` field persisted by CWD). It is gone. Concealment
+is now exactly one view flag, `hide_ghosts`, read through `_is_concealed()`.
+
+**Persistence was the defect, not which rows the toggle covers.** The
+title-bar toggle stamped `hidden=True` onto each matching row. On a sandbox,
+`unattached` means "no VS Code window matched by title over D-Bus" — a
+condition that clears on its own — but the stamp did not clear with it, so a
+detached sandbox concealed by the toggle stayed concealed after VS Code
+attached. Keyed by CWD in `session-state.json`, the stamp also outlived the
+session it was applied to and re-applied itself to unrelated future sessions
+in that directory, across restarts and ghost→live transitions. One D-Bus poll
+returning zero windows was enough to make every sandbox eligible at once, and
+permanently.
+
+`_is_concealed()` covers the same set the old toggle did — unattached rows,
+including detached sandboxes, plus Error sandboxes, minus flagged — because
+that set was never the problem. It is safe now only because it is recomputed
+every render: attach VS Code and the row is back on the next tick with the
+toggle still on. **Do not reintroduce a stored per-session visibility flag,
+and do not narrow the conceal set on the theory that a detached sandbox is
+"active" — that is deliberate behavior.**
+
 ### Tooltip dismissal — timers, not crossing events or pointer position
 
 Tkinter runs under XWayland, where the compositor never reports the global pointer position: `winfo_pointerxy()` freezes at the last coordinate the pointer held over one of our own windows — inside the row it just left. So **pointer position cannot prove the pointer left a row**, and `<Leave>` is not reliably delivered from a borderless window. Consequences, all enforced in `main_window.py`: tooltips are armed by `<Motion>`, never `<Enter>` (destroying one fires a synthetic `<Enter>` on the row below, which loops), and `_TOOLTIP_LIFETIME_MS` is the only real guarantee of dismissal. **Do not re-bind to `<Enter>` and do not treat pointer coordinates as authoritative.**
@@ -108,7 +133,7 @@ Ghost sessions are evicted when total session count exceeds `max_sessions` (defa
 
 ### Sandbox phase rendering
 
-`SandboxPhase` enum in `config.py` has values READY, ERROR, CREATING, STOPPING, UNKNOWN. All phases flow through discovery — no filtering by openshell phase. Error sandboxes get phase-specific emoji (⚠️ unattached, 🔥 active) via `_sandbox_emoji()` static method in `main_window.py`. Ready+idle sandboxes use default ghost rendering (🏖️). Error sandboxes are excluded from ghost visibility toggle via `_is_error_sandbox()` helper. Ready sandboxes without VS Code toggle with ghosts — they are functionally ghosts.
+`SandboxPhase` enum in `config.py` has values READY, ERROR, CREATING, STOPPING, UNKNOWN. All phases flow through discovery — no filtering by openshell phase. Error sandboxes get phase-specific emoji (⚠️ unattached, 🔥 active) via `_sandbox_emoji()` static method in `main_window.py`. Ready+idle sandboxes use default ghost rendering (🏖️). Error sandboxes are included in the ghost visibility toggle via the `_is_error_sandbox()` helper, even when VS Code is connected. Ready sandboxes without VS Code toggle with ghosts — they are functionally ghosts.
 
 ### Sandbox identity comes from labels, never from `host_name`
 
@@ -178,7 +203,7 @@ Sessions on another host in the same OTEL stack are discovered purely from Prome
 - **Remote READY renders as IDLE.** Dismissal is per-dashboard local state with no telemetry to sync it, so a READY remote row would demand dismissal on every dashboard watching that session. Its own host still shows READY. Do not "fix" this.
 - **Sticky states outlive their metrics.** PERMISSION_REQUIRED / AWAITING_INPUT and flagged rows survive metric expiry and restarts until dismissed (double-click → IDLE → removed next poll); everything else goes when its metric does. The local stale-WORKING→READY flip does not apply. Do not add TTLs or auto-clear.
 - **Absent metrics get a grace period, not immediate removal** (`config.REMOTE_METRIC_GRACE_SECONDS`, `_expire_stale_remotes()`). A session prompted after >60s idle is in *none* of the three state metrics until its first `api_request` lands: `claude_session_ready` goes false the moment `user_prompt` outranks Stop, and `claude_session_working` has counted nothing yet. Measured against live Loki: median 21s, max 80s. Removing on the first miss makes every idle→working transition blink the row out. The stack-side half of the fix is `user_prompt` in the working rule's event list — the grace also covers collector/ruler hiccups and first turns longer than the rule's 60s window. Dismissed rows (`state_cleared_from` set) skip the grace. Normal removal already lags 30m (the `ready` rule's window), so the grace costs nothing.
-- **Persistence is host-qualified** (`host:cwd`) — a remote project sharing a path with a local one would otherwise cross-apply hidden/flagged/cleared state. Only sticky/flagged rows are restored on startup; the rest is rediscovered from OTEL.
+- **Persistence is host-qualified** (`host:cwd`) — a remote project sharing a path with a local one would otherwise cross-apply flagged/cleared state. Only sticky/flagged rows are restored on startup; the rest is rediscovered from OTEL.
 - **No local behaviors.** Remote rows skip git checks, ghost conversion, CWD pruning, terminal-activity scan, and click-to-foreground (left-click still clears READY→IDLE). They are never ghosts.
 - **Rendering.** Remote rows sort in a block above everything else, grouped by host then display text — host-first only became meaningful once `host_name` stopped being the sandbox's own `sandbox-<hash>` hostname. The eye icon and host label use `color_remote` (default `#0891b2`), reusing the git-status eye shape since remote rows have no local git. Tooltips are prefixed `[host]`. The "Show remote sessions" toggle (`show_remote`) hides rows without dropping them, so sticky states are not lost.
 - **Local sandbox race (accepted).** A local sandbox whose telemetry arrives before openshell lists it would briefly register as remote; sandbox discovery runs earlier in the same tick and OTEL lags 15-30s, so it does not happen in practice.
@@ -260,7 +285,7 @@ Feature specs in `specs/<nnn>-<name>/`, project-wide design notes in `docs/`, us
 - `sys.excepthook` captures uncaught stack traces in log files
 - Makefile `run` target logs to `~/.claude/claude-dashboard/dashboard.log`
 - Single-instance enforcement via PID file lock
-- All discovered sessions start visible — nothing is auto-hidden
+- **No stored per-session visibility.** No `hidden` field, no Hide menu item, nothing about visibility in `session-state.json`. Row visibility is recomputed every render from `_is_concealed()`, so nothing stays concealed once the condition that concealed it clears. The only control is the `hide_ghosts` setting (title-bar middle-click); the keyboard filter is a transient exception that reveals concealed rows rather than hiding anything
 - Headless runs are not discovered at all: `discover_sessions()` skips `HEADLESS_ENTRYPOINTS` (`sdk-cli`, written by `claude -p` and the Agent SDK). Verified against Claude Code 2.1.226 — the interactive TUI writes `cli`. Unknown entrypoints stay visible so a new one never vanishes silently. OTEL telemetry is emitted by Claude Code itself and is unaffected
 
 ### Terminal Activity Detection
@@ -269,12 +294,9 @@ Feature specs in `specs/<nnn>-<name>/`, project-wide design notes in `docs/`, us
 
 ### State Persistence
 
-- Session state (flagged, hidden, state) saved to `~/.claude/claude-dashboard/session-state.json`
+- Session state (flagged, state, last_active) saved to `~/.claude/claude-dashboard/session-state.json`
 - All persisted across dashboard restarts
-- Duplicate-CWD sessions: hidden only persists as true if ALL sessions with that CWD are hidden
-- A live session replacing a ghost is **always** unhidden — sandbox and non-sandbox alike (`_add_sandbox_session` / `_add_session`). `hidden` is keyed by CWD only, so preserving it across the ghost→live transition makes one old hide silently swallow every future session in that directory. Was once "fixed" the other way for sandboxes (4c4e4df); that is the regression. Flagged does carry over; hidden does not.
 - Flag color determined by git status, configurable via 5 `color_flag_*` settings (manual, unstaged, staged, unpushed, unmerged)
-- Sandboxes always appear in sessions visibility menu regardless of `unattached` state, so they can be unhidden
 
 ### Git Status Flags
 

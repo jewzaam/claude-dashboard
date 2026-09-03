@@ -62,7 +62,6 @@ class TestLastActivePersistence:
     def _serialize_entry(self, entry: _SessionEntry) -> dict:
         return {
             "state": entry.state.value,
-            "hidden": entry.hidden,
             "flagged": entry.flagged,
             "last_active": entry.last_active,
         }
