@@ -107,7 +107,7 @@ Examples:
 
 ## Tray Icon Priority
 
-The system tray icon color reflects the most urgent state across all **visible** sessions (hidden sessions excluded):
+The system tray icon color reflects the most urgent state across all **visible** sessions (concealed ghosts excluded):
 
 1. **Orange** — at least one session needs permission
 2. **Green** — at least one session is asking you a question
@@ -180,7 +180,6 @@ When a session is resumed, hooks may fire with the original session ID rather th
 
 Right-clicking a session row opens a context menu with:
 
-- **Hide** — hides the session from the dashboard (transient, not persisted)
 - **Clear agents** — visible only if the session has active agents; clears all tracked agents
 - **Flag** / **Unflag** — toggles the flag state (sticky, survives restart via state persistence)
 
@@ -197,7 +196,6 @@ Flag state persists across dashboard restarts via `~/.claude/claude-dashboard/se
 The tray icon right-click menu is fully dynamic:
 
 - **Show** / **Hide** — toggles dashboard visibility
-- **Unhide: (session)** — one item per hidden session (flat list, no submenus due to pystray limitations on Linux)
 - **Settings** — opens settings dialog
 - **Quit** — exits the dashboard
 

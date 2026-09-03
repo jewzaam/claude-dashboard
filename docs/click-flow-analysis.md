@@ -52,7 +52,7 @@ flowchart TD
 
     subgraph AppController
         B["_on_ghost_toggle()"]
-        B --> C["toggle hidden flags\n_save_session_state()"]
+        B --> C["toggle hide_ghosts setting\n_save_settings_safe()"]
         C --> D["_refresh_ui()"]
         D --> R{high-priority\nstate visible?}
         R -->|yes| IMM["_do_refresh_ui() immediate"]
@@ -84,7 +84,7 @@ flowchart TD
 | Aspect | Left-click (shade) | Middle-click (ghost toggle) |
 |--------|--------------------|-----------------------------|
 | Entry point | `_on_shade_toggle` | `_on_ghost_toggle_click` |
-| State change | `_shaded` flag (MainWindow) | ghost `hidden` flags (Controller) |
+| State change | `_shaded` flag (MainWindow) | `hide_ghosts` setting (Controller) |
 | Row packing | `_apply_shade_state` | `update_sessions` |
 | Geometry | `_apply_geometry` | `_apply_geometry` |
 | Position source | `_tracked_x/y` | `_tracked_x/y` |

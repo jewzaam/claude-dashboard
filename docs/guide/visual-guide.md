@@ -66,7 +66,7 @@ The title bar shows summary information:
 
 - **Eye icon** — always green when expanded, hidden when shaded
 - **Chef kiss emoji** — project mascot (PNG image with fallback to unicode)
-- **Title text** — `Claude Dashboard` with `(+N)` suffix if sessions are hidden
+- **Title text** — `Claude Dashboard`, or `/<text>` while filtering
 - **5h / 7d** — OAuth usage utilization percentages (if available)
 - **Daily cost** — today's total spend across all sessions
 
@@ -88,7 +88,7 @@ The system tray icon is an eye shape whose color reflects the highest-priority *
 - **Green** — at least one session is ready (finished)
 - **Dark gray** — all sessions idle or working
 
-The tray menu includes Toggle (show/hide window), Unhide entries for hidden sessions, Settings, Restart, and Quit.
+The tray menu includes Toggle (show/hide window), Settings, Restart, and Quit.
 
 ## Agent Indicators
 

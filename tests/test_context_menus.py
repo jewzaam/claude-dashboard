@@ -20,22 +20,6 @@ def _make_session(
     return SessionInfo(pid=pid, session_id="test-sid", cwd=cwd, started_at=0, entrypoint=entrypoint)
 
 
-class TestLiveContextMenuHide:
-    """Test Hide action from live session context menu."""
-
-    def test_hide_sets_hidden_true(self):
-        entry = _SessionEntry(_make_session())
-        assert entry.hidden is False
-        entry.hidden = True
-        assert entry.hidden is True
-
-    def test_hide_preserves_state(self):
-        entry = _SessionEntry(_make_session())
-        entry.state = StatusState.PERMISSION_REQUIRED
-        entry.hidden = True
-        assert entry.state == StatusState.PERMISSION_REQUIRED
-
-
 class TestLiveContextMenuClearState:
     """Test Clear State action from live session context menu."""
 
@@ -51,13 +35,6 @@ class TestLiveContextMenuClearState:
         entry.state = StatusState.PERMISSION_REQUIRED
         entry.state = StatusState.IDLE
         assert entry.flagged is True
-
-    def test_clear_state_preserves_hidden(self):
-        entry = _SessionEntry(_make_session())
-        entry.hidden = True
-        entry.state = StatusState.PERMISSION_REQUIRED
-        entry.state = StatusState.IDLE
-        assert entry.hidden is True
 
     def test_clear_state_records_cleared_from(self):
         entry = _SessionEntry(_make_session())
@@ -155,54 +132,35 @@ class TestRowRightClickDispatch:
         assert ghost.unattached != live.unattached
 
 
-class TestHiddenStatePersistence:
-    """Test that hidden state survives restarts and ghost replacement."""
+class TestNoPerSessionVisibility:
+    """An active session is always visible. There is no per-session hide."""
 
-    def test_hidden_carried_from_ghost_to_live(self):
-        """When a live session replaces a ghost, hidden state transfers."""
-        ghost = _SessionEntry(_make_session(pid=-1))
-        ghost.unattached = True
-        ghost.hidden = True
-        live = _SessionEntry(_make_session(pid=1000))
-        live.hidden = ghost.hidden
-        assert live.hidden is True
-
-    def test_flagged_and_hidden_both_carry(self):
-        ghost = _SessionEntry(_make_session(pid=-1))
-        ghost.unattached = True
-        ghost.flagged = True
-        ghost.hidden = True
-        live = _SessionEntry(_make_session(pid=1000))
-        live.flagged = ghost.flagged
-        live.hidden = ghost.hidden
-        assert live.flagged is True
-        assert live.hidden is True
-
-    def test_hidden_restored_from_saved_state(self):
-        """Simulates _apply_saved_state restoring hidden=True."""
+    def test_session_entry_has_no_hidden_attribute(self):
         entry = _SessionEntry(_make_session())
-        assert entry.hidden is False
-        saved = {"hidden": True, "flagged": False}
-        if saved.get("hidden"):
-            entry.hidden = True
-        assert entry.hidden is True
+        assert not hasattr(entry, "hidden")
+        assert "hidden" not in _SessionEntry.__slots__
 
-    def test_hidden_false_not_set(self):
-        """hidden=False in saved state doesn't override."""
-        entry = _SessionEntry(_make_session())
-        saved = {"hidden": False}
-        if saved.get("hidden"):
-            entry.hidden = True
-        assert entry.hidden is False
+    def test_saved_state_carries_no_hidden_key(self):
+        from claude_dashboard.controller import AppController
+        from claude_dashboard.settings import Settings
 
-    def test_sandbox_unhidden_when_it_replaces_hidden_ghost(self):
-        """Ghost→sandbox must unhide, same as ghost→live. A hide applied to a
-        dead ghost must not follow a new sandbox session in."""
+        entry = _SessionEntry(_make_session(cwd="/tmp/proj"))
+        entry.flagged = True
+        stub = object.__new__(AppController)
+        stub._sessions = {1000: entry}
+        stub._settings = Settings()
+        with patch("claude_dashboard.controller.atomic_write_json") as mock_write:
+            stub._save_session_state()
+
+        saved = mock_write.call_args.kwargs["data"]["/tmp/proj"]
+        assert "hidden" not in saved
+        assert saved["flagged"] is True
+
+    def test_sandbox_replacing_ghost_carries_flag_only(self):
         from claude_dashboard.controller import AppController
 
         ghost = _SessionEntry(_make_session(pid=-1, cwd="/tmp/sb"))
         ghost.unattached = True
-        ghost.hidden = True
         ghost.flagged = True
 
         stub = object.__new__(AppController)
@@ -218,8 +176,7 @@ class TestHiddenStatePersistence:
 
         new_entry = stub._sessions[-2]
         assert new_entry.sandbox is True
-        assert new_entry.hidden is False
-        assert new_entry.flagged is True  # flag still carries over
+        assert new_entry.flagged is True
         assert -1 not in stub._sessions  # ghost consumed
 
 
@@ -323,119 +280,112 @@ class TestLeftClickGhost:
 
 
 class TestGhostToggle:
-    """Test middle-click ghost toggle: hide visible ghosts first, show only when all hidden."""
+    """Middle-click ghost toggle is a single view flag, not per-session state."""
 
     def _make_controller_stub(self, sessions: dict[int, _SessionEntry]):
         from claude_dashboard.controller import AppController
+        from claude_dashboard.settings import Settings
 
         stub = object.__new__(AppController)
         stub._sessions = sessions
-        stub._ghosts_hidden = False
+        stub._settings = Settings()
         return stub
 
-    def test_hides_visible_ghosts_when_any_visible(self):
+    def _toggle(self, stub):
         from claude_dashboard.controller import AppController
 
-        ghost1 = _SessionEntry(_make_session(pid=-1, cwd="/tmp/g1"))
-        ghost1.unattached = True
-        ghost1.hidden = False
-        ghost2 = _SessionEntry(_make_session(pid=-2, cwd="/tmp/g2"))
-        ghost2.unattached = True
-        ghost2.hidden = True
-
-        stub = self._make_controller_stub({-1: ghost1, -2: ghost2})
         with (
-            patch.object(AppController, "_save_session_state"),
+            patch.object(AppController, "_save_settings_safe"),
             patch.object(AppController, "_refresh_ui"),
         ):
             stub._on_ghost_toggle()
 
-        assert ghost1.hidden is True
-        assert ghost2.hidden is True
-        assert stub._ghosts_hidden is True
-
-    def test_flagged_ghosts_not_hidden_by_toggle(self):
-        from claude_dashboard.controller import AppController
-
-        flagged_ghost = _SessionEntry(_make_session(pid=-1, cwd="/tmp/g1"))
-        flagged_ghost.unattached = True
-        flagged_ghost.hidden = False
-        flagged_ghost.flagged = True
-        unflagged_ghost = _SessionEntry(_make_session(pid=-2, cwd="/tmp/g2"))
-        unflagged_ghost.unattached = True
-        unflagged_ghost.hidden = False
-
-        stub = self._make_controller_stub({-1: flagged_ghost, -2: unflagged_ghost})
-        with (
-            patch.object(AppController, "_save_session_state"),
-            patch.object(AppController, "_refresh_ui"),
-        ):
-            stub._on_ghost_toggle()
-
-        assert flagged_ghost.hidden is False
-        assert unflagged_ghost.hidden is True
-        assert stub._ghosts_hidden is True
-
-    def test_show_ghosts_when_only_flagged_visible(self):
-        """When only flagged ghosts are visible, toggle shows all ghosts."""
-        from claude_dashboard.controller import AppController
-
-        flagged_ghost = _SessionEntry(_make_session(pid=-1, cwd="/tmp/g1"))
-        flagged_ghost.unattached = True
-        flagged_ghost.hidden = False
-        flagged_ghost.flagged = True
-        hidden_ghost = _SessionEntry(_make_session(pid=-2, cwd="/tmp/g2"))
-        hidden_ghost.unattached = True
-        hidden_ghost.hidden = True
-
-        stub = self._make_controller_stub({-1: flagged_ghost, -2: hidden_ghost})
-        with (
-            patch.object(AppController, "_save_session_state"),
-            patch.object(AppController, "_refresh_ui"),
-        ):
-            stub._on_ghost_toggle()
-
-        assert flagged_ghost.hidden is False
-        assert hidden_ghost.hidden is False
-        assert stub._ghosts_hidden is False
-
-    def test_shows_all_ghosts_when_none_visible(self):
-        from claude_dashboard.controller import AppController
-
-        ghost1 = _SessionEntry(_make_session(pid=-1, cwd="/tmp/g1"))
-        ghost1.unattached = True
-        ghost1.hidden = True
-        ghost2 = _SessionEntry(_make_session(pid=-2, cwd="/tmp/g2"))
-        ghost2.unattached = True
-        ghost2.hidden = True
-
-        stub = self._make_controller_stub({-1: ghost1, -2: ghost2})
-        with (
-            patch.object(AppController, "_save_session_state"),
-            patch.object(AppController, "_refresh_ui"),
-        ):
-            stub._on_ghost_toggle()
-
-        assert ghost1.hidden is False
-        assert ghost2.hidden is False
-        assert stub._ghosts_hidden is False
-
-    def test_does_not_affect_live_sessions(self):
-        from claude_dashboard.controller import AppController
-
-        live = _SessionEntry(_make_session(pid=1000, cwd="/tmp/live"))
-        live.unattached = False
-        live.hidden = False
+    def test_toggle_flips_the_setting_and_conceals_ghosts(self):
         ghost = _SessionEntry(_make_session(pid=-1, cwd="/tmp/g1"))
         ghost.unattached = True
-        ghost.hidden = False
 
-        stub = self._make_controller_stub({1000: live, -1: ghost})
-        with (
-            patch.object(AppController, "_save_session_state"),
-            patch.object(AppController, "_refresh_ui"),
-        ):
-            stub._on_ghost_toggle()
+        stub = self._make_controller_stub({-1: ghost})
+        assert stub._is_concealed(ghost) is False
 
-        assert live.hidden is False
-        assert ghost.hidden is True
+        self._toggle(stub)
+        assert stub._settings.hide_ghosts is True
+        assert stub._is_concealed(ghost) is True
+
+        self._toggle(stub)
+        assert stub._settings.hide_ghosts is False
+        assert stub._is_concealed(ghost) is False
+
+    def test_flagged_ghosts_stay_pinned(self):
+        flagged = _SessionEntry(_make_session(pid=-1, cwd="/tmp/g1"))
+        flagged.unattached = True
+        flagged.flagged = True
+        plain = _SessionEntry(_make_session(pid=-2, cwd="/tmp/g2"))
+        plain.unattached = True
+
+        stub = self._make_controller_stub({-1: flagged, -2: plain})
+        self._toggle(stub)
+
+        assert stub._is_concealed(flagged) is False
+        assert stub._is_concealed(plain) is True
+
+    def test_toggle_never_conceals_a_live_session(self):
+        live = _SessionEntry(_make_session(pid=1000, cwd="/tmp/live"))
+        live.unattached = False
+
+        stub = self._make_controller_stub({1000: live})
+        self._toggle(stub)
+
+        assert stub._settings.hide_ghosts is True
+        assert stub._is_concealed(live) is False
+
+    def test_detached_sandbox_conceals_with_ghosts(self):
+        """A sandbox with no VS Code window toggles alongside local ghosts."""
+        sandbox = _SessionEntry(_make_session(pid=-3, cwd="/tmp/sb"))
+        sandbox.sandbox = True
+        sandbox.unattached = True  # no VS Code attached
+        sandbox.sandbox_phase = "Ready"
+
+        stub = self._make_controller_stub({-3: sandbox})
+        self._toggle(stub)
+
+        assert stub._settings.hide_ghosts is True
+        assert stub._is_concealed(sandbox) is True
+
+    def test_attaching_vscode_reveals_a_concealed_sandbox(self):
+        """The regression that motivated deleting `hidden`: concealment is
+        recomputed every render, so a sandbox that attaches VS Code comes back
+        with the toggle still on. The old persisted flag kept it concealed."""
+        sandbox = _SessionEntry(_make_session(pid=-3, cwd="/tmp/sb"))
+        sandbox.sandbox = True
+        sandbox.unattached = True
+        sandbox.sandbox_phase = "Ready"
+
+        stub = self._make_controller_stub({-3: sandbox})
+        self._toggle(stub)
+        assert stub._is_concealed(sandbox) is True
+
+        sandbox.unattached = False  # VS Code connected
+        assert stub._settings.hide_ghosts is True  # toggle untouched
+        assert stub._is_concealed(sandbox) is False
+
+    def test_connected_sandbox_is_never_concealed(self):
+        sandbox = _SessionEntry(_make_session(pid=-3, cwd="/tmp/sb"))
+        sandbox.sandbox = True
+        sandbox.unattached = False
+        sandbox.sandbox_phase = "Ready"
+
+        stub = self._make_controller_stub({-3: sandbox})
+        self._toggle(stub)
+
+        assert stub._is_concealed(sandbox) is False
+
+    def test_error_sandbox_conceals_even_when_connected(self):
+        broken = _SessionEntry(_make_session(pid=-4, cwd="/tmp/sb-err"))
+        broken.sandbox = True
+        broken.unattached = False
+        broken.sandbox_phase = "Error"
+
+        stub = self._make_controller_stub({-4: broken})
+        self._toggle(stub)
+
+        assert stub._is_concealed(broken) is True

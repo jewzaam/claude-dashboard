@@ -35,7 +35,7 @@ def test_middle_click_clears_filter_and_restores_view():
         win._on_ghost_toggle_click(MagicMock())
 
         assert win._filter_text == ""
-        # controller re-supplies rows, dropping the hidden ones filter revealed
+        # controller re-supplies rows, dropping the concealed ghosts filter revealed
         win._on_filter_exit.assert_called_once_with()
         # ghosts untouched — middle-click consumed by the filter clear
         win._on_ghost_toggle.assert_not_called()
