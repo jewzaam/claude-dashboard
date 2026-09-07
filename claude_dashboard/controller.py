@@ -966,11 +966,6 @@ class AppController:
         if entry is None:
             return False
         new_state = session_state.state
-        # Remote READY renders as IDLE: dismissal is per-dashboard local
-        # state, so a READY row would demand dismissal on every dashboard
-        # watching this session. The session's own host shows READY.
-        if entry.remote_host and new_state == StatusState.READY:
-            new_state = StatusState.IDLE
         prior = entry.state
         if new_state == prior:
             return False

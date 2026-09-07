@@ -116,8 +116,17 @@ class TestRemoteDiscovery:
 
 
 class TestRemoteLifecycle:
-    def test_ready_renders_as_idle(self):
+    def test_ready_renders_as_ready(self):
         c = _make_controller()
+        _poll(c, {"abc": _remote_state(state=StatusState.READY)})
+        assert _entry_for(c, "abc").state == StatusState.READY
+
+    def test_dismissed_ready_not_reapplied(self):
+        c = _make_controller()
+        _poll(c, {"abc": _remote_state(state=StatusState.READY)})
+        entry = _entry_for(c, "abc")
+        entry.state_cleared_from = entry.state.value
+        entry.state = StatusState.IDLE
         _poll(c, {"abc": _remote_state(state=StatusState.READY)})
         assert _entry_for(c, "abc").state == StatusState.IDLE
 
