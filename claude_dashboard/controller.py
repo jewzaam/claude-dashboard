@@ -1193,7 +1193,7 @@ class AppController:
                 remote_host=entry.remote_host,
             )
             for entry in all_entries
-            if (not self._is_concealed(entry) or self._main_window._filter_text)
+            if (not self._is_concealed(entry) or self._main_window._search_active)
             and (self._settings.show_remote or not entry.remote_host)
         ]
         self._main_window.update_sessions(visible_states)

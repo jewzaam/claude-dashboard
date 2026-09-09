@@ -347,9 +347,9 @@ class MainWindow:
         self._tooltip_leave_time: int = 0  # X timestamp of the last row <Leave>
 
         # Keyboard filter
+        self._search_active: bool = False
         self._filter_text: str = ""
         self._last_sessions: list[SessionRow] = []
-        self._filter_after_id: str | None = None
 
         # Create the window shell — apply_settings handles all configuration
         self._window = tk.Toplevel(root)
@@ -621,7 +621,7 @@ class MainWindow:
             except tk.TclError:
                 pass
 
-        if getattr(self, "_filter_text", ""):
+        if getattr(self, "_search_active", False):
             self._title_text_label.configure(fg=_COLOR_SEARCH_FG)
         else:
             self._title_text_label.configure(fg=fg)
@@ -722,7 +722,7 @@ class MainWindow:
         - Shaded: unshade only — same as a left-click, ghosts untouched
         - Unshaded: toggle ghost visibility (flagged ghosts stay pinned)
         """
-        if self._filter_text:
+        if self._search_active:
             self._exit_filter_mode()
             return "break"
         if self._shaded:
@@ -773,7 +773,7 @@ class MainWindow:
         self._apply_title_bar_style()
         fg = self._title_fg
 
-        if not self._filter_text:
+        if not self._search_active:
             self._title_text_label.configure(text=config.TITLE_TEXT)
 
         # Right-side counts — always shown, even at zero
@@ -1108,9 +1108,11 @@ class MainWindow:
 
     def _on_search_click(self, _event: Any = None):
         """Toggle filter mode on search icon click."""
-        if self._filter_text:
+        if self._search_active:
             self._exit_filter_mode()
         else:
+            self._search_active = True
+            self._update_search_label()
             self._window.focus_force()
         return "break"
 
@@ -1123,27 +1125,23 @@ class MainWindow:
             return "break"
         char = event.char
         if char and char.isprintable() and len(char) == 1:
+            self._search_active = True
             self._filter_text += char
             self._apply_filter()
             return "break"
 
     def _on_filter_clear(self, _event: Any = None):
         """Escape clears filter and exits filter mode."""
-        if self._filter_text:
+        if self._search_active:
             self._exit_filter_mode()
             return "break"
 
     def _exit_filter_mode(self):
+        self._search_active = False
         self._filter_text = ""
-        if self._filter_after_id is not None:
-            self._window.after_cancel(self._filter_after_id)
-            self._filter_after_id = None
-        self._title_text_label.configure(
-            text=config.TITLE_TEXT,
-            fg=self._title_fg,
-        )
+        self._update_search_label()
         # Filter mode reveals concealed ghosts (controller passes them through
-        # while _filter_text is set).  Ask the controller to re-supply so the
+        # while _search_active is set).  Ask the controller to re-supply so the
         # pre-filter view comes back; rendering _last_sessions here would keep
         # them on screen until the next 5s poll.
         if self._on_filter_exit:
@@ -1151,9 +1149,13 @@ class MainWindow:
         else:
             self._do_filter_render()
 
-    def _apply_filter(self):
-        """Debounced re-render with current filter applied."""
-        if self._filter_text:
+    def _update_search_label(self):
+        """Title text is the search prompt while search mode is on.
+
+        Shown on entry with an empty query, so the icon click has a visible
+        effect before the first keystroke.
+        """
+        if self._search_active:
             self._title_text_label.configure(
                 text=f"/{self._filter_text}",
                 fg=_COLOR_SEARCH_FG,
@@ -1163,12 +1165,13 @@ class MainWindow:
                 text=config.TITLE_TEXT,
                 fg=self._title_fg,
             )
-        if self._filter_after_id is not None:
-            self._window.after_cancel(self._filter_after_id)
-        self._filter_after_id = self._window.after(300, self._do_filter_render)
+
+    def _apply_filter(self):
+        """Re-render with the current filter — rows are already in memory."""
+        self._update_search_label()
+        self._do_filter_render()
 
     def _do_filter_render(self):
-        self._filter_after_id = None
         filtered = self._filtered_sessions(self._last_sessions)
         self._render_sessions(filtered)
 
@@ -1199,8 +1202,6 @@ class MainWindow:
 
     def update_sessions(self, sessions: list[SessionRow]):
         self._last_sessions = sessions
-        if self._filter_after_id is not None:
-            return
         self._render_sessions(self._filtered_sessions(sessions))
 
     def _render_sessions(self, sessions: list[SessionRow]):
