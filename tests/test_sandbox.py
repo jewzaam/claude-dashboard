@@ -605,3 +605,27 @@ class TestSandboxProfileGrouping:
         assert fg("home") == _COLOR_PROFILE_PERSONAL
         assert fg("personal") == _COLOR_PROFILE_PERSONAL
         assert fg("work") == _COLOR_CONTAINER_FG
+
+
+class TestRecoverAndOpenSandbox:
+    """One click on an Error row: podman start, then VS Code."""
+
+    @staticmethod
+    def _ctrl():
+        from claude_dashboard.controller import AppController
+
+        ctrl = MagicMock(spec=AppController)
+        ctrl._recover_and_open_sandbox = AppController._recover_and_open_sandbox.__get__(ctrl)
+        return ctrl
+
+    def test_opens_vscode_when_start_succeeds(self):
+        ctrl = self._ctrl()
+        ctrl._podman_start_sandbox.return_value = True
+        ctrl._recover_and_open_sandbox("sb", "/src")
+        ctrl._launch_vscode.assert_called_once_with(folder="/src")
+
+    def test_skips_vscode_when_start_fails(self):
+        ctrl = self._ctrl()
+        ctrl._podman_start_sandbox.return_value = False
+        ctrl._recover_and_open_sandbox("sb", "/src")
+        ctrl._launch_vscode.assert_not_called()

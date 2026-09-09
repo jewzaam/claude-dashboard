@@ -1234,12 +1234,12 @@ class AppController:
         if entry and entry.remote_host:
             return
 
-        # Error sandbox: podman start to recover stopped container
+        # Error sandbox: recover stopped container, then open it in VS Code
         if entry and self._is_error_sandbox(entry):
             os_name = session.session_id.removeprefix("sandbox-")
             threading.Thread(
-                target=self._podman_start_sandbox,
-                args=(os_name,),
+                target=self._recover_and_open_sandbox,
+                args=(os_name, session.cwd),
                 daemon=True,
             ).start()
             return
@@ -1429,8 +1429,16 @@ class AppController:
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.warning("sandbox delete failed name=%s error=%s", sandbox_name, exc)
 
-    def _podman_start_sandbox(self, os_name: str):
-        """Look up podman container by openshell label and start it."""
+    def _recover_and_open_sandbox(self, os_name: str, folder: str) -> None:
+        """One click on an Error row: start the container, then open VS Code."""
+        if self._podman_start_sandbox(os_name):
+            self._launch_vscode(folder=folder)
+
+    def _podman_start_sandbox(self, os_name: str) -> bool:
+        """Look up podman container by openshell label and start it.
+
+        Returns True when the container is running.
+        """
         try:
             result = subprocess.run(
                 ["podman", "ps", "-a", "--format", "json"],
@@ -1447,16 +1455,23 @@ class AppController:
                     break
             if not cid:
                 logger.warning("podman container not found for sandbox %s", os_name)
-                return
-            subprocess.run(
+                return False
+            started = subprocess.run(
                 ["podman", "start", cid],
                 capture_output=True,
                 timeout=30,
                 creationflags=config.SUBPROCESS_FLAGS,
             )
-            logger.info("podman start completed sandbox=%s container=%s", os_name, cid[:12])
+            logger.info(
+                "podman start completed sandbox=%s container=%s rc=%d",
+                os_name,
+                cid[:12],
+                started.returncode,
+            )
+            return started.returncode == 0
         except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
             logger.warning("podman start failed sandbox=%s error=%s", os_name, exc)
+            return False
 
     def _launch_vscode(self, *, folder: str):
         """Launch VS Code for the given folder."""
