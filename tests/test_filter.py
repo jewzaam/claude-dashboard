@@ -19,8 +19,8 @@ def _make_window():
     win._title_text_label = MagicMock()
     win._title_fg = "#ffffff"
     win._shaded = False
+    win._search_active = False
     win._filter_text = ""
-    win._filter_after_id = None
     win._last_sessions = []
     win._on_ghost_toggle = MagicMock()
     win._on_filter_exit = MagicMock()
@@ -30,6 +30,7 @@ def _make_window():
 def test_middle_click_clears_filter_and_restores_view():
     with patch("claude_dashboard.ui.main_window.tk"):
         win = _make_window()
+        win._search_active = True
         win._filter_text = "foo"
 
         win._on_ghost_toggle_click(MagicMock())
@@ -75,6 +76,7 @@ def test_exit_filter_falls_back_to_local_render_without_callback():
         from claude_dashboard.ui.main_window import MainWindow
 
         win = _make_window()
+        win._search_active = True
         win._filter_text = "foo"
         win._on_filter_exit = None
 
@@ -82,3 +84,46 @@ def test_exit_filter_falls_back_to_local_render_without_callback():
             win._exit_filter_mode()
 
         render.assert_called_once_with()
+
+
+def test_search_click_shows_prompt_before_typing():
+    """Icon click enters search mode and paints "/" — visible without a keystroke."""
+    with patch("claude_dashboard.ui.main_window.tk"):
+        win = _make_window()
+
+        win._on_search_click()
+
+        assert win._search_active is True
+        win._title_text_label.configure.assert_called_once()
+        assert win._title_text_label.configure.call_args.kwargs["text"] == "/"
+
+
+def test_search_click_while_active_exits():
+    with patch("claude_dashboard.ui.main_window.tk"):
+        win = _make_window()
+        win._search_active = True
+
+        win._on_search_click()
+
+        assert win._search_active is False
+        assert win._filter_text == ""
+        win._on_filter_exit.assert_called_once_with()
+
+
+def test_keystroke_renders_immediately():
+    """No debounce — one keystroke, one render off the in-memory rows."""
+    with patch("claude_dashboard.ui.main_window.tk"):
+        from claude_dashboard.ui.main_window import MainWindow
+
+        win = _make_window()
+        event = MagicMock()
+        event.keysym = "a"
+        event.char = "a"
+
+        with patch.object(MainWindow, "_render_sessions") as render:
+            win._on_key(event)
+
+        assert win._search_active is True
+        assert win._filter_text == "a"
+        render.assert_called_once_with([])
+        win._window.after.assert_not_called()
