@@ -10,6 +10,7 @@ See scripts/detect_sessions_linux.py for the diagnostic script that
 validated this approach.
 """
 
+import ast
 import json
 import logging
 import subprocess
@@ -168,23 +169,24 @@ def _list_windows_dbus() -> list[dict]:
             return []
 
         raw = result.stdout.strip()
-        # gdbus wraps output as ('json_string',) or ("json_string",)
-        if raw.startswith("('") and raw.endswith("',)"):
-            json_str = raw[2:-3]
-        elif raw.startswith("('") and raw.endswith("')"):
-            json_str = raw[2:-2]
-        elif raw.startswith('("') and raw.endswith('",)'):
-            json_str = raw[2:-3]
-        elif raw.startswith('("') and raw.endswith('")'):
-            json_str = raw[2:-2]
-        else:
+        # Parse the complete GVariant tuple so escaping in the JSON payload is
+        # handled correctly. GNOME emits the double-quoted form when a window
+        # title contains an apostrophe.
+        try:
+            parsed = ast.literal_eval(raw)
+        except (SyntaxError, ValueError) as exc:
+            logger.debug("failed to parse gdbus tuple: %s", exc)
+            return []
+
+        if not isinstance(parsed, tuple) or len(parsed) != 1:
             logger.debug("unexpected gdbus output format: %s", raw[:100])
             return []
 
-        # gdbus escapes quotes inside GVariant strings.
-        # Single-quote wrapper ('...') double-escapes: \\" → \"
-        # Double-quote wrapper ("...") single-escapes: \" → "
-        json_str = json_str.replace('\\"', '"')
+        json_str = parsed[0]
+        if not isinstance(json_str, str):
+            logger.debug("unexpected gdbus payload type: %s", type(json_str))
+            return []
+
         return json.loads(json_str)
     except FileNotFoundError:
         logger.debug("gdbus not found")

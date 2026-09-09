@@ -37,6 +37,11 @@ def _gdbus_list_output(windows):
     return f"('{json.dumps(windows)}',)"
 
 
+def _gdbus_double_quoted_list_output(windows):
+    """Format gdbus output using its double-quoted GVariant string form."""
+    return f"({json.dumps(json.dumps(windows))},)"
+
+
 # ---------------------------------------------------------------------------
 # detect_container_linux
 # ---------------------------------------------------------------------------
@@ -163,6 +168,23 @@ class TestListWindowsDbus:
         assert len(result) == 2
         assert result[0]["id"] == 111
         assert result[1]["pid"] == 3789
+
+    @patch("claude_dashboard.platform.linux.subprocess.run")
+    def test_parses_double_quoted_json_window_list(self, mock_run):
+        windows = [
+            {
+                "id": 111,
+                "pid": 6786,
+                "title": "Meet - L'apostrophe - Visual Studio Code",
+            }
+        ]
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=_gdbus_double_quoted_list_output(windows),
+        )
+
+        result = _list_windows_dbus()
+        assert result == windows
 
     @patch("claude_dashboard.platform.linux.subprocess.run")
     def test_empty_on_nonzero_returncode(self, mock_run):
