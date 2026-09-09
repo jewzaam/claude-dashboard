@@ -1504,6 +1504,13 @@ class AppController:
         """
         if entry.flagged:
             return False
+        # A sandbox can be active even when its VS Code window is not visible
+        # to D-Bus (for example after the dashboard or desktop session
+        # restarts). OTEL state is the authoritative liveness signal; do not
+        # hide a sandbox that is currently READY, WORKING, or waiting for
+        # permission just because window attachment is unknown.
+        if entry.sandbox and entry.state != StatusState.IDLE:
+            return False
         if not (entry.unattached or self._is_error_sandbox(entry)):
             return False
         return self._settings.hide_ghosts
