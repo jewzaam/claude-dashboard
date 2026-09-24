@@ -52,11 +52,27 @@ STATE_FILE = CLAUDE_HOME / "claude-dashboard" / "session-state.json"
 DEFAULT_POLL_INTERVAL_SECONDS = 3
 
 # Grace period before a remote row is removed for having no state metric.
-# A prompt submitted after >60s idle leaves the session in none of the three
-# state metrics until its first api_request lands: `ready` goes false the
-# moment user_prompt outranks Stop, `working` counts no event yet. Measured
-# against live Loki: median 21s, max 80s. Without a grace the row disappears
-# and reappears on every idle→working transition.
+# Grace before a remote row whose state metric went absent is removed.
+#
+# It no longer covers the idle→working hole it was sized for. That hole (a
+# prompt after >60s idle left the session in none of the three metrics until
+# its first api_request — median 21s, max 80s) closed when
+# claude_session_working became a timestamp comparison: user_prompt is itself
+# the newest activity, so the metric goes true as soon as that event lands.
+#
+# What it covers now: pipeline hiccups (collector restart, a missed ruler
+# evaluation, a remote-write gap), and mid-turn silence past the WORKING
+# rule's range window. The second one composes — tolerated silence is
+# window + grace, currently 600s + 120s = 720s — so do not tune either
+# number without the other.
+#
+# 120s sits at a knee, not on a slope. Measured over 5535 intra-turn gaps,
+# seven exceed the 600s window; two of those (619.6s, 683.7s) fall under
+# 720s and are rescued. The next one up is 1211.9s, so every value from 120s
+# to ~611s rescues exactly the same two and buys nothing. Going past that
+# trades linearly against how long a genuinely dead remote row lingers.
+# PERMISSION_REQUIRED / AWAITING_INPUT / flagged rows skip expiry entirely,
+# so this governs only WORKING and READY rows.
 REMOTE_METRIC_GRACE_SECONDS = 120
 
 # OTEL state source
