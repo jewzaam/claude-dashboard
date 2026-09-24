@@ -922,12 +922,13 @@ class AppController:
         """Remove remote rows whose state metric has been absent past the grace.
 
         OTEL metrics are the only liveness signal for a remote session, but
-        absence is not proof it ended: every idle→working transition has a real
-        hole where the session is in none of the three state metrics (`ready`
-        goes false the moment user_prompt outranks Stop, `working` has counted
-        no event yet). Removing on the first miss makes the row blink out
-        mid-transition. Sticky states (PERMISSION_REQUIRED / AWAITING_INPUT)
-        and flagged rows are never removed here — they persist until dismissed.
+        absence is not proof it ended. A live session falls out of all three
+        metrics when it goes silent for longer than the WORKING rule's range
+        window: `ready` is false because the turn's activity is newer than the
+        last Stop, and `working` has nothing left inside its window. Removing
+        on the first miss would drop the row mid-turn. Sticky states
+        (PERMISSION_REQUIRED / AWAITING_INPUT) and flagged rows are never
+        removed here — they persist until dismissed.
         """
         now = _now_epoch()
         stale: list[int] = []
