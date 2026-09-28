@@ -705,11 +705,14 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
         return []
 
     try:
-        sandboxes = json.loads(result.stdout)
+        payload = json.loads(result.stdout)
     except json.JSONDecodeError:
         logger.info("openshell sandbox list returned invalid JSON: %s", result.stdout[:200])
         return []
 
+    # The CLI wraps paginated results in {sandboxes, next_page_token}; keep
+    # accepting the old top-level list shape for compatibility.
+    sandboxes = payload.get("sandboxes", []) if isinstance(payload, dict) else payload
     if not isinstance(sandboxes, list):
         return []
 
