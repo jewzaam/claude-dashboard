@@ -272,6 +272,19 @@ class TestStoppedRendering:
         entry.flagged = True
         assert _controller(entry)._is_concealed(entry) is False
 
+    def test_title_counts_active_hidden_zombies(self):
+        from claude_dashboard.ui.main_window import MainWindow
+
+        win = object.__new__(MainWindow)
+        win._apply_title_bar_style = MagicMock()
+        win._title_fg = "#ffffff"
+        win._search_active = True
+        win._title_counts_label = MagicMock()
+        win._title_bar = MagicMock()
+        win._row_height = MagicMock(return_value=20)
+        win.update_title_bar(active=3, hidden_ghost=5, zombies=2)
+        win._title_counts_label.configure.assert_called_once_with(text="A:3 H:5 Z:2", fg="#ffffff")
+
     def test_stopped_has_no_sandbox_emoji(self):
         from claude_dashboard.ui.main_window import MainWindow
 

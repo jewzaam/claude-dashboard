@@ -61,12 +61,16 @@ Merge detection uses three strategies: ancestor check, `git cherry` (rebase merg
 The title bar shows summary information:
 
 ```
-[Eye] [Chef Kiss] Claude Dashboard (+3)          5h: 42%  7d: 78%  $183.48
+[Eye] [Chef Kiss] Claude Dashboard (+3)          5h: 42%  7d: 78%  $183.48  A:4 H:12 Z:1
 ```
 
 - **Eye icon** — always green when expanded, hidden when shaded
 - **Chef kiss emoji** — project mascot (PNG image with fallback to unicode)
 - **Title text** — `Claude Dashboard`, or `/<text>` while filtering
+- **A / H / Z counts** — always shown, even at zero:
+  - `A` (active): sessions with a live process, and sandboxes
+  - `H` (hidden): rows the ghost toggle is currently concealing
+  - `Z` (zombie): running OpenShell sandboxes with no directory under `~/sandboxes/`. Created with plain `openshell`, or their directory was deleted. They get no row, so nothing opens them from the dashboard and the idle stop never touches them; the count is there so they are not invisible. `openshell sandbox list` shows them
 - **5h / 7d** — OAuth usage utilization percentages (if available)
 - **Daily cost** — today's total spend across all sessions
 

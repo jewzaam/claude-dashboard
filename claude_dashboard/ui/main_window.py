@@ -764,6 +764,7 @@ class MainWindow:
         *,
         active: int = 0,
         hidden_ghost: int = 0,
+        zombies: int = 0,
         highest_state_color: str = "",
         highest_git_status: "GitStatus | None" = None,
     ):
@@ -776,8 +777,9 @@ class MainWindow:
         if not self._search_active:
             self._title_text_label.configure(text=config.TITLE_TEXT)
 
-        # Right-side counts — always shown, even at zero
-        counts = f"{{{active}}} [{hidden_ghost}]"
+        # Right-side counts — always shown, even at zero. Meaning of each
+        # letter is in docs/guide/visual-guide.md "Title Bar".
+        counts = f"A:{active} H:{hidden_ghost} Z:{zombies}"
         self._title_counts_label.configure(text=counts, fg=fg)
 
         # Update title bar height

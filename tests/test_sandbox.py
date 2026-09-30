@@ -96,6 +96,30 @@ class TestDiscoverSandboxSessions:
         assert len(sessions) == 1
         assert sessions[0].sandbox_phase == "SomethingNew"
 
+    def test_reports_running_zombies_only(self, tmp_path):
+        # No host directory: no row, counted as a zombie while it holds resources.
+        (tmp_path / "tracked").mkdir()
+        json_out = _make_sandbox_json(
+            [
+                {"name": "tracked"},
+                {"name": "zombie-ready"},
+                {"name": "zombie-creating", "phase": "Creating"},
+                {"name": "zombie-stopped", "phase": "Stopped"},
+                {"name": "zombie-error", "phase": "Error"},
+            ]
+        )
+        mock_result = MagicMock(returncode=0, stdout=json_out)
+        zombies: list[str] = []
+
+        with (
+            patch("claude_dashboard.session.SANDBOXES_DIR", tmp_path),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            sessions = discover_sandbox_sessions(zombies=zombies)
+
+        assert [s.session_id for s in sessions] == ["sandbox-tracked"]
+        assert zombies == ["zombie-ready", "zombie-creating"]
+
     def test_skips_sandbox_without_host_dir(self, tmp_path):
         json_out = _make_sandbox_json([{"name": "no-dir"}])
         mock_result = MagicMock(returncode=0, stdout=json_out)
