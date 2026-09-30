@@ -43,7 +43,7 @@ from claude_dashboard.session import (
 )
 from claude_dashboard.settings import Settings, load_settings, reset_position, save_settings
 from claude_dashboard.startup import set_run_on_startup
-from claude_dashboard.config import GitStatus, StatusState
+from claude_dashboard.config import GitStatus, SandboxPhase, StatusState
 from claude_dashboard.models import SessionRow
 from claude_dashboard.tray import create_tray_icon, update_tray_icon
 from claude_dashboard.ui.main_window import (
@@ -115,6 +115,7 @@ class _SessionEntry:
         "last_prompt",
         "remote_host",
         "otel_missing_since",
+        "last_attached",
     )
 
     def __init__(self, session: SessionInfo):
@@ -138,6 +139,9 @@ class _SessionEntry:
         # while it is being reported. Remote rows are only removed once this
         # is older than config.REMOTE_METRIC_GRACE_SECONDS.
         self.otel_missing_since: float = 0.0
+        # Sandboxes only: epoch of the last sweep that saw a VS Code window
+        # (spec 006). Persisted, so idle time survives restarts and reboots.
+        self.last_attached: float = 0.0
 
 
 class AppController:
@@ -194,6 +198,8 @@ class AppController:
 
         # PID -> _SessionEntry
         self._sessions: dict[int, _SessionEntry] = {}
+        # In-flight `openshell sandbox stop` per openshell name (spec 006)
+        self._sandbox_stops: dict[str, subprocess.Popen] = {}
         # session_id -> PID (reverse lookup for OTEL state correlation)
         self._session_id_to_pid: dict[str, int] = {}
         self._first_tick_done = False
@@ -383,6 +389,10 @@ class AppController:
                         if entry.sandbox_phase != sb_session.sandbox_phase:
                             entry.sandbox_phase = sb_session.sandbox_phase
                             entry.session.sandbox_phase = sb_session.sandbox_phase
+                            # No agent survives a stop; a leftover READY would
+                            # otherwise light the row once it starts again.
+                            if self._is_stopped_sandbox(entry):
+                                entry.state = StatusState.IDLE
                         entry.sandbox_profile = sb_session.sandbox_profile
             # Remove sandboxes that disappeared from openshell list.
             # Skip removal when discovery returns empty — likely a transient
@@ -417,7 +427,8 @@ class AppController:
             )
             if sandbox_vscode_tick:
                 self._sandbox_vscode_tick_counter = 0
-                self._update_sandbox_vscode_state()
+                scan_ok = self._update_sandbox_vscode_state()
+                self._stop_idle_sandboxes(scan_ok=scan_ok)
                 self._check_terminal_activity()
 
             # 3. On first tick, create unattached placeholders from state file
@@ -647,6 +658,7 @@ class AppController:
             old = self._sessions.pop(unattached_pid, None)
             if old:
                 entry.flagged = old.flagged
+                entry.last_attached = old.last_attached
         else:
             self._apply_saved_state(entry)
 
@@ -658,21 +670,31 @@ class AppController:
             synthetic_pid,
         )
 
-    def _update_sandbox_vscode_state(self):
-        """Check which sandboxes have VS Code connected and update unattached state."""
+    def _update_sandbox_vscode_state(self) -> bool:
+        """Check which sandboxes have VS Code connected and update unattached state.
+
+        Returns whether the scan is trustworthy, which the idle-stop sweep needs
+        to tell "every window closed" from "scan failed". Always False off
+        Linux: there is no window scan there, every sandbox reads as detached,
+        and acting on that would stop all of them.
+        """
         sandbox_entries = [e for e in self._sessions.values() if e.sandbox]
         if not sandbox_entries:
-            return
+            return False
 
+        scan_ok = False
         if config.IS_LINUX:
-            from claude_dashboard.platform.linux import _list_windows_dbus
+            from claude_dashboard.platform.linux import _list_windows_dbus, window_calls_available
 
             windows = _list_windows_dbus()
+            # An empty list is also what a failed call returns. Only then pay
+            # for a second call asking the extension directly.
+            scan_ok = bool(windows) or window_calls_available()
         else:
             windows = []
 
         if not windows:
-            logger.debug("sandbox vscode check: 0 windows from D-Bus")
+            logger.debug("sandbox vscode check: 0 windows from D-Bus scan_ok=%s", scan_ok)
 
         vscode_titles = set()
         for w in windows:
@@ -699,6 +721,63 @@ class AppController:
                     folder_name,
                     has_vscode,
                 )
+        return scan_ok
+
+    def _stop_idle_sandboxes(self, *, scan_ok: bool) -> None:
+        """Spec 006: stamp attached sandboxes, stop ones unattached too long.
+
+        A sweep over current state rather than a reaction to VS Code closing,
+        so a sandbox that went idle before the dashboard started (window
+        closed, then the host shut down) is stopped on the first sweep.
+        """
+        for os_name, proc in list(self._sandbox_stops.items()):
+            rc = proc.poll()
+            if rc is not None:
+                log = logger.info if rc == 0 else logger.warning
+                log("sandbox idle stop exited sandbox=%s rc=%d", os_name, rc)
+                del self._sandbox_stops[os_name]
+
+        # A failed scan reads every sandbox as detached. Skipping also leaves
+        # the stamps alone, so a scan outage cannot age them either.
+        if not scan_ok:
+            logger.debug("sandbox idle sweep skipped: window scan unavailable")
+            return
+
+        now = _now_epoch()
+        for entry in self._sessions.values():
+            if not entry.sandbox:
+                continue
+            if not entry.unattached or not entry.last_attached:
+                entry.last_attached = now
+                continue
+            if entry.sandbox_phase != SandboxPhase.READY.value:
+                continue
+            if now - entry.last_attached <= config.SANDBOX_IDLE_STOP_SECONDS:
+                continue
+            self._launch_sandbox_stop(entry.session.session_id.removeprefix("sandbox-"))
+        # Saves happen on UI refresh, not per tick; the stamp must reach disk
+        # before a shutdown for the next boot's first sweep to see it.
+        self._save_session_state()
+
+    def _launch_sandbox_stop(self, os_name: str) -> None:
+        """Fire-and-forget `openshell sandbox stop`. No UI, log only.
+
+        openshell's stop blocks until the sandbox reaches Stopped and is slow,
+        so it runs detached; a failure leaves the sandbox Ready and the next
+        sweep retries it.
+        """
+        if os_name in self._sandbox_stops:
+            return
+        try:
+            self._sandbox_stops[os_name] = subprocess.Popen(
+                ["openshell", "sandbox", "stop", os_name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=config.SUBPROCESS_FLAGS,
+            )
+            logger.info("sandbox idle stop launched sandbox=%s", os_name)
+        except OSError as exc:
+            logger.warning("sandbox idle stop failed to launch sandbox=%s error=%s", os_name, exc)
 
     def _check_terminal_activity(self):
         """Detect non-Claude processes in VS Code terminals matching session CWDs."""
@@ -774,6 +853,12 @@ class AppController:
             last_active = saved.get("last_active")
             if isinstance(last_active, (int, float)):
                 entry.last_active = float(last_active)
+            # Carried so a sandbox whose openshell listing lags the first tick
+            # (gateway still starting after boot) keeps its idle clock: the
+            # placeholder is saved before the sandbox registers and inherits it.
+            last_attached = saved.get("last_attached")
+            if isinstance(last_attached, (int, float)):
+                entry.last_attached = float(last_attached)
             entry.branch = detect_branch(cwd=cwd, trunk_branch=self._trunk_branch(cwd))
             trunk_ref = self._trunk_ref(cwd)
             entry.git_status, entry.merged = git_check(
@@ -965,6 +1050,10 @@ class AppController:
         """Apply an OTEL-reported state to an entry. Returns True on change."""
         entry = self._sessions.get(pid)
         if entry is None:
+            return False
+        # claude_session_ready outlives the agent by its 30m window; a stopped
+        # sandbox would otherwise light up READY.
+        if self._is_stopped_sandbox(entry):
             return False
         new_state = session_state.state
         prior = entry.state
@@ -1185,7 +1274,10 @@ class AppController:
                 git_status=entry.git_status,
                 merged=entry.merged,
                 agent_count=0,
-                unattached=entry.unattached if not entry.sandbox else False,
+                # Sandboxes render attached-style; Stopped is the ghost (spec 006)
+                unattached=(
+                    entry.unattached if not entry.sandbox else self._is_stopped_sandbox(entry)
+                ),
                 sandbox_phase=entry.sandbox_phase if entry.sandbox else "",
                 sandbox_connected=entry.sandbox and not entry.unattached,
                 has_terminal_activity=entry.has_terminal_activity,
@@ -1505,6 +1597,10 @@ class AppController:
     def _is_error_sandbox(entry: "_SessionEntry") -> bool:
         return entry.sandbox and entry.sandbox_phase == "Error"
 
+    @staticmethod
+    def _is_stopped_sandbox(entry: "_SessionEntry") -> bool:
+        return entry.sandbox and entry.sandbox_phase == SandboxPhase.STOPPED.value
+
     def _is_concealed(self, entry: "_SessionEntry") -> bool:
         """True when the title-bar ghost toggle is concealing this row.
 
@@ -1520,6 +1616,9 @@ class AppController:
         """
         if entry.flagged:
             return False
+        # Stopped has no running agent, whatever its last OTEL state said.
+        if self._is_stopped_sandbox(entry):
+            return self._settings.hide_ghosts
         # A sandbox can be active even when its VS Code window is not visible
         # to D-Bus (for example after the dashboard or desktop session
         # restarts). OTEL state is the authoritative liveness signal; do not
@@ -1629,6 +1728,8 @@ class AppController:
             if key in state:
                 if entry.last_active > state[key].get("last_active", 0.0):
                     state[key]["last_active"] = entry.last_active
+                if entry.last_attached > state[key].get("last_attached", 0.0):
+                    state[key]["last_attached"] = entry.last_attached
             else:
                 state[key] = {
                     "state": entry.state.value,
@@ -1640,6 +1741,8 @@ class AppController:
                     state[key]["remote_host"] = entry.remote_host
                     state[key]["cwd"] = cwd
                     state[key]["session_id"] = entry.session.session_id
+                if entry.last_attached:
+                    state[key]["last_attached"] = entry.last_attached
 
         try:
             atomic_write_json(data=state, path=config.STATE_FILE)
@@ -1656,6 +1759,9 @@ class AppController:
         last_active = saved.get("last_active")
         if isinstance(last_active, (int, float)):
             entry.last_active = float(last_active)
+        last_attached = saved.get("last_attached")
+        if isinstance(last_attached, (int, float)):
+            entry.last_attached = float(last_attached)
         state_cleared_from = saved.get("state_cleared_from")
         if isinstance(state_cleared_from, str) and state_cleared_from:
             entry.state_cleared_from = state_cleared_from

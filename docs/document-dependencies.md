@@ -27,6 +27,7 @@ source code                           ← Implementation
 | `specs/001-session-dashboard/` | US1-US5, FR-001–FR-028, SC-001–SC-006 |
 | `specs/002-hide-apply-autostart/` | US6-US8, FR-029–FR-034 |
 | `specs/003-agent-awareness/` | US9, FR-035–FR-042, SC-007 |
+| `specs/006-sandbox-idle-stop/` | US11, FR-065–FR-076, SC-015–SC-018 |
 
 ## Cascade Rules
 
