@@ -75,6 +75,12 @@ DEFAULT_POLL_INTERVAL_SECONDS = 3
 # so this governs only WORKING and READY rows.
 REMOTE_METRIC_GRACE_SECONDS = 120
 
+# Spec 006: a Ready sandbox with no VS Code window for longer than this is
+# stopped with `openshell sandbox stop`. Measured from the persisted
+# last_attached stamp, so a window closed before a host shutdown is past the
+# threshold on the first sweep after boot.
+SANDBOX_IDLE_STOP_SECONDS = 1800
+
 # OTEL state source
 DEFAULT_PROMETHEUS_URL = "http://localhost:9090"
 # Explicit env override (None when unset) — takes precedence over the saved
@@ -133,6 +139,7 @@ class SandboxPhase(Enum):
     ERROR = "Error"
     CREATING = "Creating"
     STOPPING = "Stopping"
+    STOPPED = "Stopped"
     UNKNOWN = "Unknown"
 
 

@@ -115,6 +115,15 @@ toggle still on. **Do not reintroduce a stored per-session visibility flag,
 and do not narrow the conceal set on the theory that a detached sandbox is
 "active" — that is deliberate behavior.**
 
+`last_attached` in `session-state.json` is not that flag returning. It is an
+observation timestamp read only by the idle-stop sweep (spec 006), which
+decides each tick from live attachment plus the stamp; it never touches
+visibility. It is persisted because the sweep must see a window closed before
+a host shutdown as already idle on the first tick after boot — in-memory, the
+clock would restart at boot. Accepted cost: the key is the CWD, so a
+`--recreate`d sandbox inherits the old stamp and is stopped on the first
+sweep if not opened in VS Code.
+
 ### Tooltip dismissal — timers, not crossing events or pointer position
 
 Tkinter runs under XWayland, where the compositor never reports the global pointer position: `winfo_pointerxy()` freezes at the last coordinate the pointer held over one of our own windows — inside the row it just left. So **pointer position cannot prove the pointer left a row**, and `<Leave>` is not reliably delivered from a borderless window. Consequences, all enforced in `main_window.py`: tooltips are armed by `<Motion>`, never `<Enter>` (destroying one fires a synthetic `<Enter>` on the row below, which loops), and `_TOOLTIP_LIFETIME_MS` is the only real guarantee of dismissal. **Do not re-bind to `<Enter>` and do not treat pointer coordinates as authoritative.**
@@ -133,7 +142,7 @@ Ghost sessions are evicted when total session count exceeds `max_sessions` (defa
 
 ### Sandbox phase rendering
 
-`SandboxPhase` enum in `config.py` has values READY, ERROR, CREATING, STOPPING, UNKNOWN. All phases flow through discovery — no filtering by openshell phase. Error sandboxes get phase-specific emoji (⚠️ unattached, 🔥 active) via `_sandbox_emoji()` static method in `main_window.py`. Ready+idle sandboxes use default ghost rendering (🏖️). Error sandboxes are included in the ghost visibility toggle via the `_is_error_sandbox()` helper, even when VS Code is connected. Ready sandboxes without VS Code toggle with ghosts — they are functionally ghosts.
+`SandboxPhase` enum in `config.py` has values READY, ERROR, CREATING, STOPPING, STOPPED, UNKNOWN. All phases flow through discovery — no filtering by openshell phase. Error sandboxes get phase-specific emoji (⚠️ unattached, 🔥 active) via `_sandbox_emoji()` static method in `main_window.py`. Ready+idle sandboxes use default ghost rendering (🏖️). Error sandboxes are included in the ghost visibility toggle via the `_is_error_sandbox()` helper, even when VS Code is connected. Ready sandboxes without VS Code toggle with ghosts — they are functionally ghosts.
 
 ### Sandbox identity comes from labels, never from `host_name`
 
@@ -172,7 +181,7 @@ equal to the sandbox directory name).
 
 ### Sandbox rendering model
 
-Sandboxes never render as ghosts — always state color background + state emoji. Grey text (`_COLOR_CONTAINER_FG`) when VS Code disconnected, normal contrast when connected. Connection state comes from the `window-calls` D-Bus window scan only — never from OTEL or PID. That extension is a hard dependency: `__main__.main()` calls `window_calls_available()` on Linux and exits with an install message if D-Bus does not answer. Without the check a missing extension silently dims every sandbox row and drops sandbox tooltips (`_update_last_prompts()` skips `unattached` entries), which reads as a rendering bug. `sandbox_connected` field on SessionRow carries VS Code status. `unattached` passed as False for sandboxes in SessionRow (internally still tracked for VS Code detection). Gone from openshell → removed from dashboard entirely (no ghost state). Sandbox Ready→Idle automatically when VS Code disconnects.
+Sandboxes never render as ghosts — always state color background + state emoji — except phase `Stopped`, which renders exactly like a local ghost row, ignores OTEL state (`claude_session_ready` outlives the agent by its 30m window), and is always in the ghost toggle's conceal set. The dashboard itself produces `Stopped`: the idle-stop sweep (spec 006) runs `openshell sandbox stop` in the background on a Ready sandbox with no VS Code window for `SANDBOX_IDLE_STOP_SECONDS`, and skips any tick whose window scan is not trustworthy — always off Linux (no scan, every sandbox reads detached), and on Linux when zero windows come back and `window_calls_available()` also fails. Zero windows alone is not a failure: it is also a freshly booted empty desktop, the case the sweep exists for. Clicking the row opens VS Code, whose `sandbox.sh --ensure` task starts it again. Grey text (`_COLOR_CONTAINER_FG`) when VS Code disconnected, normal contrast when connected. Connection state comes from the `window-calls` D-Bus window scan only — never from OTEL or PID. That extension is a hard dependency: `__main__.main()` calls `window_calls_available()` on Linux and exits with an install message if D-Bus does not answer. Without the check a missing extension silently dims every sandbox row and drops sandbox tooltips (`_update_last_prompts()` skips `unattached` entries), which reads as a rendering bug. `sandbox_connected` field on SessionRow carries VS Code status. `unattached` passed as False for sandboxes in SessionRow (internally still tracked for VS Code detection). Gone from openshell → removed from dashboard entirely (no ghost state). Sandbox Ready→Idle automatically when VS Code disconnects.
 
 ### Sandbox profiles — "work" is the exception, everything else is personal
 

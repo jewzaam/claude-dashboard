@@ -67,6 +67,15 @@ When you run many Claude sessions across different projects, sessions end throug
 - See the git status of finished work (pushed? merged?)
 - Remember which projects had active work today
 
+### Stopped Sandboxes
+
+On Linux, the dashboard stops OpenShell sandboxes that have had no VS Code window for 30 minutes (`SANDBOX_IDLE_STOP_SECONDS`), to free the memory and CPU an idle sandbox holds. It runs `openshell sandbox stop` in the background, whatever the agent inside was last doing. The time a sandbox was last attached is saved in `session-state.json`, so a window closed before shutting the machine down counts as idle from that moment: the first check after the next boot stops it.
+
+- A stopped sandbox renders as a ghost row and hides with the ghost toggle
+- Left-click opens VS Code; its `sandbox.sh --ensure` task starts the sandbox again
+- Stop progress and failures are not shown in the dashboard, only in the log; a failed stop is retried on the next check (about every 30 seconds)
+- Not on Windows or macOS: VS Code attachment is only detectable on Linux
+
 ## State Persistence
 
 Session state is saved to `~/.claude/claude-dashboard/session-state.json` on every UI refresh. This preserves across dashboard restarts:
