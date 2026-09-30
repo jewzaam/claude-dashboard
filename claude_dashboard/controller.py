@@ -200,6 +200,8 @@ class AppController:
         self._sessions: dict[int, _SessionEntry] = {}
         # In-flight `openshell sandbox stop` per openshell name (spec 006)
         self._sandbox_stops: dict[str, subprocess.Popen] = {}
+        # Running sandboxes with no host directory, shown in the title bar
+        self._zombie_count = 0
         # session_id -> PID (reverse lookup for OTEL state correlation)
         self._session_id_to_pid: dict[str, int] = {}
         self._first_tick_done = False
@@ -375,7 +377,10 @@ class AppController:
                     self._create_ghost(cwd=cwd, flagged=flagged, last_active=last_active)
 
             # 2b. Discover and reconcile sandbox sessions
-            sandbox_sessions = discover_sandbox_sessions()
+            zombies: list[str] = []
+            sandbox_sessions = discover_sandbox_sessions(zombies=zombies)
+            # ponytail: a failed openshell list reads as 0 zombies for that tick
+            self._zombie_count = len(zombies)
             sandbox_ids = {s.session_id for s in sandbox_sessions}
             # Register new sandboxes and update phase for existing ones
             for sb_session in sandbox_sessions:
@@ -1302,6 +1307,7 @@ class AppController:
         self._main_window.update_title_bar(
             active=active,
             hidden_ghost=hidden_ghost,
+            zombies=self._zombie_count,
             highest_state_color=self._tray_color_hex_for_state(highest),
             highest_git_status=highest_git,
         )

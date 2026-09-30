@@ -675,12 +675,18 @@ def _scan_sandbox_manifests() -> dict[str, Path]:
     return mapping
 
 
-def discover_sandbox_sessions() -> list[SessionInfo]:
+def discover_sandbox_sessions(*, zombies: list[str] | None = None) -> list[SessionInfo]:
     """Discover Claude sessions running in OpenShell sandboxes.
 
-    Runs ``openshell sandbox list --output json``, filters to Ready phase,
-    and returns a SessionInfo per sandbox whose host directory exists.
+    Runs ``openshell sandbox list --output json`` and returns a SessionInfo
+    per sandbox (any phase but Deleting) whose host directory exists.
     Returns an empty list if ``openshell`` is not installed or fails.
+
+    ``zombies``, when given, receives the openshell name of every running
+    sandbox with no host directory: nothing opens it through sandbox.sh or
+    VS Code, so it gets no row and the idle-stop sweep never sees it. Only
+    counted, never stopped — a sandbox made with plain ``openshell`` may be
+    deliberate. Stopped and Error ones hold nothing, so they are not counted.
     """
     try:
         result = subprocess.run(
@@ -749,6 +755,8 @@ def discover_sandbox_sessions() -> list[SessionInfo]:
 
         if sandbox_dir is None:
             logger.info("sandbox %s skipped: no matching directory found", name)
+            if zombies is not None and phase not in ("Stopped", "Error"):
+                zombies.append(name)
             continue
 
         started_at = 0
