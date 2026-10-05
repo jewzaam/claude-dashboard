@@ -28,9 +28,11 @@ The menu depends on the row type. Every menu opens with the row's path as a disa
 
 | Row type | Items |
 |----------|-------|
-| Live session | Clear State |
-| Sandbox | Clear State, Delete Sandbox |
-| Ghost | Dismiss |
+| Live session | Clear State (C) |
+| Sandbox | Clear State (C), Delete Sandbox (X) |
+| Ghost | Dismiss (D) |
+
+While a menu is open, the letter in parentheses (underlined in the menu) invokes that item. Every right-click menu has these. Delete Sandbox is X, not D, so a ghost-row Dismiss habit cannot delete a sandbox.
 
 Dismiss removes a ghost row. Delete Sandbox removes the OpenShell sandbox itself. There is no Hide: an active session is always visible.
 
@@ -48,13 +50,16 @@ While shaded, middle-click acts as a left-click: it expands the window and leave
 
 ### Right-Click
 
-| Item | Action |
-|------|--------|
-| Sessions | Submenu with a visibility checkbox per session |
-| Open... | Folder picker → open selected folder in VS Code |
-| Settings | Open settings dialog |
-| Restart | Save state and restart the dashboard process |
-| Quit | Save state and exit |
+| Item | Key | Action |
+|------|-----|--------|
+| Show remote sessions | R | Toggle remote rows |
+| Show ghost sessions | G | Toggle ghost rows |
+| Open... | O | Folder picker → open selected folder in VS Code |
+| Settings | S | Open settings dialog |
+| Restart | T | Save state and restart the dashboard process |
+| Quit | Q | Save state and exit |
+
+Right-clicking an empty area of the window shows only the two Show toggles.
 
 ### Drag
 

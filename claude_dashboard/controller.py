@@ -1451,7 +1451,7 @@ class AppController:
 
         self._context_menu.add_command(label=cwd_display, state=tk.DISABLED)
         self._context_menu.add_separator()
-        self._context_menu.add_command(label="Clear State", command=clear_state)
+        self._context_menu.add_command(label="Clear State", underline=0, command=clear_state)
 
         self._context_menu_open = True
         popup_menu_clamped(self._context_menu, x=x, y=y)
@@ -1486,8 +1486,9 @@ class AppController:
 
         self._context_menu.add_command(label=f"Sandbox: {cwd_display}", state=tk.DISABLED)
         self._context_menu.add_separator()
-        self._context_menu.add_command(label="Clear State", command=clear_state)
-        self._context_menu.add_command(label="Delete Sandbox", command=delete_sandbox)
+        self._context_menu.add_command(label="Clear State", underline=0, command=clear_state)
+        # "x", not "d": D is Dismiss on ghost rows, one row over
+        self._context_menu.add_command(label="Delete Sandbox", underline=13, command=delete_sandbox)
 
         self._context_menu_open = True
         popup_menu_clamped(self._context_menu, x=x, y=y)
@@ -1506,7 +1507,7 @@ class AppController:
 
         self._context_menu.add_command(label=f"Ghost: {cwd_display}", state=tk.DISABLED)
         self._context_menu.add_separator()
-        self._context_menu.add_command(label="Dismiss", command=dismiss)
+        self._context_menu.add_command(label="Dismiss", underline=0, command=dismiss)
 
         self._context_menu_open = True
         popup_menu_clamped(self._context_menu, x=x, y=y)
@@ -1673,6 +1674,7 @@ class AppController:
 
         menu.add_checkbutton(
             label="Show remote sessions",
+            underline=5,
             variable=remote_var,
             command=toggle_remote,
         )
@@ -1682,6 +1684,7 @@ class AppController:
 
         menu.add_checkbutton(
             label="Show ghost sessions",
+            underline=5,
             variable=ghosts_var,
             command=self._on_ghost_toggle,
         )

@@ -280,7 +280,44 @@ def popup_menu_clamped(menu: tk.Menu, *, x: int, y: int) -> None:
     if mh > 0 and y + mh > sb:
         y = max(0, sb - mh)
 
+    global _posted_menu
+    _posted_menu = menu
+    # The dashboard never takes focus from a click (dock type on Linux,
+    # overrideredirect elsewhere), so without this a shortcut letter goes to
+    # whatever app had focus. Same move as the search icon. Focus stays here
+    # after the menu closes; nothing in Tk can hand it back to another app.
+    if _key_window is not None:
+        _key_window.focus_force()
     menu.tk_popup(x, y)
+
+
+# Menu last posted by popup_menu_clamped(). MainWindow._on_key dispatches its
+# underlined letters: under XWayland a posted menu does not reliably get
+# keyboard focus, so Tk's own underline traversal never sees the key, and the
+# window's <Key> filter handler would otherwise eat it. Dispatch is gated on
+# winfo_ismapped(), so a closed menu never steals keys — this also covers
+# Windows, where the native popup is expected to handle underlines itself.
+_posted_menu: tk.Menu | None = None
+# Window carrying the <Key> binding that dispatches menu shortcuts.
+_key_window: tk.Toplevel | None = None
+
+
+def menu_shortcut(menu: tk.Menu, char: str) -> int | None:
+    """Index of the enabled entry whose underlined letter is ``char``, else None."""
+    end = menu.index(tk.END)
+    if end is None:
+        return None
+    for index in range(end + 1):
+        # str(): entrycget is a raw tk.call; don't trust its return type
+        if str(menu.type(index)) not in ("command", "checkbutton"):
+            continue
+        if str(menu.entrycget(index, "state")) == tk.DISABLED:
+            continue
+        underline = int(str(menu.entrycget(index, "underline")))
+        label = str(menu.entrycget(index, "label"))
+        if 0 <= underline < len(label) and label[underline].lower() == char.lower():
+            return index
+    return None
 
 
 class MainWindow:
@@ -353,6 +390,8 @@ class MainWindow:
 
         # Create the window shell — apply_settings handles all configuration
         self._window = tk.Toplevel(root)
+        global _key_window
+        _key_window = self._window
         if config.IS_LINUX:
             # Wayland compositors (Mutter/GNOME 46+) don't render
             # overrideredirect X windows.  'dock' type removes decorations
@@ -741,19 +780,23 @@ class MainWindow:
         self._title_menu.add_separator()
         self._title_menu.add_command(
             label="Open...",
+            underline=0,
             command=self._on_open_folder if self._on_open_folder else lambda: None,
         )
         self._title_menu.add_separator()
         self._title_menu.add_command(
             label="Settings",
+            underline=0,
             command=self._on_settings if self._on_settings else lambda: None,
         )
         self._title_menu.add_command(
             label="Restart",
+            underline=6,  # "t" — "r" is Show remote sessions
             command=self._on_restart if self._on_restart else lambda: None,
         )
         self._title_menu.add_command(
             label="Quit",
+            underline=0,
             command=self._on_quit if self._on_quit else lambda: None,
         )
         popup_menu_clamped(self._title_menu, x=event.x_root, y=event.y_root)
@@ -1120,6 +1163,13 @@ class MainWindow:
 
     def _on_key(self, event: Any):
         """Accumulate typed characters into filter, apply immediately."""
+        menu = _posted_menu
+        if menu is not None and event.char and menu.winfo_ismapped():
+            index = menu_shortcut(menu, event.char)
+            if index is not None:
+                menu.unpost()
+                menu.invoke(index)
+            return "break"
         if event.keysym == "BackSpace":
             if self._filter_text:
                 self._filter_text = self._filter_text[:-1]

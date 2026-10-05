@@ -124,6 +124,16 @@ clock would restart at boot. Accepted cost: the key is the CWD, so a
 `--recreate`d sandbox inherits the old stamp and is stopped on the first
 sweep if not opened in VS Code.
 
+### Context-menu shortcuts
+
+Right-click menu letter shortcuts come from each entry's `underline=` index, not a separate keymap. `menu_shortcut()` in `ui/main_window.py` derives the bound entry from `underline`; `MainWindow._on_key` dispatches it by unposting and calling `menu.invoke(index)` while the menu tracked in module global `_posted_menu` (set by `popup_menu_clamped()`) is mapped. Adding a menu item only needs `underline=N` posted through `popup_menu_clamped()` — no registration elsewhere. Printable keys are swallowed while a menu is mapped so they don't leak into the filter.
+
+**Do not switch to `bind_all()` per-key shortcuts** (the personal-assistant-dashboard pattern). The toplevel's `<Key>` filter (`_on_key`) runs before the `all` bindtag and returns `"break"` for printable chars, so `bind_all` handlers never fire — the letter goes into the filter instead.
+
+The window never gets keyboard focus from a click (`-type dock` on Linux, `overrideredirect` elsewhere), so a typed shortcut after right-click would otherwise go to whatever app had focus. `popup_menu_clamped()` calls `focus_force()` on module global `_key_window` before `tk_popup` to fix this; focus stays on the dashboard after the menu closes.
+
+"Delete Sandbox" is underlined on the `x` (not `D`) deliberately — `D` is Dismiss on ghost rows, and a `D` habit must not delete a sandbox. Title-bar "Restart" uses `T` because `R` is "Show remote sessions".
+
 ### Tooltip dismissal — timers, not crossing events or pointer position
 
 Tkinter runs under XWayland, where the compositor never reports the global pointer position: `winfo_pointerxy()` freezes at the last coordinate the pointer held over one of our own windows — inside the row it just left. So **pointer position cannot prove the pointer left a row**, and `<Leave>` is not reliably delivered from a borderless window. Consequences, all enforced in `main_window.py`: tooltips are armed by `<Motion>`, never `<Enter>` (destroying one fires a synthetic `<Enter>` on the row below, which loops), and `_TOOLTIP_LIFETIME_MS` is the only real guarantee of dismissal. **Do not re-bind to `<Enter>` and do not treat pointer coordinates as authoritative.**
