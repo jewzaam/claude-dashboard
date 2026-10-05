@@ -389,3 +389,105 @@ class TestGhostToggle:
         self._toggle(stub)
 
         assert stub._is_concealed(broken) is True
+
+
+class _FakeMenu:
+    """Stand-in for tk.Menu: entries are (type, label, underline, state)."""
+
+    def __init__(self, entries, *, mapped=True):
+        self.entries = entries
+        self.mapped = mapped
+        self.invoked: list[int] = []
+        self.unposted = False
+
+    def index(self, _end):
+        return len(self.entries) - 1 if self.entries else None
+
+    def type(self, index):
+        return self.entries[index][0]
+
+    def entrycget(self, index, option):
+        _, label, underline, state = self.entries[index]
+        return {"label": label, "underline": underline, "state": state}[option]
+
+    def winfo_ismapped(self):
+        return self.mapped
+
+    def unpost(self):
+        self.unposted = True
+
+    def invoke(self, index):
+        self.invoked.append(index)
+
+
+_SANDBOX_MENU = [
+    ("command", "Sandbox: ~/x", -1, "disabled"),
+    ("separator", "", -1, "normal"),
+    ("command", "Clear State", 0, "normal"),
+    ("command", "Delete Sandbox", 13, "normal"),
+]
+
+
+class TestMenuShortcuts:
+    """Underlined letters on a posted menu invoke their entry."""
+
+    def test_underlined_letter_maps_to_entry(self):
+        from claude_dashboard.ui.main_window import menu_shortcut
+
+        menu = _FakeMenu(_SANDBOX_MENU)
+        assert menu_shortcut(menu, "c") == 2
+        assert menu_shortcut(menu, "X") == 3
+        assert menu_shortcut(menu, "d") is None  # Delete is underlined on x
+        assert menu_shortcut(menu, "s") is None  # disabled header
+        assert menu_shortcut(_FakeMenu([]), "c") is None
+
+    def test_key_invokes_posted_menu_instead_of_filtering(self):
+        from claude_dashboard.ui import main_window
+        from claude_dashboard.ui.main_window import MainWindow
+
+        win = object.__new__(MainWindow)
+        win._search_active = False
+        win._filter_text = ""
+        menu = _FakeMenu(_SANDBOX_MENU)
+        event = MagicMock(char="c", keysym="c")
+        with patch.object(main_window, "_posted_menu", menu):
+            assert win._on_key(event) == "break"
+            event.char = event.keysym = "q"  # unbound key still swallowed
+            assert win._on_key(event) == "break"
+        assert menu.invoked == [2]
+        assert menu.unposted
+        assert win._filter_text == ""
+
+    def test_unmapped_menu_falls_through_to_filter(self):
+        from claude_dashboard.ui import main_window
+        from claude_dashboard.ui.main_window import MainWindow
+
+        win = object.__new__(MainWindow)
+        win._search_active = False
+        win._filter_text = ""
+        menu = _FakeMenu(_SANDBOX_MENU, mapped=False)
+        with (
+            patch.object(main_window, "_posted_menu", menu),
+            patch.object(MainWindow, "_apply_filter"),
+        ):
+            win._on_key(MagicMock(char="c", keysym="c"))
+        assert menu.invoked == []
+        assert win._filter_text == "c"
+
+    def test_posting_menu_takes_keyboard_focus(self):
+        """Dashboard never gets focus from a click; without this, keys go to another app."""
+        from claude_dashboard.ui import main_window
+
+        menu = MagicMock()
+        menu.winfo_reqwidth.return_value = 0
+        menu.winfo_reqheight.return_value = 0
+        key_window = MagicMock()
+        with (
+            patch.object(main_window, "_key_window", key_window),
+            patch.object(main_window, "_posted_menu", None),
+            patch.object(main_window, "get_screen_bounds", return_value=(1000, 1000)),
+        ):
+            main_window.popup_menu_clamped(menu, x=10, y=10)
+            assert main_window._posted_menu is menu
+        key_window.focus_force.assert_called_once_with()
+        menu.tk_popup.assert_called_once_with(10, 10)
