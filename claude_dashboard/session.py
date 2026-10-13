@@ -179,25 +179,18 @@ def discover_codex_sessions(*, codex_home: Path | None = None) -> list[SessionIn
         return []
     home = codex_home or config.CODEX_HOME
     locks_dir = home / "thread-writer-locks"
-    if not locks_dir.is_dir():
-        return []
-
-    owners = _flock_owners()
-    if not owners:
-        return []
-
     live: dict[str, int] = {}
-    for lock_file in locks_dir.glob("*.lock"):
-        try:
-            pid = owners.get(lock_file.stat().st_ino)
-        except OSError:
-            continue
-        if pid:
-            live[lock_file.stem] = pid
-    if not live:
-        return []
+    if locks_dir.is_dir():
+        owners = _flock_owners()
+        for lock_file in locks_dir.glob("*.lock"):
+            try:
+                pid = owners.get(lock_file.stat().st_ino)
+            except OSError:
+                continue
+            if pid:
+                live[lock_file.stem] = pid
 
-    db = _codex_state_db(codex_home=home)
+    db = _codex_state_db(codex_home=home) if live else None
     threads = _codex_threads(db=db, session_ids=list(live)) if db else {}
 
     sessions = []
@@ -223,6 +216,36 @@ def discover_codex_sessions(*, codex_home: Path | None = None) -> list[SessionIn
                 harness="codex",
             )
         )
+    known_cwds = {session.cwd for session in sessions}
+    processes = (
+        psutil.process_iter(["pid", "name", "cmdline", "cwd", "create_time"])
+        if codex_home is None
+        else ()
+    )
+    for proc in processes:
+        try:
+            info = proc.info
+            if (info.get("name") or "").lower() != "codex":
+                continue
+            args = info.get("cmdline") or []
+            if any(arg in {"app-server", "exec-server", "exec"} for arg in args[1:]):
+                continue
+            cwd = info.get("cwd") or ""
+            if not cwd or cwd in known_cwds:
+                continue
+            pid = info["pid"]
+            sessions.append(
+                SessionInfo(
+                    pid=pid,
+                    session_id=f"codex-starting-{pid}",
+                    cwd=cwd,
+                    started_at=int((info.get("create_time") or 0) * 1000),
+                    harness="codex",
+                )
+            )
+            known_cwds.add(cwd)
+        except (psutil.AccessDenied, psutil.NoSuchProcess, OSError):
+            continue
     return sorted(sessions, key=lambda s: cwd_relative_to_home(cwd=s.cwd).lower())
 
 
