@@ -63,6 +63,6 @@ def find_window_for_session(
 
         return match_window_by_cwd(cwd, container)
 
-    # On Linux/Wayland, window matching happens at foreground time
-    # via `code /path` or similar — no window handle to discover.
-    return container
+    from claude_dashboard.platform.linux import match_window_by_cwd_linux
+
+    return match_window_by_cwd_linux(cwd, container)

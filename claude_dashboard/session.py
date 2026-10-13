@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 class SessionInfo:
     """A discovered Claude Code session."""
 
+    # Dashboard row key. Usually the process PID, made unique for shared processes.
     pid: int
     session_id: str
     cwd: str
@@ -34,6 +35,8 @@ class SessionInfo:
     sandbox_profile: str = ""
     # Also the process name validate_pid() matches on — true for both harnesses.
     harness: str = "claude"
+    # Actual OS PID when pid is used as a unique dashboard row key.
+    process_pid: int = 0
 
 
 # Entrypoints written by non-interactive runs (`claude -p`, Agent SDK). They have
@@ -202,6 +205,13 @@ def discover_codex_sessions(*, codex_home: Path | None = None) -> list[SessionIn
         cwd, started_at, source = threads.get(session_id, ("", 0, "cli"))
         if not cwd:
             logger.debug("codex session %s has no cwd in state db", session_id)
+            continue
+        try:
+            source_metadata = json.loads(source)
+        except json.JSONDecodeError:
+            source_metadata = None
+        if isinstance(source_metadata, dict) and "subagent" in source_metadata:
+            logger.debug("skipping Codex subagent thread %s", session_id)
             continue
         sessions.append(
             SessionInfo(
