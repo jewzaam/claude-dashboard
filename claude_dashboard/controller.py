@@ -841,9 +841,11 @@ class AppController:
                 )
 
     def _find_unattached_pid(self, cwd: str) -> int | None:
-        """Find an unattached placeholder PID for the given CWD."""
+        """Find a placeholder PID for the given CWD."""
         for pid, entry in self._sessions.items():
-            if entry.unattached and entry.session.cwd == cwd:
+            if entry.session.cwd == cwd and (
+                entry.unattached or entry.session.session_id.startswith("codex-starting-")
+            ):
                 return pid
         return None
 
