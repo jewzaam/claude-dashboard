@@ -196,13 +196,14 @@ class AppController:
             ),
         )
 
-        # PID -> _SessionEntry
+        # Internal session key -> _SessionEntry. Usually the key is the PID.
+        # Codex can have several sessions owned by one process.
         self._sessions: dict[int, _SessionEntry] = {}
         # In-flight `openshell sandbox stop` per openshell name (spec 006)
         self._sandbox_stops: dict[str, subprocess.Popen] = {}
         # Running sandboxes with no host directory, shown in the title bar
         self._zombie_count = 0
-        # session_id -> PID (reverse lookup for OTEL state correlation)
+        # session_id -> internal session key for OTEL state correlation
         self._session_id_to_pid: dict[str, int] = {}
         self._first_tick_done = False
 
@@ -354,26 +355,23 @@ class AppController:
         try:
             tick_start = time.monotonic()
             discovered = discover_sessions() + discover_codex_sessions()
-            alive_pids = set()
+            alive_keys = set()
 
             # 1. Register new live sessions
             for session in discovered:
-                if not validate_pid(pid=session.pid, harness=session.harness):
-                    continue
-                session.pid_alive = True
-                alive_pids.add(session.pid)
-                if session.pid not in self._sessions:
-                    self._add_session(session)
+                session_key = self._register_live_session(session)
+                if session_key is not None:
+                    alive_keys.add(session_key)
 
             # 2. Convert dead sessions to ghosts (skip sandbox entries)
-            dead_pids = set(self._sessions.keys()) - alive_pids
-            for pid in dead_pids:
-                entry = self._sessions.get(pid)
+            dead_keys = set(self._sessions) - alive_keys
+            for key in dead_keys:
+                entry = self._sessions.get(key)
                 if entry and not entry.unattached and not entry.sandbox and not entry.remote_host:
                     cwd = entry.session.cwd
                     flagged = entry.flagged
                     last_active = entry.last_active
-                    self._remove_session(pid)
+                    self._remove_session(key)
                     self._create_ghost(cwd=cwd, flagged=flagged, last_active=last_active)
 
             # 2b. Discover and reconcile sandbox sessions
@@ -438,7 +436,7 @@ class AppController:
 
             # 3. On first tick, create unattached placeholders from state file
             if not self._first_tick_done:
-                self._create_unattached_from_state(alive_pids)
+                self._create_unattached_from_state(alive_keys)
 
             # 4. Prune ghosts whose CWD no longer exists
             stale_pids = [
@@ -585,6 +583,25 @@ class AppController:
         except re.error:
             return False
 
+    def _register_live_session(self, session: SessionInfo) -> int | None:
+        """Register a discovered session, allowing multiple sessions per PID."""
+        process_pid = session.pid
+        if not validate_pid(pid=process_pid, harness=session.harness):
+            return None
+        session.process_pid = process_pid
+        session.pid_alive = True
+        session_key = self._session_id_to_pid.get(session.session_id)
+        if session_key is None:
+            session_key = session.pid
+            existing = self._sessions.get(session_key)
+            if existing and existing.session.session_id != session.session_id:
+                self._next_synthetic_pid -= 1
+                session_key = self._next_synthetic_pid
+        session.pid = session_key
+        if session_key not in self._sessions:
+            self._add_session(session)
+        return session_key
+
     def _add_session(self, session: SessionInfo):
         if self._is_ignored(session.cwd):
             logger.debug("pid=%d ignored (cwd=%s matches ignore_regex)", session.pid, session.cwd)
@@ -592,8 +609,11 @@ class AppController:
         entry = _SessionEntry(session)
         entry.last_active = _now_epoch()
         # All new sessions start as IDLE until a hook event updates them.
-        entry.container = detect_container(session.pid)
+        entry.container = detect_container(session.process_pid or session.pid)
         entry.container = find_window_for_session(session.cwd, entry.container)
+        if entry.container.container_type == ContainerType.UNKNOWN and session.harness == "codex":
+            entry.container.container_type = ContainerType.TERMINAL
+            entry.container.process_name = "codex"
         trunk_branch = self._trunk_branch(session.cwd)
         entry.branch = detect_branch(cwd=session.cwd, trunk_branch=trunk_branch)
         trunk_ref = self._trunk_ref(session.cwd)
@@ -992,12 +1012,12 @@ class AppController:
         # are WORKING transition to READY ("just finished, needs attention").
         # PERMISSION_REQUIRED and AWAITING_INPUT are left alone — stale metric
         # doesn't mean the user answered; those persist until explicitly cleared.
-        for entry in self._sessions.values():
+        for session_key, entry in self._sessions.items():
             if entry.session.pid_alive or entry.remote_host:
                 continue
             if entry.state != StatusState.WORKING:
                 continue
-            if entry.session.pid in otel_matched_pids:
+            if session_key in otel_matched_pids:
                 continue
             entry.state = StatusState.READY
             changed = True
@@ -1356,7 +1376,7 @@ class AppController:
         container = entry.container if entry else None
 
         if not container:
-            container = detect_container(session.pid)
+            container = detect_container(session.process_pid or session.pid)
             container = find_window_for_session(session.cwd, container)
             if entry:
                 entry.container = container

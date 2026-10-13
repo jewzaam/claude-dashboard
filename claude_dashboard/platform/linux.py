@@ -14,6 +14,7 @@ import ast
 import json
 import logging
 import subprocess
+from pathlib import Path
 
 import psutil
 
@@ -92,20 +93,68 @@ def detect_container_linux(pid: int) -> ContainerInfo:
         # Fallback: check TERM_PROGRAM env var
         if container.container_type == ContainerType.UNKNOWN:
             try:
-                env = claude_proc.parent().environ()
-                term_prog = env.get("TERM_PROGRAM", "").lower()
-                del env
-                if term_prog == "vscode":
-                    container.container_type = ContainerType.VSCODE
-                elif term_prog:
+                term_prog = claude_proc.environ().get("TERM_PROGRAM", "")
+                if isinstance(term_prog, str) and term_prog:
+                    if term_prog.lower() == "vscode":
+                        container.container_type = ContainerType.VSCODE
+                    else:
+                        container.container_type = ContainerType.TERMINAL
+                        container.process_name = term_prog
+            except (psutil.AccessDenied, psutil.NoSuchProcess, AttributeError):
+                pass
+
+        # Preserve detection for wrappers that expose TERM_PROGRAM only on the parent.
+        if container.container_type == ContainerType.UNKNOWN:
+            try:
+                term_prog = claude_proc.parent().environ().get("TERM_PROGRAM", "")
+                if isinstance(term_prog, str) and term_prog:
+                    if term_prog.lower() == "vscode":
+                        container.container_type = ContainerType.VSCODE
+                    else:
+                        container.container_type = ContainerType.TERMINAL
+                        container.process_name = term_prog
+            except (psutil.AccessDenied, psutil.NoSuchProcess, AttributeError):
+                pass
+
+        # A Codex app-server can retain its controlling TTY after reparenting.
+        if container.container_type == ContainerType.UNKNOWN:
+            try:
+                terminal = claude_proc.terminal()
+                if isinstance(terminal, str) and terminal:
                     container.container_type = ContainerType.TERMINAL
-                    container.process_name = term_prog
+                    container.process_name = "terminal"
             except (psutil.AccessDenied, psutil.NoSuchProcess, AttributeError):
                 pass
 
     except (psutil.NoSuchProcess, psutil.AccessDenied):
         pass
 
+    return container
+
+
+def match_window_by_cwd_linux(cwd: str, container: ContainerInfo) -> ContainerInfo:
+    """Recognize a VS Code window by its workspace folder when PID ancestry misses it."""
+    if container.container_type != ContainerType.UNKNOWN or not cwd:
+        return container
+
+    folder_name = Path(cwd).name.lower()
+    matches = [
+        window
+        for window in _list_windows_dbus()
+        if "code" in (window.get("wm_class") or "").lower()
+        and folder_name
+        in [
+            part.strip().split(" [", 1)[0]
+            for part in (window.get("title") or "").lower().replace(" — ", " - ").split(" - ")
+        ]
+    ]
+    if len(matches) == 1:
+        window = matches[0]
+        container.container_type = ContainerType.VSCODE
+        container.process_name = "code"
+        container.process_pid = window.get("pid", 0)
+        container.window_handle = window.get("id", 0)
+        container.window_title = window.get("title", "")
     return container
 
 
