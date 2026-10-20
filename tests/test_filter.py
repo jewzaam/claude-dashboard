@@ -127,3 +127,64 @@ def test_keystroke_renders_immediately():
         assert win._filter_text == "a"
         render.assert_called_once_with([])
         win._window.after.assert_not_called()
+
+
+def _row_click_handler(win):
+    """Build one row and return its <ButtonRelease-1> handler."""
+    from claude_dashboard.models import SessionRow
+    from claude_dashboard.session import SessionInfo
+
+    row = SessionRow(
+        session=SessionInfo(pid=1, cwd="/tmp/foo", session_id="s1", started_at=0),
+        state=MagicMock(),
+        container=None,
+        branch="",
+        flagged=False,
+        git_status=MagicMock(),
+        merged=False,
+        agent_count=0,
+        unattached=True,
+    )
+    win._frame = MagicMock()
+    win._rows = {}
+    win._font_body = win._font_container = ("Noto Sans", 10)
+    win._row_height = MagicMock(return_value=24)
+    win._emoji_image = MagicMock()
+    win._flag_icon = MagicMock()
+    win._add_row(row)
+    import claude_dashboard.ui.main_window as mw
+
+    binds = mw.tk.Frame.return_value.bind.call_args_list
+    return next(c.args[1] for c in binds if c.args[0] == "<ButtonRelease-1>")
+
+
+def test_row_click_clears_filter():
+    """Clicking a row means the search found it — filter exits after the click runs."""
+    with patch("claude_dashboard.ui.main_window.tk"):
+        win = _make_window()
+        win._search_active = True
+        win._filter_text = "foo"
+        win._double_clicked_pid = None
+        win._on_row_left_click = MagicMock()
+
+        _row_click_handler(win)(MagicMock())
+        deferred = win._window.after.call_args.args[1]
+        deferred()
+
+        win._on_row_left_click.assert_called_once()
+        assert win._search_active is False
+        assert win._filter_text == ""
+        win._on_filter_exit.assert_called_once_with()
+
+
+def test_row_click_without_filter_leaves_view_alone():
+    with patch("claude_dashboard.ui.main_window.tk"):
+        win = _make_window()
+        win._double_clicked_pid = None
+        win._on_row_left_click = MagicMock()
+
+        _row_click_handler(win)(MagicMock())
+        win._window.after.call_args.args[1]()
+
+        win._on_row_left_click.assert_called_once()
+        win._on_filter_exit.assert_not_called()
