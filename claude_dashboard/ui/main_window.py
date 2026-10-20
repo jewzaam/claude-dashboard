@@ -1575,6 +1575,9 @@ class MainWindow:
                         self._pending_click_pid = None
                         if self._double_clicked_pid != session.pid and self._on_row_left_click:
                             self._on_row_left_click(session)
+                            # Clicking a row means the search found it.
+                            if self._search_active:
+                                self._exit_filter_mode()
                         self._double_clicked_pid = None
 
                     self._pending_click_id = self._window.after(_CLICK_DELAY_MS, deferred_click)

@@ -66,7 +66,7 @@ The title bar shows summary information:
 
 - **Eye icon** — always green when expanded, hidden when shaded
 - **Chef kiss emoji** — project mascot (PNG image with fallback to unicode)
-- **Title text** — `Claude Dashboard`, or `/<text>` while filtering
+- **Title text** — `Claude Dashboard`, or `/<text>` while filtering. Left-clicking a row clears the filter
 - **A / H / Z counts** — always shown, even at zero:
   - `A` (active): sessions with a live process, and sandboxes
   - `H` (hidden): rows the ghost toggle is currently concealing
