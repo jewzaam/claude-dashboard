@@ -31,7 +31,7 @@ Folding WORKING alone is not enough: **every session_id whose labels match a san
 | `claude_dashboard/otel_state.py` | Prometheus poller for session state metrics from OTEL recording rules |
 | `claude_dashboard/loki.py` | Loki query client for session user prompt extraction (tooltips) |
 | `claude_dashboard/controller.py` | Session lifecycle, OTEL poller wiring, UI coordination, session state persistence, PID file lock |
-| `claude_dashboard/session.py` | Session discovery (Claude + Codex), PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()`, `detect_terminal_activity()` |
+| `claude_dashboard/session.py` | Session discovery (Claude + Codex), PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()`, `scan_terminal_shells()` |
 | `claude_dashboard/file_utils.py` | Atomic JSON file writes (shared by settings + state persistence) |
 | `claude_dashboard/ui/main_window.py` | Dashboard window with session rows |
 | `claude_dashboard/ui/settings_window.py` | Modal settings editor |
@@ -88,7 +88,7 @@ Decisions recorded here exist because they were non-obvious, caused confusion, o
 
 ### OTEL state — cleared-state guard
 
-When user clears a session state (context menu, click, double-click), `state_cleared_from` records the state value that was cleared (e.g., `"working"`). OTEL poller rejects updates that report the same state — stale metrics keep reporting what was cleared and get blocked. A genuinely different state (e.g., PERMISSION_REQUIRED after clearing WORKING) is accepted, and `state_cleared_from` resets to `""`. No timestamps or cooldowns — pure state identity comparison. Persisted to `session-state.json` so protection survives dashboard restarts.
+When user clears a session state (context menu, click, double-click), `state_cleared_from` records the state value that was cleared (e.g., `"working"`). OTEL poller rejects updates that report the same state — stale metrics keep reporting what was cleared and get blocked. A genuinely different state (e.g., PERMISSION_REQUIRED after clearing WORKING) is accepted, and `state_cleared_from` resets to `""`. No timestamps or cooldowns — pure state identity comparison. Persisted to `session-state.json` so protection survives dashboard restarts. Only OTEL acceptance resets the guard. Locally set states (terminal command finished → READY, double-click) leave it, and dismissing keeps an existing guard (`_dismiss_state()`) — overwriting it with `"ready"` lets the stale state it blocks straight back in.
 
 ### Per-session hide — removed, do not re-add
 
@@ -246,6 +246,11 @@ file; the file is removed when the session ends.
   add staleness heuristics on the file.
 - **`cwd` comes from `threads.cwd`, never from `/proc/<pid>/cwd`.** Codex's
   `/cd` moves the session's working directory without moving the process's.
+- **Non-interactive Codex is skipped by the owner's cmdline** (`exec`,
+  `app-server`, `exec-server` — `_CODEX_NON_INTERACTIVE`). `codex exec` from a
+  script (e.g. a commit wrapper) takes the same flock and would otherwise show
+  as a row until it exits, then linger as a ghost. Its activity shows through
+  the terminal scan on the row for that CWD instead.
 - **Linux only.** `/proc/locks` has no Windows equivalent, and psutil's
   open-file enumeration does not report flocks there. Windows Codex sessions
   arrive over OTEL as remote rows instead — see below.
@@ -308,7 +313,9 @@ Feature specs in `specs/<nnn>-<name>/`, project-wide design notes in `docs/`, us
 
 ### Terminal Activity Detection
 
-`detect_terminal_activity()` (`session.py`) scans VS Code terminal child processes — psutil-based, Linux-only, checked every ~30s on the sandbox vscode tick, so a command finishing between ticks is missed. Excluded process names live in `_TERMINAL_ACTIVITY_EXCLUDE`.
+`scan_terminal_shells()` (`session.py`) scans VS Code terminal bash shells — psutil-based, Linux-only, every discovery tick. A shell with a non-Claude child shows the arrow. A shell's CWD goes to the deepest *non-concealed* row containing it (`_match_cwd()`), so a subdirectory rolls up to its parent row and a hidden ghost at the exact CWD cannot swallow it. Excluded names live in `_TERMINAL_ACTIVITY_EXCLUDE` and match process name or argv[0]/argv[1] basename only — a substring match on the whole cmdline once hid `sandbox.sh --upload` (path contains `openshell`) and any commit message containing `ps`.
+
+**Terminal command finished → READY.** A non-OTEL READY source, deliberate — not a custom state hook. Only a command **seen running at a scan** counts: a shell busy at one tick and idle at the next moves an IDLE row to READY (`_mark_terminal_finished()`). Anything shorter than a tick (`ls`, empty Enter; `cd` is a builtin and never forks) is ignored on purpose — the user wanted signals for long commands (commit, `gpm`), and was still at the terminal for a quick one. **Suppressed when the focused VS Code window's workspace equals the row's CWD basename** (`_vscode_workspace()`, exact match, not the sandbox check's substring) — window-level focus is the agreed boundary; the focused terminal tab is not observable. A title that doesn't parse fails toward notifying. WORKING and sticky states are left alone; ghost rows are skipped because they render the unattached color whatever their state. Rejected alternatives: a `.bashrc` pre/post-command hook (brittle across many machines) and a VS Code extension using the shell-execution API (another component to maintain or trust).
 
 ### State Persistence
 

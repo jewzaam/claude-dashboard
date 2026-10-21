@@ -45,6 +45,13 @@ class SessionInfo:
 # the interactive TUI writes "cli". Unknown entrypoints stay visible on purpose.
 HEADLESS_ENTRYPOINTS = frozenset({"sdk-cli"})
 
+# Codex subcommands that run without the interactive TUI (scripts, servers).
+_CODEX_NON_INTERACTIVE = frozenset({"app-server", "exec-server", "exec"})
+
+
+def _is_codex_non_interactive(args: list[str]) -> bool:
+    return any(arg in _CODEX_NON_INTERACTIVE for arg in args[1:])
+
 
 def discover_sessions(*, sessions_dir: Path | None = None) -> list[SessionInfo]:
     """Read all session files from ~/.claude/sessions/ and return SessionInfo list.
@@ -187,8 +194,18 @@ def discover_codex_sessions(*, codex_home: Path | None = None) -> list[SessionIn
                 pid = owners.get(lock_file.stat().st_ino)
             except OSError:
                 continue
-            if pid:
-                live[lock_file.stem] = pid
+            if not pid:
+                continue
+            # `codex exec` (e.g. a commit script) takes the same flock as an
+            # interactive session. It belongs to the terminal that ran it, which
+            # the terminal scan already reports on the row for that CWD.
+            try:
+                if _is_codex_non_interactive(psutil.Process(pid).cmdline()):
+                    logger.debug("skipping non-interactive codex pid=%d", pid)
+                    continue
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+            live[lock_file.stem] = pid
 
     db = _codex_state_db(codex_home=home) if live else None
     threads = _codex_threads(db=db, session_ids=list(live)) if db else {}
@@ -228,7 +245,7 @@ def discover_codex_sessions(*, codex_home: Path | None = None) -> list[SessionIn
             if (info.get("name") or "").lower() != "codex":
                 continue
             args = info.get("cmdline") or []
-            if any(arg in {"app-server", "exec-server", "exec"} for arg in args[1:]):
+            if _is_codex_non_interactive(args):
                 continue
             cwd = info.get("cwd") or ""
             if not cwd or cwd in known_cwds:
@@ -831,21 +848,42 @@ _TERMINAL_ACTIVITY_EXCLUDE = frozenset(
 )
 
 
-def detect_terminal_activity(*, session_cwds: list[str], vscode_pid: int) -> set[str]:
-    """Return session CWDs that have non-Claude processes running in VS Code terminals.
+@dataclass
+class TerminalShell:
+    """A VS Code terminal shell whose CWD matches a session."""
 
-    Scans /proc for bash shells parented by VS Code, checks their CWD against
-    session CWDs, and reports which sessions have active non-Claude child processes.
+    pid: int
+    cwd: str
+    busy: bool
+
+
+def _is_excluded_command(proc: psutil.Process) -> bool:
+    """Match by process name and by argv[0]/argv[1] basename.
+
+    argv[1] covers interpreter-run scripts (`bash .../claude-wrapper.sh`,
+    whose comm is truncated to 15 chars). Never substring-match the whole
+    cmdline: paths and arguments like `.../openshell-sandbox/sandbox.sh` or a
+    commit message containing "steps" would hide real commands.
+    """
+    if proc.name() in _TERMINAL_ACTIVITY_EXCLUDE:
+        return True
+    return any(os.path.basename(arg) in _TERMINAL_ACTIVITY_EXCLUDE for arg in proc.cmdline()[:2])
+
+
+def scan_terminal_shells(*, session_cwds: list[str], vscode_pid: int) -> list[TerminalShell]:
+    """Return VS Code terminal bash shells whose CWD matches a session CWD.
+
+    `busy` is true when the shell has a non-Claude child running.
     """
     if not config.IS_LINUX or vscode_pid <= 0:
-        return set()
+        return []
 
-    active_cwds: set[str] = set()
+    shells: list[TerminalShell] = []
 
     try:
         parent = psutil.Process(vscode_pid)
     except (psutil.NoSuchProcess, psutil.AccessDenied):
-        return set()
+        return []
 
     for child in parent.children(recursive=True):
         try:
@@ -855,36 +893,29 @@ def detect_terminal_activity(*, session_cwds: list[str], vscode_pid: int) -> set
             if "shellIntegration-bash" not in cmdline_str and "bash -li" not in cmdline_str:
                 continue
 
-            child_cwd = child.cwd()
-            matched_cwd = _match_cwd(child_cwd, session_cwds)
+            matched_cwd = _match_cwd(child.cwd(), session_cwds)
             if not matched_cwd:
                 continue
 
+            busy = False
             for grandchild in child.children(recursive=False):
                 try:
-                    gc_name = grandchild.name()
-                    gc_cmdline = " ".join(grandchild.cmdline())
-                    if gc_name in _TERMINAL_ACTIVITY_EXCLUDE:
-                        continue
-                    if any(ex in gc_cmdline for ex in _TERMINAL_ACTIVITY_EXCLUDE):
-                        continue
-                    active_cwds.add(matched_cwd)
-                    break
+                    if not _is_excluded_command(grandchild):
+                        busy = True
+                        break
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
 
+            shells.append(TerminalShell(pid=child.pid, cwd=matched_cwd, busy=busy))
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 
-    return active_cwds
+    return shells
 
 
 def _match_cwd(terminal_cwd: str, session_cwds: list[str]) -> str | None:
-    """Match a terminal CWD to a session CWD. Exact match first, prefix fallback."""
-    for cwd in session_cwds:
-        if terminal_cwd == cwd:
-            return cwd
-    for cwd in session_cwds:
-        if terminal_cwd.startswith(cwd + "/"):
-            return cwd
-    return None
+    """Match a terminal CWD to the deepest session CWD containing it."""
+    matches = [
+        cwd for cwd in session_cwds if terminal_cwd == cwd or terminal_cwd.startswith(cwd + "/")
+    ]
+    return max(matches, key=len, default=None)

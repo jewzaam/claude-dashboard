@@ -4,7 +4,7 @@
 from PIL import Image
 
 from claude_dashboard import config
-from claude_dashboard.ui.main_window import _contrast_text_for_bg, _tint_image
+from claude_dashboard.ui.main_window import _contrast_text_for_bg, _outline_image, _tint_image
 
 
 def _load_arrow() -> Image.Image:
@@ -73,3 +73,21 @@ class TestCleanStatusArrowColor:
 
     def test_light_background_gets_dark_arrow(self):
         assert _contrast_text_for_bg("#ffffff") == "#1a1520"
+
+
+class TestArrowOutline:
+    """The arrow must stay visible when its status color equals the row background."""
+
+    def test_outline_surrounds_arrow_in_border_color(self):
+        arrow = _tint_image(_load_arrow().resize((20, 20)), (220, 38, 38))
+        outlined = _outline_image(arrow, (255, 255, 255))
+        assert outlined.size == (22, 22)
+        assert (255, 255, 255) in _opaque_colors(outlined)
+
+    def test_border_pixels_only_where_arrow_is_absent(self):
+        arrow = _tint_image(_load_arrow().resize((20, 20)), (220, 38, 38))
+        outlined = _outline_image(arrow, (255, 255, 255))
+        for x in range(20):
+            for y in range(20):
+                if arrow.getpixel((x, y))[3] == 255:
+                    assert outlined.getpixel((x + 1, y + 1))[:3] == (220, 38, 38)

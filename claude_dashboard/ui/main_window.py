@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 import io
 
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from claude_dashboard import config
 from claude_dashboard.tray import generate_icon_image
@@ -128,6 +128,15 @@ def _tint_image(image: Any, rgb: tuple[int, int, int]) -> Any:
     tinted = Image.new("RGBA", image.size, rgb + (255,))
     tinted.putalpha(image.getchannel("A"))
     return tinted
+
+
+def _outline_image(image: Any, rgb: tuple[int, int, int]) -> Any:
+    """Add a 1px rgb border around an RGBA image's shape; result is 2px larger."""
+    padded = Image.new("RGBA", (image.width + 2, image.height + 2), (0, 0, 0, 0))
+    padded.paste(image, (1, 1))
+    border = Image.new("RGBA", padded.size, rgb + (255,))
+    border.putalpha(padded.getchannel("A").filter(ImageFilter.MaxFilter(3)))
+    return Image.alpha_composite(border, padded)
 
 
 def _point_in_widget(widget: Any, x_root: int, y_root: int) -> bool:
@@ -1393,14 +1402,20 @@ class MainWindow:
             # no status color, and every status color doubles as a row background —
             # so fall back to the row's auto-contrast text color, which is the one
             # value guaranteed to stay visible against its own background.
+            # Black outline, same as the eye (tray.generate_icon_image), so the
+            # arrow stays visible when its status color matches the row background.
             arrow_color = self._git_status_color(row) or _contrast_text_for_bg(bg_hex)
             activity_key = ("terminal_activity", arrow_color, icon_size)
             cached = self._icon_cache.get(activity_key)
             if cached is not None:
                 return cached
             fg = Image.open(config.ICON_TERMINAL_ACTIVITY).convert("RGBA")
-            fg = fg.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
+            # Outline at the eye's 64px canvas, then downscale like the eye does,
+            # so both borders end up the same thickness at row icon size.
+            fg = fg.resize((62, 62), Image.Resampling.LANCZOS)
             fg = _tint_image(fg, config.hex_to_rgb(hex_color=arrow_color))
+            fg = _outline_image(fg, (0, 0, 0))
+            fg = fg.resize((icon_size, icon_size), Image.Resampling.LANCZOS)
             result = _pil_to_photoimage(fg)
             self._icon_cache[activity_key] = result
             return result
