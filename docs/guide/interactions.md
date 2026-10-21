@@ -80,7 +80,7 @@ Leftmost element of each row, immediately left of the state emoji.
 
 The arrow takes the same git status color the eye would use, falling back to the row's auto-contrast text color when the tree is clean. It has a black outline, like the eye, so it stays visible when the status color matches the row background. The manual flag is not shown while the arrow is displayed.
 
-When a command that ran long enough to be seen (about 5s) finishes, an IDLE row turns READY, so a commit, push, or upload leaves a signal — unless that project's VS Code window has focus, since you are already looking at it. Quick commands like `ls` do not signal.
+When a command that ran long enough to be seen (about 5s) finishes, an IDLE row turns READY, so a commit, push, or upload leaves a signal — unless that project's VS Code window has focus, since you are already looking at it. Quick commands like `ls` do not signal. Starting a command clears a READY row to IDLE, since you are working in that session.
 
 ## System Tray
 
