@@ -832,7 +832,8 @@ class AppController:
     def _check_terminal_activity(self):
         """Detect commands running or finished in VS Code terminals matching session CWDs.
 
-        Running → arrow icon. A command seen running at the last scan that has
+        Running → arrow icon. A newly started command clears READY → IDLE (you
+        are in that session working). A command seen running at the last scan that has
         since ended → IDLE row goes READY, unless that project's VS Code window
         has focus (you are already looking at it).
         """
@@ -872,6 +873,9 @@ class AppController:
         finished_cwds = {
             shell.cwd for shell in shells if shell.pid in self._busy_shells and not shell.busy
         }
+        started_cwds = {
+            shell.cwd for shell in shells if shell.busy and shell.pid not in self._busy_shells
+        }
         self._busy_shells = {shell.pid for shell in shells if shell.busy}
 
         for entry in self._sessions.values():
@@ -881,6 +885,14 @@ class AppController:
                 logger.debug(
                     "terminal_activity=%s cwd=%s",
                     new_val,
+                    cwd_basename(cwd=entry.session.cwd),
+                )
+            if entry.session.cwd in started_cwds and entry.state == StatusState.READY:
+                # Through _dismiss_state so the guard blocks the stale OTEL READY
+                # (30m window) from re-applying on the next poll.
+                _dismiss_state(entry)
+                logger.debug(
+                    "terminal command started cwd=%s, cleared ready",
                     cwd_basename(cwd=entry.session.cwd),
                 )
             if entry.session.cwd in finished_cwds:

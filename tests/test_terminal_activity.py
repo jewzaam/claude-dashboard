@@ -162,6 +162,30 @@ class TestCommandFinished:
         assert entry.state == StatusState.IDLE
 
 
+class TestCommandStartedClearsReady:
+    def test_new_command_clears_ready_and_guards_it(self):
+        c, entry = _controller(state=StatusState.READY)
+        _scan(c, busy=True)
+        assert entry.state == StatusState.IDLE
+        assert entry.state_cleared_from == "ready"
+
+    def test_command_already_running_does_not_clear_later_ready(self):
+        """Only the start clears; READY arriving mid-command stays."""
+        c, entry = _controller()
+        _scan(c, busy=True)
+        entry.state = StatusState.READY
+        _scan(c, busy=True)
+        assert entry.state == StatusState.READY
+
+    @pytest.mark.parametrize(
+        "state", [StatusState.WORKING, StatusState.PERMISSION_REQUIRED, StatusState.AWAITING_INPUT]
+    )
+    def test_other_states_untouched(self, state):
+        c, entry = _controller(state=state)
+        _scan(c, busy=True)
+        assert entry.state == state
+
+
 class TestFocusedWindowSuppresses:
     def test_focused_project_window_does_not_signal(self):
         c, entry = _controller()

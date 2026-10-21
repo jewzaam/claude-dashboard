@@ -150,7 +150,7 @@ The `agent_type` field is present on all agent hook events. Observed value: `"ge
 
 When a `Stop` hook event arrives (without `agent_id`), the controller intercepts the IDLE transition and sets the main state to READY instead. Ready persists until the user clicks the row (clears to IDLE) or new activity arrives (back to WORKING).
 
-A second, non-OTEL source: a command finishing in a VS Code terminal whose directory matches the row moves an IDLE row to READY (`_check_terminal_activity()`). Only commands seen running at a scan, only IDLE rows, never ghost rows, and not while that project's VS Code window has focus. See CLAUDE.md "Terminal command finished → READY".
+A second, non-OTEL source: a command finishing in a VS Code terminal whose directory matches the row moves an IDLE row to READY (`_check_terminal_activity()`). Only commands seen running at a scan, only IDLE rows, never ghost rows, and not while that project's VS Code window has focus. A newly started terminal command clears READY to IDLE (guarded like a click). See CLAUDE.md "Terminal command finished → READY".
 
 ### Auto-wake after agent completion
 
