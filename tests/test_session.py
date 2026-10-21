@@ -733,6 +733,22 @@ class TestDiscoverCodexSessions:
 
         assert discover_codex_sessions(codex_home=home) == []
 
+    @pytest.mark.skipif(not config.IS_LINUX, reason="/proc/locks is Linux only")
+    def test_codex_exec_holding_lock_is_skipped(self, tmp_path):
+        """A script running `codex exec` takes the same flock; it is not a session row."""
+        session_id = "01a05cd6-439f-7063-9a8f-47ace7abc7fe"
+        home = self._codex_home(tmp_path, session_id=session_id, cwd="/home/user/proj")
+        lock_path = home / "thread-writer-locks" / f"{session_id}.lock"
+        lock_path.touch()
+
+        with open(lock_path, "w", encoding="utf-8") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with patch("claude_dashboard.session.psutil.Process") as mock_process:
+                mock_process.return_value.cmdline.return_value = ["codex", "exec", "write a msg"]
+                sessions = discover_codex_sessions(codex_home=home)
+
+        assert sessions == []
+
     def test_missing_codex_home_returns_empty(self, tmp_path):
         assert discover_codex_sessions(codex_home=tmp_path / "nope") == []
 

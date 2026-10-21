@@ -32,12 +32,12 @@ from claude_dashboard.session import (
     cwd_basename,
     cwd_relative_to_home,
     detect_branch,
-    detect_terminal_activity,
     discover_sandbox_sessions,
     discover_codex_sessions,
     discover_sessions,
     git_check,
     read_trunk_info,
+    scan_terminal_shells,
     sandbox_git_check,
     validate_pid,
 )
@@ -77,6 +77,27 @@ _TITLE_GIT_PRIORITY = {
 }
 
 _DEBOUNCE_MS = 300  # Debounce window for state display updates (FR-043)
+
+
+def _vscode_workspace(*, title: str) -> str:
+    """Workspace name from a VS Code title: `[file - ]<workspace> - Visual Studio Code`.
+
+    Lowercased; "" when the title has no workspace segment.
+    """
+    parts = title.rsplit(" - ", 2)
+    return parts[-2].lower() if len(parts) >= 2 else ""
+
+
+def _dismiss_state(entry: "_SessionEntry") -> None:
+    """Clear a row to IDLE and guard against the dismissed state re-applying.
+
+    An existing guard is kept: accepting an OTEL state always resets it, so a
+    guard alongside a non-IDLE state means that state was set locally (terminal
+    command finished, double-click) while the guarded stale OTEL state is still
+    reporting. Overwriting it would let that stale state straight back in.
+    """
+    entry.state_cleared_from = entry.state_cleared_from or entry.state.value
+    entry.state = StatusState.IDLE
 
 
 def _now_epoch() -> float:
@@ -220,6 +241,9 @@ class AppController:
 
         # Sandbox VS Code detection: check every ~30s
         self._sandbox_vscode_tick_counter = 0
+
+        # Terminal shell pids seen running a command at the last scan
+        self._busy_shells: set[int] = set()
         self._sandbox_vscode_tick_interval = max(
             30 // max(self._settings.poll_interval_seconds, 1), 1
         )
@@ -432,7 +456,9 @@ class AppController:
                 self._sandbox_vscode_tick_counter = 0
                 scan_ok = self._update_sandbox_vscode_state()
                 self._stop_idle_sandboxes(scan_ok=scan_ok)
-                self._check_terminal_activity()
+
+            # 2d. Terminal activity every tick — commit/push finish in seconds.
+            self._check_terminal_activity()
 
             # 3. On first tick, create unattached placeholders from state file
             if not self._first_tick_done:
@@ -739,8 +765,7 @@ class AppController:
                 # idle on an idle row is already a no-op) while unblocking the
                 # stale READY that dismissal was meant to suppress.
                 if was_connected and entry.unattached and entry.state != StatusState.IDLE:
-                    entry.state_cleared_from = entry.state.value
-                    entry.state = StatusState.IDLE
+                    _dismiss_state(entry)
                 logger.debug(
                     "sandbox %s vscode_connected=%s",
                     folder_name,
@@ -805,30 +830,49 @@ class AppController:
             logger.warning("sandbox idle stop failed to launch sandbox=%s error=%s", os_name, exc)
 
     def _check_terminal_activity(self):
-        """Detect non-Claude processes in VS Code terminals matching session CWDs."""
+        """Detect commands running or finished in VS Code terminals matching session CWDs.
+
+        Running → arrow icon. A command seen running at the last scan that has
+        since ended → IDLE row goes READY, unless that project's VS Code window
+        has focus (you are already looking at it).
+        """
         if not config.IS_LINUX:
             return
 
         from claude_dashboard.platform.linux import _list_windows_dbus
 
         windows = _list_windows_dbus()
-        vscode_pids = {
-            w["pid"]
-            for w in windows
-            if (w.get("wm_class") or "").lower() in ("code", "cursor") and w.get("pid")
-        }
+        # Substring, same test as _update_sandbox_vscode_state(): VS Code now
+        # reports wm_class "com.microsoft.VSCode", which an exact "code" missed.
+        vscode_pids = set()
+        focused_workspace = ""
+        for w in windows:
+            wm_class = (w.get("wm_class") or "").lower()
+            if ("code" in wm_class or "cursor" in wm_class) and w.get("pid"):
+                vscode_pids.add(w["pid"])
+                if w.get("focus"):
+                    focused_workspace = _vscode_workspace(title=w.get("title") or "")
         if not vscode_pids:
             return
 
-        session_cwds = [e.session.cwd for e in self._sessions.values()]
+        # Concealed rows (hidden ghosts) can't show the arrow or READY; letting
+        # one win the match would swallow activity its visible parent should show.
+        session_cwds = [e.session.cwd for e in self._sessions.values() if not self._is_concealed(e)]
         if not session_cwds:
             return
 
-        active_cwds: set[str] = set()
+        shells = []
         for vscode_pid in vscode_pids:
-            active_cwds |= detect_terminal_activity(
-                session_cwds=session_cwds, vscode_pid=vscode_pid
-            )
+            shells += scan_terminal_shells(session_cwds=session_cwds, vscode_pid=vscode_pid)
+
+        active_cwds = {shell.cwd for shell in shells if shell.busy}
+        # ponytail: only commands seen running at a scan count, so anything that
+        # finishes inside one tick (ls, an empty Enter) never signals. Accepted:
+        # a quick command was run by someone still at that terminal.
+        finished_cwds = {
+            shell.cwd for shell in shells if shell.pid in self._busy_shells and not shell.busy
+        }
+        self._busy_shells = {shell.pid for shell in shells if shell.busy}
 
         for entry in self._sessions.values():
             new_val = entry.session.cwd in active_cwds
@@ -839,6 +883,36 @@ class AppController:
                     new_val,
                     cwd_basename(cwd=entry.session.cwd),
                 )
+            if entry.session.cwd in finished_cwds:
+                if cwd_basename(cwd=entry.session.cwd).lower() == focused_workspace:
+                    logger.debug(
+                        "terminal command finished in focused window cwd=%s, not signalling",
+                        cwd_basename(cwd=entry.session.cwd),
+                    )
+                    continue
+                self._mark_terminal_finished(entry)
+
+    def _mark_terminal_finished(self, entry: "_SessionEntry"):
+        """IDLE → READY when a terminal command finished in this row's CWD.
+
+        Only IDLE: WORKING would be re-applied by OTEL within a poll, and sticky
+        states must not be overwritten. Ghost rows render the unattached color
+        whatever their state, so READY there would be invisible.
+        """
+        if entry.state != StatusState.IDLE:
+            return
+        if entry.unattached and not entry.sandbox:
+            return
+        if self._is_stopped_sandbox(entry):
+            return
+        # Leave state_cleared_from alone: it names the stale OTEL state the user
+        # dismissed, which keeps reporting and must stay blocked.
+        entry.state = StatusState.READY
+        entry.last_active = _now_epoch()
+        logger.debug(
+            "terminal command finished cwd=%s new_state=ready",
+            cwd_basename(cwd=entry.session.cwd),
+        )
 
     def _find_unattached_pid(self, cwd: str) -> int | None:
         """Find a placeholder PID for the given CWD."""
@@ -1354,8 +1428,7 @@ class AppController:
 
         # Clicking a Ready session clears to Idle
         if entry and entry.state == StatusState.READY:
-            entry.state_cleared_from = entry.state.value
-            entry.state = StatusState.IDLE
+            _dismiss_state(entry)
             logger.debug("pid=%d clicked, cleared ready to idle", session.pid)
             self._refresh_ui()
 
@@ -1429,8 +1502,7 @@ class AppController:
             entry.state = StatusState.READY
             logger.debug("pid=%d double-clicked, idle to ready", session.pid)
         else:
-            entry.state_cleared_from = entry.state.value
-            entry.state = StatusState.IDLE
+            _dismiss_state(entry)
             logger.debug("pid=%d double-clicked, state cleared to idle", session.pid)
         self._refresh_ui()
 
@@ -1474,8 +1546,7 @@ class AppController:
         cwd_display = cwd_relative_to_home(cwd=session.cwd)
 
         def clear_state():
-            entry.state_cleared_from = entry.state.value
-            entry.state = StatusState.IDLE
+            _dismiss_state(entry)
             logger.info("pid=%d state cleared via context menu", session.pid)
             self._refresh_ui()
 
@@ -1496,8 +1567,7 @@ class AppController:
 
         def clear_state():
             if entry:
-                entry.state_cleared_from = entry.state.value
-                entry.state = StatusState.IDLE
+                _dismiss_state(entry)
                 logger.info("sandbox %s state cleared via context menu", cwd_display)
                 self._refresh_ui()
 
