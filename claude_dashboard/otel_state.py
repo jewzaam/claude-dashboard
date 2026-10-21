@@ -42,6 +42,10 @@ class SessionState(NamedTuple):
     headless: bool = False
     sandbox_source: str = ""
     sandbox_openshell_name: str = ""
+    # observed_timestamp (ns) of the newest event behind this state — every
+    # claude_session_* / codex_session_* rule unwraps it, so values compare
+    # across metrics and across session_ids.
+    last_event: float = 0.0
 
 
 def poll_session_states(*, prometheus_url: str) -> dict[str, SessionState]:
@@ -83,6 +87,7 @@ def poll_session_states(*, prometheus_url: str) -> dict[str, SessionState]:
                 headless=headless,
                 sandbox_source=labels.get("sandbox_source", ""),
                 sandbox_openshell_name=labels.get("sandbox_openshell_name", ""),
+                last_event=value,
             )
             existing = candidates.get(session_id)
             if existing is None or _wins(candidate, existing):
@@ -105,9 +110,8 @@ def _wins(candidate: SessionState, existing: SessionState) -> bool:
     shape can be stuck in a state that will never be superseded, because the
     rules compare timestamps within a label set and no further events carry
     the old shape. A false permission_required outlives its window that way.
-    Preferring the richer shape is the closest thing to "most recent" the
-    metrics offer: `ready`/`permission` values are event timestamps but
-    `working` is a count, so values are not comparable across metrics.
+    Preferring the richer shape is a proxy for "most recent" across label
+    shapes of one session.
 
     Equal identity (both shapes the same, or a plain host session with no
     sandbox labels at all) falls through to state priority as before.

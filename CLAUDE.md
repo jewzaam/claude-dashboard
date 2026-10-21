@@ -21,7 +21,7 @@ Session state metrics aggregate all activity (main + agents) by session_id. No p
 
 Orchestrated headless children (the jewzaam-reviews `review` skill spawns `claude -p` agents carrying a `review.orchestrating_session_id` resource attribute) are folded into the launching session by the `claude_session_working` and `claude_session_ready` recording rules and dropped from `claude_session_permission`, so they publish no series of their own. The launching session backgrounds the run and stops, so without the WORKING fold it reports READY for the whole 15-50 minute review.
 
-Folding WORKING alone is not enough, and the reason is a dashboard behavior worth knowing: **every session_id whose labels match a sandbox row is applied to that one row, last poll result wins** (`_match_sandbox()` → `_apply_otel_state()`, no priority arbitration across session_ids). Children inherit the parent's environment, so their labels match the parent's sandbox row exactly; each child that finished fired its own Stop and published READY, and the last one applied overwrote the parent's WORKING. The same last-wins path means two genuinely interactive sessions in one sandbox already share a row — unrelated to reviews, not fixed. Rules live in claude-otel-stack `config/loki-rules/fake/rules.yaml`.
+Folding WORKING alone is not enough: **every session_id whose labels match a sandbox row resolves to that one row, and the one with the newest event (`SessionState.last_event`, the metric's `observed_timestamp`) is applied** (`_update_states_from_otel()`). Children inherit the parent's environment, so their labels match the parent's sandbox row exactly; each child that finished fires its own Stop, which is newer than the parent's last activity, so unfolded children would win the row. Accepted cost of newest-wins: a sticky PERMISSION_REQUIRED on an older session is masked while a newer session in the same sandbox reports. Rules live in claude-otel-stack `config/loki-rules/fake/rules.yaml`.
 
 ### Key Files
 
@@ -184,10 +184,9 @@ equal to the sandbox directory name).
   once. The stale shape can be stuck in a state nothing will supersede —
   the rules compare timestamps within a label set, and no further events
   carry the old shape — which is how a false `permission_required` outlived
-  a live `working` for a full 30m window. Identity richness is the closest
-  proxy for recency the metrics offer: `ready`/`permission` values are
-  event timestamps, but `working` is a count, so values are not comparable
-  across metrics. Equal identity falls back to priority.
+  a live `working` for a full 30m window. Identity richness is the proxy
+  for recency across label shapes of one session. Equal identity falls
+  back to priority.
 
 ### Sandbox rendering model
 

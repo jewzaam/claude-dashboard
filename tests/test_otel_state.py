@@ -62,7 +62,10 @@ class TestPollSessionStates:
 
         assert result == {
             "abc-123": SessionState(
-                state=StatusState.WORKING, host_name="myhost", project="/home/user/src"
+                state=StatusState.WORKING,
+                host_name="myhost",
+                project="/home/user/src",
+                last_event=5,
             ),
         }
 
@@ -120,7 +123,7 @@ class TestPollSessionStates:
             result = poll_session_states(prometheus_url="http://localhost:9090")
 
         assert result["abc-123"] == SessionState(
-            state=StatusState.READY, host_name="sandbox-mybox", project=""
+            state=StatusState.READY, host_name="sandbox-mybox", project="", last_event=1
         )
 
     def test_multiple_sessions(self):

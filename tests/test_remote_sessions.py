@@ -314,3 +314,55 @@ class TestSandboxMatching:
             state=StatusState.WORKING, host_name="a-machine", project="/home/u/src/x"
         )
         assert c._match_sandbox(state) is None
+
+
+class TestSandboxSharedRow:
+    """Several session_ids in one sandbox all match its row; newest event wins."""
+
+    @staticmethod
+    def _controller() -> AppController:
+        c = _make_controller()
+        entry = _SessionEntry(
+            SessionInfo(pid=-9, session_id="sandbox-sb-abc123", cwd="/s/proj", started_at=0)
+        )
+        entry.sandbox = True
+        c._sessions = {-9: entry}
+        c._session_id_to_pid = {"sandbox-sb-abc123": -9}
+        return c
+
+    @staticmethod
+    def _state(state: StatusState, last_event: float) -> SessionState:
+        return SessionState(
+            state=state,
+            host_name="a-machine",
+            project="/sandbox/source",
+            sandbox_openshell_name="sb-abc123",
+            last_event=last_event,
+        )
+
+    def test_newest_session_wins_regardless_of_poll_order(self):
+        c = self._controller()
+        # Poll order puts the stale READY last — last-applied would win.
+        _poll(
+            c,
+            {
+                "active": self._state(StatusState.WORKING, 200),
+                "stale": self._state(StatusState.READY, 100),
+            },
+        )
+        assert c._sessions[-9].state == StatusState.WORKING
+
+    def test_older_loser_does_not_reset_cleared_guard(self):
+        c = self._controller()
+        entry = c._sessions[-9]
+        entry.state = StatusState.IDLE
+        entry.state_cleared_from = "working"
+        _poll(
+            c,
+            {
+                "stale": self._state(StatusState.READY, 100),
+                "active": self._state(StatusState.WORKING, 200),
+            },
+        )
+        assert entry.state == StatusState.IDLE
+        assert entry.state_cleared_from == "working"

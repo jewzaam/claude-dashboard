@@ -998,7 +998,11 @@ class AppController:
         url = config.resolve_prometheus_url(settings_url=self._settings.prometheus_url)
         states = poll_session_states(prometheus_url=url)
         changed = False
-        otel_matched_pids: set[int] = set()
+        # Several session_ids can resolve to one row (every session in a
+        # sandbox matches its row by labels). The session with the newest
+        # event wins; applying each in turn would let poll order decide, and
+        # an older loser applied first would reset state_cleared_from.
+        newest: dict[int, SessionState] = {}
         for session_id, session_state in states.items():
             pid = self._session_id_to_pid.get(session_id)
             if pid is None:
@@ -1007,7 +1011,11 @@ class AppController:
                 pid = self._add_remote_session(session_id=session_id, state=session_state)
             if pid is None:
                 continue
-            otel_matched_pids.add(pid)
+            current = newest.get(pid)
+            if current is None or session_state.last_event > current.last_event:
+                newest[pid] = session_state
+        otel_matched_pids = set(newest)
+        for pid, session_state in newest.items():
             if self._apply_otel_state(pid=pid, session_state=session_state):
                 changed = True
         # Stale WORKING → READY: sessions not in current OTEL results that
