@@ -38,28 +38,28 @@ Dismiss removes a ghost row. Delete Sandbox removes the OpenShell sandbox itself
 
 ## Title Bar
 
-### Left-Click (Text / Icon / Empty Area)
+### Left-Click (Anywhere but the Counts Label)
 
-Toggle window shade — collapse to title bar only, or expand to show all rows. While shaded, the bar takes the color of the highest-priority session state, so a permission request is still visible. See [Visual Guide](visual-guide.md#window-shade).
+Toggle search. The title text becomes `/` and typed characters filter rows by path; the filter also reveals rows the ghost toggle conceals. Click again or press Escape to exit. Typing without clicking first also starts a search once the window has focus.
 
 ### Middle-Click
 
-Toggle ghost row visibility — hide all ghosts, or show them again. Sandboxes with no VS Code window attached toggle alongside local ghosts, as do error sandboxes. Flagged rows stay pinned, and rows with VS Code connected are unaffected. Nothing is remembered per session: attach VS Code to a concealed sandbox and its row returns with the toggle still on.
-
-While shaded, middle-click acts as a left-click: it expands the window and leaves ghost visibility as it was.
+Toggle ghost row visibility, same as Show ghost sessions below. While searching, middle-click exits the search instead.
 
 ### Right-Click
 
 | Item | Key | Action |
 |------|-----|--------|
 | Show remote sessions | R | Toggle remote rows |
-| Show ghost sessions | G | Toggle ghost rows |
+| Show ghost sessions | G | Toggle ghost rows — see below |
 | Open... | O | Folder picker → open selected folder in VS Code |
 | Settings | S | Open settings dialog |
 | Restart | T | Save state and restart the dashboard process |
 | Quit | Q | Save state and exit |
 
 Right-clicking an empty area of the window shows only the two Show toggles.
+
+Show ghost sessions hides or shows all ghosts. Sandboxes with no VS Code window attached toggle alongside local ghosts, as do error sandboxes. Flagged rows stay pinned, and rows with VS Code connected are unaffected. Nothing is remembered per session: attach VS Code to a concealed sandbox and its row returns with the toggle still on.
 
 ### Drag
 

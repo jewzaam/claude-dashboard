@@ -31,7 +31,7 @@ See [Getting Started](docs/guide/getting-started.md) for full setup instructions
 | [Getting Started](docs/guide/getting-started.md) | Installation, hook setup, launch, platform support |
 | [Visual Guide](docs/guide/visual-guide.md) | Row layout, status colors/emojis, git flags, title bar, tray icon |
 | [Session Lifecycle](docs/guide/session-lifecycle.md) | Discovery, state transitions, ghosts, agents, persistence |
-| [Interactions](docs/guide/interactions.md) | Click behaviors, menus, shade toggle, drag, tray |
+| [Interactions](docs/guide/interactions.md) | Click behaviors, menus, search, drag, tray |
 | [Settings](docs/guide/settings.md) | All settings, colors, emojis, filtering, window behavior |
 
 ## Third-Party Assets

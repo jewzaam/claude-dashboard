@@ -293,7 +293,7 @@ def popup_menu_clamped(menu: tk.Menu, *, x: int, y: int) -> None:
     _posted_menu = menu
     # The dashboard never takes focus from a click (dock type on Linux,
     # overrideredirect elsewhere), so without this a shortcut letter goes to
-    # whatever app had focus. Same move as the search icon. Focus stays here
+    # whatever app had focus. Same move as the title-bar search click. Focus stays here
     # after the menu closes; nothing in Tk can hand it back to another app.
     if _key_window is not None:
         _key_window.focus_force()
@@ -370,8 +370,6 @@ class MainWindow:
         self._pending_click_id: str | None = None  # Pending after() id for delayed single-click
         self._pending_click_pid: int | None = None  # PID associated with pending click
         self._force_resize = False
-        self._shaded = False
-        self._last_highest_state_color: str = ""
         self._last_highest_git_status: GitStatus | None = None
         self._icon_cache: dict[tuple, tk.PhotoImage] = {}
         self._emoji_image_cache: dict[tuple, tk.PhotoImage] = {}
@@ -576,25 +574,14 @@ class MainWindow:
         )
         self._title_counts_label.pack(side=tk.RIGHT, padx=(0, _COUNTS_RIGHT_PAD))
 
-        self._title_emoji_label.configure(cursor="xterm")
-        self._title_emoji_label.bind("<Button-1>", self._on_search_click)
-
-        # Bind drag (window move) on non-cost title bar widgets
-        move_widgets = [
-            frame,
-            self._title_icon,
-            self._title_text_label,
-        ]
-        for w in move_widgets:
+        # Everything but the counts label: drag moves the window, a click
+        # (release without drag) toggles search, middle-click toggles ghosts
+        for w in [frame, self._title_icon, self._title_emoji_label, self._title_text_label]:
             w.bind("<Button-1>", self._on_drag_start)
             w.bind("<B1-Motion>", self._on_drag_motion)
-            w.bind("<Button-3>", self._on_title_bar_right_click)
-
-        # Title text/icon/frame: left-click toggles shade, middle-click toggles ghosts
-        shade_widgets = [frame, self._title_icon, self._title_text_label]
-        for w in shade_widgets:
-            w.bind("<ButtonRelease-1>", self._on_shade_toggle)
+            w.bind("<ButtonRelease-1>", self._on_title_click)
             w.bind("<Button-2>", self._on_ghost_toggle_click)
+            w.bind("<Button-3>", self._on_title_bar_right_click)
 
         # Counts label: drag to resize width
         self._title_counts_label.configure(cursor="sb_h_double_arrow")
@@ -605,27 +592,11 @@ class MainWindow:
 
         return frame
 
-    def _on_shade_toggle(self, event: Any):
-        """Left-click on title text — toggle window shade (collapse/expand rows)."""
+    def _on_title_click(self, event: Any):
+        """Left-click on the title bar — toggle search, unless it was a drag."""
         if self._dragged:
             return
-        self._shaded = not self._shaded
-        self._apply_shade_state()
-
-    def _apply_shade_state(self):
-        """Apply shade/unshade: update title bar, pack/unpack rows, recalculate geometry."""
-        self._apply_title_bar_style()
-        if self._shaded:
-            for row_data in self._rows.values():
-                row_data["frame"].pack_forget()
-            self._empty_label.pack_forget()
-        else:
-            for pid in self._row_order:
-                if pid in self._rows:
-                    self._rows[pid]["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
-            if not self._rows:
-                self._empty_label.pack(pady=10)
-        self._apply_geometry(row_count=len(self._rows))
+        return self._on_search_click(event)
 
     def _repack_layout(self):
         """Re-pack title bar and rows for current grow direction."""
@@ -639,20 +610,15 @@ class MainWindow:
         else:
             self._title_bar.pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
 
-        if not self._shaded:
-            for pid in self._row_order:
-                if pid in self._rows:
-                    self._rows[pid]["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
-            if not self._rows:
-                self._empty_label.pack(pady=10)
+        for pid in self._row_order:
+            if pid in self._rows:
+                self._rows[pid]["frame"].pack(fill=tk.X, padx=_ROW_PAD_X, pady=_ROW_PAD_Y)
+        if not self._rows:
+            self._empty_label.pack(pady=10)
 
     def _apply_title_bar_style(self):
-        """Apply title bar bg/fg/icon based on current shade state and last known priority."""
-        color = self._last_highest_state_color
-        if self._shaded and color:
-            self._title_bg = color
-        else:
-            self._title_bg = config.DEFAULT_COLOR_UNATTACHED
+        """Apply title bar bg/fg/icon."""
+        self._title_bg = config.DEFAULT_COLOR_UNATTACHED
         self._title_fg = _contrast_text_for_bg(self._title_bg)
         bg = self._title_bg
         fg = self._title_fg
@@ -700,7 +666,7 @@ class MainWindow:
                 self._title_emoji_label.configure(image=self._title_emoji_image)
 
     def _apply_geometry(self, *, row_count: int):
-        """Single geometry calculation used by shade, unshade, and update_sessions.
+        """Single geometry calculation used by update_sessions.
 
         Computes window height from *row_count*, reads x/y from tracked
         position (never stale winfo), and sets the geometry.
@@ -708,9 +674,7 @@ class MainWindow:
         self._window.update_idletasks()
         row_h = self._row_height()
         title_bar_height = row_h + _ROW_PAD_Y * 2
-        if self._shaded:
-            new_height = title_bar_height
-        elif row_count > 0:
+        if row_count > 0:
             new_height = title_bar_height + row_count * (row_h + _ROW_PAD_Y * 2)
         else:
             new_height = title_bar_height + row_h + _ROW_PAD_Y * 2
@@ -735,9 +699,7 @@ class MainWindow:
         geom = f"{self._s(self._settings.row_width)}x{new_height}+{x}+{y}"
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
-                "apply_geometry: shaded=%s rows=%d tracked=(%s,%s) bottom=%s"
-                " new_h=%d y=%d geom=%s",
-                self._shaded,
+                "apply_geometry: rows=%d tracked=(%s,%s) bottom=%s new_h=%d y=%d geom=%s",
                 row_count,
                 self._tracked_x,
                 self._tracked_y,
@@ -763,19 +725,12 @@ class MainWindow:
                     actual_y,
                 )
 
-    def _on_ghost_toggle_click(self, event: Any):
-        """Middle-click on title bar — clear an active filter, else toggle ghosts.
-
-        Interaction with shade state:
-        - Shaded: unshade only — same as a left-click, ghosts untouched
-        - Unshaded: toggle ghost visibility (flagged ghosts stay pinned)
-        """
+    def _on_ghost_toggle_click(self, _event: Any):
+        """Middle-click on title bar — clear an active filter, else toggle ghosts."""
         if self._search_active:
             self._exit_filter_mode()
             return "break"
-        if self._shaded:
-            self._on_shade_toggle(event)
-        elif self._on_ghost_toggle:
+        if self._on_ghost_toggle:
             self._on_ghost_toggle()
 
     def _on_title_bar_right_click(self, event: Any):
@@ -817,11 +772,9 @@ class MainWindow:
         active: int = 0,
         hidden_ghost: int = 0,
         zombies: int = 0,
-        highest_state_color: str = "",
         highest_git_status: "GitStatus | None" = None,
     ):
         """Update the title bar with session counts and state icon."""
-        self._last_highest_state_color = highest_state_color
         self._last_highest_git_status = highest_git_status
         self._apply_title_bar_style()
         fg = self._title_fg
@@ -1161,7 +1114,7 @@ class MainWindow:
     # ------------------------------------------------------------------
 
     def _on_search_click(self, _event: Any = None):
-        """Toggle filter mode on search icon click."""
+        """Toggle filter mode on title bar click."""
         if self._search_active:
             self._exit_filter_mode()
         else:
@@ -1266,20 +1219,6 @@ class MainWindow:
         self._render_sessions(self._filtered_sessions(sessions))
 
     def _render_sessions(self, sessions: list[SessionRow]):
-        # When shaded, track rows silently but don't touch geometry or visibility
-        if self._shaded:
-            current_pids = {row.session.pid for row in sessions}
-            for pid in set(self._rows.keys()) - current_pids:
-                self._remove_row(pid)
-            for row in sessions:
-                if row.session.pid in self._rows:
-                    self._update_row(row)
-                else:
-                    self._add_row(row)
-                    self._rows[row.session.pid]["frame"].pack_forget()
-            self._row_order = [row.session.pid for row in sessions]
-            return
-
         current_pids = {row.session.pid for row in sessions}
 
         # Detect changes that affect geometry

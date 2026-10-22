@@ -308,7 +308,7 @@ Feature specs in `specs/<nnn>-<name>/`, project-wide design notes in `docs/`, us
 - `sys.excepthook` captures uncaught stack traces in log files
 - Makefile `run` target logs to `~/.claude/claude-dashboard/dashboard.log`
 - Single-instance enforcement via PID file lock
-- **No stored per-session visibility.** No `hidden` field, no Hide menu item, nothing about visibility in `session-state.json`. Row visibility is recomputed every render from `_is_concealed()`, so nothing stays concealed once the condition that concealed it clears. The only control is the `hide_ghosts` setting (title-bar middle-click); the keyboard filter is a transient exception that reveals concealed rows rather than hiding anything
+- **No stored per-session visibility.** No `hidden` field, no Hide menu item, nothing about visibility in `session-state.json`. Row visibility is recomputed every render from `_is_concealed()`, so nothing stays concealed once the condition that concealed it clears. The only control is the `hide_ghosts` setting (title-bar middle-click, or "Show ghost sessions" in the right-click menu); the keyboard filter is a transient exception that reveals concealed rows rather than hiding anything
 - Headless runs are not discovered at all: `discover_sessions()` skips `HEADLESS_ENTRYPOINTS` (`sdk-cli`, written by `claude -p` and the Agent SDK). Verified against Claude Code 2.1.226 — the interactive TUI writes `cli`. Unknown entrypoints stay visible so a new one never vanishes silently. OTEL telemetry is emitted by Claude Code itself and is unaffected
 
 ### Terminal Activity Detection
