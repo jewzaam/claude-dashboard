@@ -64,25 +64,15 @@ The title bar shows summary information:
 [Eye] [Chef Kiss] Claude Dashboard (+3)          5h: 42%  7d: 78%  $183.48  A:4 H:12 Z:1
 ```
 
-- **Eye icon** — always green when expanded, hidden when shaded
+- **Eye icon** — highest-priority git status across visible rows
 - **Chef kiss emoji** — project mascot (PNG image with fallback to unicode)
-- **Title text** — `Claude Dashboard`, or `/<text>` while filtering. Left-clicking a row clears the filter
+- **Title text** — `Claude Dashboard`, or `/<text>` while filtering. Left-click the title bar to toggle search; left-clicking a row clears the filter
 - **A / H / Z counts** — always shown, even at zero:
   - `A` (active): sessions with a live process, and sandboxes
   - `H` (hidden): rows the ghost toggle is currently concealing
   - `Z` (zombie): running OpenShell sandboxes with no directory under `~/sandboxes/`. Created with plain `openshell`, or their directory was deleted. They get no row, so nothing opens them from the dashboard and the idle stop never touches them; the count is there so they are not invisible. `openshell sandbox list` shows them
 - **5h / 7d** — OAuth usage utilization percentages (if available)
 - **Daily cost** — today's total spend across all sessions
-
-### Window Shade
-
-Click the title bar (text, icon, or empty area) to collapse the window to just the title bar. Click again to expand. When shaded:
-
-- Title bar background changes to the highest-priority session state color (amber if something needs attention, green if ready, dark if idle)
-- Eye icon hides (redundant with background color)
-- Rows update silently in the background
-
-When `grow_up` is enabled, the title bar sits at the bottom of the window, so shading keeps it pinned in place.
 
 ## Tray Icon
 

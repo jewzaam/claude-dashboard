@@ -1424,7 +1424,6 @@ class AppController:
             active=active,
             hidden_ghost=hidden_ghost,
             zombies=self._zombie_count,
-            highest_state_color=self._tray_color_hex_for_state(highest),
             highest_git_status=highest_git,
         )
 
@@ -1750,7 +1749,7 @@ class AppController:
         return self._settings.hide_ghosts
 
     def _on_ghost_toggle(self):
-        """Middle-click on title bar — toggle ghost row visibility.
+        """Title bar middle-click / "Show ghost sessions" — toggle ghost visibility.
 
         A single view flag, not per-session state: there is no way to conceal
         an individual row, and nothing about concealment is stamped onto a
@@ -1758,10 +1757,7 @@ class AppController:
         """
         self._settings.hide_ghosts = not self._settings.hide_ghosts
         self._save_settings_safe()
-        logger.info(
-            "ghosts %s via title bar middle-click",
-            "hidden" if self._settings.hide_ghosts else "shown",
-        )
+        logger.info("ghosts %s", "hidden" if self._settings.hide_ghosts else "shown")
         self._refresh_ui()
 
     # ------------------------------------------------------------------
