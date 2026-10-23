@@ -785,7 +785,7 @@ def discover_sandbox_sessions(*, zombies: list[str] | None = None) -> list[Sessi
 
         sandbox_dir: Path | None = None
 
-        # Strategy 1: label from openshell (new sandboxes with --label)
+        # The source.directory label sandbox.sh sets at create time
         labels = sb.get("labels") or {}
         source_dir = labels.get("source.directory", "")
         if source_dir:
@@ -793,13 +793,7 @@ def discover_sandbox_sessions(*, zombies: list[str] | None = None) -> list[Sessi
             if candidate.is_dir():
                 sandbox_dir = candidate
 
-        # Strategy 2: direct name match (old full-name sandboxes)
-        if sandbox_dir is None:
-            candidate = SANDBOXES_DIR / name
-            if candidate.is_dir():
-                sandbox_dir = candidate
-
-        # Strategy 3: manifest lookup (hash-name sandboxes)
+        # Otherwise the manifest's openshell_name
         if sandbox_dir is None and name in manifest_map:
             sandbox_dir = manifest_map[name]
 

@@ -1380,10 +1380,7 @@ class AppController:
         Sandbox rows are keyed `sandbox-<openshell name>`, so
         `sandbox_openshell_name` matches directly. `sandbox_source` is the
         friendly name and equals the sandbox directory name, so it matches
-        by CWD basename. `host_name` is the machine as of the claude.env
-        change — the old `sandbox-<hash>` hostname is only still emitted by
-        sandboxes not yet refreshed, and that fallback can go once those
-        series age out.
+        by CWD basename.
         """
         if state.sandbox_openshell_name:
             pid = self._session_id_to_pid.get(f"sandbox-{state.sandbox_openshell_name}")
@@ -1393,8 +1390,6 @@ class AppController:
             for pid, entry in self._sessions.items():
                 if entry.sandbox and cwd_basename(cwd=entry.session.cwd) == state.sandbox_source:
                     return pid
-        if state.host_name.startswith("sandbox-"):
-            return self._session_id_to_pid.get(state.host_name)
         return None
 
     # ------------------------------------------------------------------
@@ -1404,9 +1399,6 @@ class AppController:
     def _sorted_entries(self) -> list["_SessionEntry"]:
         """Return all session entries sorted: remote block first (grouped by
         host, then display text), then personal sandboxes, then the rest.
-
-        Host-first is meaningful again now that `host_name` is the machine —
-        it was opaque `sandbox-<hash>` identifiers when this sorted by path.
         """
         return sorted(
             self._sessions.values(),

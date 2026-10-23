@@ -26,7 +26,8 @@ def _make_sandbox_json(sandboxes):
                 "phase": sb.get("phase", "Ready"),
                 "created_at": sb.get("created_at", "2026-06-02 12:00:00"),
                 "id": sb.get("id", "fake-uuid"),
-                "labels": sb.get("labels", {}),
+                # sandbox.sh labels every sandbox with its directory name
+                "labels": sb.get("labels", {"source.directory": sb["name"]}),
             }
             for sb in sandboxes
         ]
@@ -186,7 +187,9 @@ class TestDiscoverSandboxSessions:
     def test_handles_missing_created_at(self, tmp_path):
         sandbox_dir = tmp_path / "no-ts"
         sandbox_dir.mkdir()
-        json_out = json.dumps([{"name": "no-ts", "phase": "Ready"}])
+        json_out = json.dumps(
+            [{"name": "no-ts", "phase": "Ready", "labels": {"source.directory": "no-ts"}}]
+        )
         mock_result = MagicMock(returncode=0, stdout=json_out)
 
         with (
