@@ -404,23 +404,7 @@ class AppController:
             # ponytail: a failed openshell list reads as 0 zombies for that tick
             self._zombie_count = len(zombies)
             sandbox_ids = {s.session_id for s in sandbox_sessions}
-            # Register new sandboxes and update phase for existing ones
-            for sb_session in sandbox_sessions:
-                if sb_session.session_id not in self._session_id_to_pid:
-                    self._add_sandbox_session(sb_session)
-                    logger.info("registered sandbox %s", sb_session.session_id)
-                else:
-                    pid = self._session_id_to_pid[sb_session.session_id]
-                    entry = self._sessions.get(pid)
-                    if entry:
-                        if entry.sandbox_phase != sb_session.sandbox_phase:
-                            entry.sandbox_phase = sb_session.sandbox_phase
-                            entry.session.sandbox_phase = sb_session.sandbox_phase
-                            # No agent survives a stop; a leftover READY would
-                            # otherwise light the row once it starts again.
-                            if self._is_stopped_sandbox(entry):
-                                entry.state = StatusState.IDLE
-                        entry.sandbox_profile = sb_session.sandbox_profile
+            self._reconcile_sandbox_phases(sandbox_sessions)
             # Remove sandboxes that disappeared from openshell list.
             # Skip removal when discovery returns empty — likely a transient
             # openshell failure, not all sandboxes vanishing simultaneously.
@@ -656,16 +640,35 @@ class AppController:
             )
 
         # Replace unattached placeholder if one exists for this CWD
+        # Linux only: elsewhere focus is unknown, and every session you start
+        # in the window you are looking at would light up.
+        opened = (
+            config.IS_LINUX
+            and self._first_tick_done
+            and entry.container.container_type == ContainerType.VSCODE
+        )
         unattached_pid = self._find_unattached_pid(session.cwd)
         if unattached_pid is not None:
             old = self._sessions.pop(unattached_pid, None)
             if old:
                 entry.flagged = old.flagged
+                if old.session.session_id.startswith("codex-starting-"):
+                    # Same Codex process, now with a session id: it already
+                    # signalled when it appeared, and a dismissal must hold.
+                    entry.state = old.state
+                    entry.state_cleared_from = old.state_cleared_from
+                    opened = False
                 logger.debug(
                     "pid=%d replaced unattached placeholder for %s", session.pid, session.cwd
                 )
         else:
             self._apply_saved_state(entry)
+
+        # Started inside VS Code after the first tick: a harness was opened to
+        # work in (ccode, a folderOpen task). Sessions from a plain terminal
+        # are left alone — no window focus tells whether you are looking.
+        if opened:
+            self._mark_opened(entry, focused_workspace=self._focused_vscode_workspace())
 
         self._sessions[session.pid] = entry
         self._session_id_to_pid[session.session_id] = session.pid
@@ -720,6 +723,85 @@ class AppController:
             cwd_basename(cwd=session.cwd),
             synthetic_pid,
         )
+
+    def _reconcile_sandbox_phases(self, sandbox_sessions: list[SessionInfo]) -> None:
+        """Register new sandboxes, track phase changes, signal ones that became Ready.
+
+        Reaching Ready — created, restarted after a stop, recovered from Error
+        — means the sandbox is usable and was asked for, so an IDLE row goes
+        READY. Not while that sandbox's VS Code window has focus: you are
+        already looking at it.
+        """
+        became_ready: list[str] = []
+        for sb_session in sandbox_sessions:
+            ready = sb_session.sandbox_phase == SandboxPhase.READY.value
+            if sb_session.session_id not in self._session_id_to_pid:
+                self._add_sandbox_session(sb_session)
+                logger.info("registered sandbox %s", sb_session.session_id)
+                # The first tick registers every existing sandbox; only one
+                # appearing later is new. ponytail: a sandbox dropped by a
+                # partial openshell list and re-added reads as new too.
+                if ready and self._first_tick_done:
+                    became_ready.append(sb_session.session_id)
+                continue
+            pid = self._session_id_to_pid[sb_session.session_id]
+            entry = self._sessions.get(pid)
+            if entry:
+                if entry.sandbox_phase != sb_session.sandbox_phase:
+                    entry.sandbox_phase = sb_session.sandbox_phase
+                    entry.session.sandbox_phase = sb_session.sandbox_phase
+                    # No agent survives a stop; a leftover READY would
+                    # otherwise light the row once it starts again.
+                    if self._is_stopped_sandbox(entry):
+                        entry.state = StatusState.IDLE
+                    if ready:
+                        became_ready.append(sb_session.session_id)
+                entry.sandbox_profile = sb_session.sandbox_profile
+
+        if not became_ready:
+            return
+        focused_workspace = self._focused_vscode_workspace()
+        for session_id in became_ready:
+            key = self._session_id_to_pid.get(session_id)
+            entry = self._sessions.get(key) if key is not None else None
+            if entry is not None:
+                self._mark_opened(entry, focused_workspace=focused_workspace)
+
+    @staticmethod
+    def _mark_opened(entry: "_SessionEntry", *, focused_workspace: str) -> None:
+        """IDLE → READY for a session or sandbox that just became usable.
+
+        Opening one means you meant to work there; if you are not looking at
+        its VS Code window, the row reminds you.
+        """
+        # Not IDLE: already signalling, or a sticky state from saved state
+        if entry.state != StatusState.IDLE:
+            return
+        name = cwd_basename(cwd=entry.session.cwd)
+        if name.lower() == focused_workspace:
+            logger.debug("opened %s in focused window, not signalling", name)
+            return
+        # Leave state_cleared_from alone, as _mark_terminal_finished does.
+        entry.state = StatusState.READY
+        entry.last_active = _now_epoch()
+        logger.info("opened %s new_state=ready", name)
+
+    @staticmethod
+    def _focused_vscode_workspace() -> str:
+        """Lowercased workspace of the focused VS Code window; "" if none or unknown.
+
+        Off Linux there is no window scan, so nothing reads as focused and
+        callers fail toward notifying.
+        """
+        if not config.IS_LINUX:
+            return ""
+        from claude_dashboard.platform.linux import _list_windows_dbus
+
+        for w in _list_windows_dbus():
+            wm_class = (w.get("wm_class") or "").lower()
+            if ("code" in wm_class or "cursor" in wm_class) and w.get("focus"):
+                return _vscode_workspace(title=w.get("title") or "")
+        return ""
 
     def _update_sandbox_vscode_state(self) -> bool:
         """Check which sandboxes have VS Code connected and update unattached state.

@@ -152,6 +152,8 @@ When a `Stop` hook event arrives (without `agent_id`), the controller intercepts
 
 A second, non-OTEL source: a command finishing in a VS Code terminal whose directory matches the row moves an IDLE row to READY (`_check_terminal_activity()`). Only commands seen running at a scan, only IDLE rows, never ghost rows, and not while that project's VS Code window has focus. A newly started terminal command clears READY to IDLE (guarded like a click). See CLAUDE.md "Terminal command finished → READY".
 
+A third, non-OTEL source: a sandbox reaching openshell phase `Ready` — created (first listed after the dashboard's first tick, or `Creating→Ready`), restarted from `Stopped`, or recovered from `Error` — moves an IDLE row to READY (`_reconcile_sandbox_phases()`). Likewise a local Claude/Codex session that registers inside VS Code (`ccode`, a `folderOpen` task), including one replacing a ghost row (`_add_session()`, Linux only). Sessions started from a plain terminal do not signal. Neither does a Codex session replacing its own starting placeholder: it inherits the placeholder's state, so a dismissal holds. Not while that VS Code window has focus. Sandboxes and sessions already present at dashboard startup do not signal.
+
 ### Auto-wake after agent completion
 
 Each `SubagentStop` triggers an automatic `UserPromptSubmit` → `Stop` on the main session. With N background agents, expect up to N such cycles. These are NOT user-initiated — they're Claude processing agent results. The dashboard handles them as normal state transitions (WORKING briefly, then READY).
