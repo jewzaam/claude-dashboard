@@ -300,14 +300,6 @@ class TestSandboxMatching:
         )
         assert c._match_sandbox(state) == -9
 
-    def test_match_by_legacy_sandbox_hostname(self):
-        # Pre-refresh sandboxes still emit host_name=sandbox-<openshell name>.
-        c = self._controller_with_sandbox()
-        state = SessionState(
-            state=StatusState.WORKING, host_name="sandbox-sb-abc123", project="/sandbox/source"
-        )
-        assert c._match_sandbox(state) == -9
-
     def test_no_match_for_plain_host_session(self):
         c = self._controller_with_sandbox()
         state = SessionState(

@@ -165,9 +165,7 @@ are keyed `sandbox-<openshell name>`) and `sandbox_source` (friendly name,
 equal to the sandbox directory name).
 
 - `_match_sandbox()` tries openshell name, then `sandbox_source` by CWD
-  basename, then the legacy `sandbox-<hash>` host_name — the last is only
-  for sandboxes not yet refreshed and can be dropped once those series age
-  out.
+  basename.
 - Tooltips query Loki by `sandbox_source` (`poll_last_prompts(...,
   sandbox_sources=)`). A sandbox's own Claude session_id is not visible
   from the host, and `host_name` no longer identifies the sandbox.
@@ -223,7 +221,7 @@ Sessions on another host in the same OTEL stack are discovered purely from Prome
 - **Absent metrics get a grace period, not immediate removal** (`config.REMOTE_METRIC_GRACE_SECONDS`, `_expire_stale_remotes()`). The idle→working hole it was sized for is closed: `claude_session_working` is now a timestamp comparison, so `user_prompt` is itself the newest activity and the metric goes true as soon as that event lands, rather than waiting for the first `api_request` (the old hole measured median 21s, max 80s). What remains is pipeline hiccups and **mid-turn silence past the WORKING rule's range window** — a live session silent longer than that window is in none of the three metrics, because `ready` is false (activity newer than Stop) and `working`'s window is empty. **Window and grace compose:** tolerated silence is window + grace, currently 600s + 120s = 720s, so neither number can be tuned alone. 120s is at a knee, not on a slope — of the seven measured gaps over 600s, two (619.6s, 683.7s) fall under 720s and are rescued, and the next is 1211.9s, so anything from 120s to ~611s rescues the same two and buys nothing. Dismissed rows (`state_cleared_from` set) skip the grace. Sticky states and flagged rows skip expiry entirely.
 - **Persistence is host-qualified** (`host:cwd`) — a remote project sharing a path with a local one would otherwise cross-apply flagged/cleared state. Only sticky/flagged rows are restored on startup; the rest is rediscovered from OTEL.
 - **No local behaviors.** Remote rows skip git checks, ghost conversion, CWD pruning, terminal-activity scan, and click-to-foreground (left-click still clears READY→IDLE). They are never ghosts.
-- **Rendering.** Remote rows sort in a block above everything else, grouped by host then display text — host-first only became meaningful once `host_name` stopped being the sandbox's own `sandbox-<hash>` hostname. The eye icon and host label use `color_remote` (default `#0891b2`), reusing the git-status eye shape since remote rows have no local git. Tooltips are prefixed `[host]`. The "Show remote sessions" toggle (`show_remote`) hides rows without dropping them, so sticky states are not lost.
+- **Rendering.** Remote rows sort in a block above everything else, grouped by host then display text. The eye icon and host label use `color_remote` (default `#0891b2`), reusing the git-status eye shape since remote rows have no local git. Tooltips are prefixed `[host]`. The "Show remote sessions" toggle (`show_remote`) hides rows without dropping them, so sticky states are not lost.
 - **Local sandbox race (accepted).** A local sandbox whose telemetry arrives before openshell lists it would briefly register as remote; sandbox discovery runs earlier in the same tick and OTEL lags 15-30s, so it does not happen in practice.
 
 ### Codex sessions — the flock is the only PID handle
