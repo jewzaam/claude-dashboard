@@ -91,7 +91,7 @@ class MainWindowCallbacks:
     on_open_folder: Callable[[], None] | None = None
     on_ghost_toggle: Callable[..., None] | None = None
     on_width_save: Callable[[int], None] | None = None
-    on_filter_exit: Callable[[], None] | None = None
+    on_search_change: Callable[[], None] | None = None
 
 
 def _load_title_emoji(
@@ -357,7 +357,7 @@ class MainWindow:
         self._on_open_folder = cb.on_open_folder
         self._on_ghost_toggle = cb.on_ghost_toggle
         self._on_width_save = cb.on_width_save
-        self._on_filter_exit = cb.on_filter_exit
+        self._on_search_change = cb.on_search_change
         self._font_body, self._font_emoji, self._font_container = _build_fonts(settings.font_size)
         self._rows: dict[int, dict[str, Any]] = {}
         self._row_order: list[int] = []
@@ -1118,10 +1118,22 @@ class MainWindow:
         if self._search_active:
             self._exit_filter_mode()
         else:
-            self._search_active = True
-            self._update_search_label()
-            self._window.focus_force()
+            self.enter_search()
         return "break"
+
+    def enter_search(self):
+        """Open search; a no-op beyond grabbing focus if it is already open.
+
+        Public for `claude-dashboard --search`, which must not toggle.
+        """
+        if not self._search_active:
+            self._search_active = True
+            # Controller passes concealed rows through only while searching —
+            # re-supply now so they are searchable before the next 5s poll.
+            if self._on_search_change:
+                self._on_search_change()
+        self._update_search_label()
+        self._window.focus_force()
 
     def _on_key(self, event: Any):
         """Accumulate typed characters into filter, apply immediately."""
@@ -1139,7 +1151,7 @@ class MainWindow:
             return "break"
         char = event.char
         if char and char.isprintable() and len(char) == 1:
-            self._search_active = True
+            self.enter_search()
             self._filter_text += char
             self._apply_filter()
             return "break"
@@ -1158,8 +1170,8 @@ class MainWindow:
         # while _search_active is set).  Ask the controller to re-supply so the
         # pre-filter view comes back; rendering _last_sessions here would keep
         # them on screen until the next 5s poll.
-        if self._on_filter_exit:
-            self._on_filter_exit()
+        if self._on_search_change:
+            self._on_search_change()
         else:
             self._do_filter_render()
 

@@ -81,6 +81,7 @@ The dashboard starts an HTTP server on port 17384, discovers running sessions fr
 | `--quiet` / `-q` | Suppress non-essential output |
 | `--reset-position` | Ignore the saved window position and start centered on screen |
 | `--toggle` | Toggle the running dashboard's visibility and exit (Linux/macOS only) |
+| `--search` | Show the running dashboard with search open and exit (Linux/macOS only) |
 
 ### Keyboard Shortcut for Show/Hide
 
@@ -89,7 +90,12 @@ The dashboard starts an HTTP server on port 17384, discovers running sessions fr
 which toggles within 200 ms. Bind it to a key in your desktop's keyboard settings
 (GNOME: Settings → Keyboard → Custom Shortcuts).
 
-If the dashboard is not running, it prints an error and exits 1 — it does not start one.
+`claude-dashboard --search` sends `SIGUSR2` instead: it shows the window if hidden and opens
+search, same as clicking the title bar, so typing filters rows straight away. It never hides
+the window and never closes an open search. Search also reveals rows the ghost toggle
+conceals, so stopped sandboxes are findable.
+
+If the dashboard is not running, either flag prints an error and exits 1 — it does not start one.
 
 ### Recovering an Off-Screen Window
 
