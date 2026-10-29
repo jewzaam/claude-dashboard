@@ -40,7 +40,7 @@ Dismiss removes a ghost row. Delete Sandbox removes the OpenShell sandbox itself
 
 ### Left-Click (Anywhere but the Counts Label)
 
-Toggle search. The title text becomes `/` and typed characters filter rows by path; the filter also reveals rows the ghost toggle conceals. Click again or press Escape to exit. Typing without clicking first also starts a search once the window has focus.
+Toggle search. The title text becomes `/` and typed characters filter rows by path; the filter also reveals rows the ghost toggle conceals. Click again or press Escape to exit. Typing without clicking first also starts a search once the window has focus. `claude-dashboard --search` opens it from a keyboard shortcut (see [Getting Started](getting-started.md)).
 
 ### Middle-Click
 

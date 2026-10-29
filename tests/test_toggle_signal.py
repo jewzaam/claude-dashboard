@@ -20,6 +20,8 @@ def _stub():
     stub = SimpleNamespace(
         _toggle_requested=False,
         _toggle_window=lambda: calls.append("toggle"),
+        _search_requested=False,
+        _open_search=lambda: calls.append("search"),
         _root=SimpleNamespace(after=lambda ms, fn: pending.append(fn)),
         _SIGNAL_POLL_MS=AppController._SIGNAL_POLL_MS,
     )
@@ -31,6 +33,7 @@ class TestToggleSignal:
     def test_sigusr1_toggles_window(self):
         stub, calls, pending = _stub()
         original = signal.getsignal(signal.SIGUSR1)
+        original_usr2 = signal.getsignal(signal.SIGUSR2)
         try:
             AppController._install_toggle_signal(stub)
             assert calls == []  # first pump run, nothing requested
@@ -38,12 +41,27 @@ class TestToggleSignal:
             pending.pop()()  # next pump tick
         finally:
             signal.signal(signal.SIGUSR1, original)
+            signal.signal(signal.SIGUSR2, original_usr2)
         assert calls == ["toggle"]
         assert stub._toggle_requested is False
+
+    def test_sigusr2_opens_search(self):
+        stub, calls, pending = _stub()
+        originals = {sig: signal.getsignal(sig) for sig in (signal.SIGUSR1, signal.SIGUSR2)}
+        try:
+            AppController._install_toggle_signal(stub)
+            os.kill(os.getpid(), signal.SIGUSR2)
+            pending.pop()()
+        finally:
+            for sig, handler in originals.items():
+                signal.signal(sig, handler)
+        assert calls == ["search"]
+        assert stub._search_requested is False
 
     def test_pump_reschedules_itself(self):
         stub, _calls, pending = _stub()
         original = signal.getsignal(signal.SIGUSR1)
+        original_usr2 = signal.getsignal(signal.SIGUSR2)
         try:
             AppController._install_toggle_signal(stub)
             assert len(pending) == 1
@@ -51,6 +69,7 @@ class TestToggleSignal:
             assert len(pending) == 1
         finally:
             signal.signal(signal.SIGUSR1, original)
+            signal.signal(signal.SIGUSR2, original_usr2)
 
     def test_windows_installs_nothing(self):
         stub, _calls, pending = _stub()
@@ -70,6 +89,16 @@ class TestSendToggle:
         ):
             assert _send_toggle() == EXIT_SUCCESS
         kill.assert_called_once_with(4321, signal.SIGUSR1)
+
+    def test_search_signals_usr2(self, tmp_path):
+        pid_file = tmp_path / "dashboard.pid"
+        pid_file.write_text("4321", encoding="utf-8")
+        with (
+            mock.patch.object(config, "PID_FILE", pid_file),
+            mock.patch.object(os, "kill") as kill,
+        ):
+            assert _send_toggle(search=True) == EXIT_SUCCESS
+        kill.assert_called_once_with(4321, signal.SIGUSR2)
 
     def test_missing_pid_file_errors(self, tmp_path):
         with mock.patch.object(config, "PID_FILE", tmp_path / "nope.pid"):
@@ -94,3 +123,23 @@ class TestSendToggle:
     def test_windows_unsupported(self):
         with mock.patch.object(config, "IS_WINDOWS", True):
             assert _send_toggle() == EXIT_ERROR
+
+
+class TestOpenSearch:
+    def _controller(self, *, viewable):
+        main_window = mock.MagicMock()
+        main_window.toplevel.winfo_viewable.return_value = viewable
+        return SimpleNamespace(_main_window=main_window, _root=mock.MagicMock())
+
+    def test_hidden_window_is_shown_then_search_opens(self):
+        ctl = self._controller(viewable=False)
+        AppController._open_search(ctl)
+        ctl._main_window.show.assert_called_once_with()
+        ctl._root.after_idle.assert_called_once_with(ctl._main_window.enter_search)
+
+    def test_visible_window_stays_visible(self):
+        ctl = self._controller(viewable=True)
+        AppController._open_search(ctl)
+        ctl._main_window.show.assert_not_called()
+        ctl._main_window.hide.assert_not_called()
+        ctl._root.after_idle.assert_called_once_with(ctl._main_window.enter_search)

@@ -36,21 +36,23 @@ def _is_already_running() -> bool:
         return True
 
 
-def _send_toggle() -> int:
-    """Tell the running dashboard to toggle visibility, then exit.
+def _send_toggle(*, search: bool = False) -> int:
+    """Tell the running dashboard to toggle visibility (or show + search), then exit.
 
-    This is the keyboard-shortcut entry point: bind `claude-dashboard --toggle`.
+    This is the keyboard-shortcut entry point: bind `claude-dashboard --toggle`
+    or `claude-dashboard --search`.
     """
+    flag = "--search" if search else "--toggle"
     if config.IS_WINDOWS:
-        print("ERROR: --toggle is not supported on Windows", file=sys.stderr)
+        print(f"ERROR: {flag} is not supported on Windows", file=sys.stderr)
         return EXIT_ERROR
     import signal
 
     try:
         pid = int(config.PID_FILE.read_text(encoding="utf-8").strip())
-        os.kill(pid, signal.SIGUSR1)
+        os.kill(pid, signal.SIGUSR2 if search else signal.SIGUSR1)
     except (OSError, ValueError) as exc:
-        print(f"ERROR: no running dashboard to toggle: {exc}", file=sys.stderr)
+        print(f"ERROR: no running dashboard for {flag}: {exc}", file=sys.stderr)
         return EXIT_ERROR
     return EXIT_SUCCESS
 
@@ -91,10 +93,15 @@ def main():
         action="store_true",
         help="toggle visibility of the running dashboard and exit (for keyboard shortcuts)",
     )
+    parser.add_argument(
+        "--search",
+        action="store_true",
+        help="show the running dashboard with search open and exit (for keyboard shortcuts)",
+    )
     args = parser.parse_args()
 
-    if args.toggle:
-        sys.exit(_send_toggle())
+    if args.toggle or args.search:
+        sys.exit(_send_toggle(search=args.search))
 
     log_fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
     if args.log_file:

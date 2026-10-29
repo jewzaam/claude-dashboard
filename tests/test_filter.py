@@ -23,7 +23,7 @@ def _make_window():
     win._filter_text = ""
     win._last_sessions = []
     win._on_ghost_toggle = MagicMock()
-    win._on_filter_exit = MagicMock()
+    win._on_search_change = MagicMock()
     return win
 
 
@@ -48,7 +48,7 @@ def test_title_click_clears_filter_and_restores_view():
         assert win._search_active is False
         assert win._filter_text == ""
         # controller re-supplies rows, dropping the concealed ghosts filter revealed
-        win._on_filter_exit.assert_called_once_with()
+        win._on_search_change.assert_called_once_with()
 
 
 def test_title_drag_does_not_toggle_search():
@@ -70,7 +70,7 @@ def test_middle_click_clears_filter_without_toggling_ghosts():
         win._on_ghost_toggle_click(MagicMock())
 
         assert win._filter_text == ""
-        win._on_filter_exit.assert_called_once_with()
+        win._on_search_change.assert_called_once_with()
         win._on_ghost_toggle.assert_not_called()
 
 
@@ -81,7 +81,7 @@ def test_middle_click_without_filter_toggles_ghosts():
         win._on_ghost_toggle_click(MagicMock())
 
         win._on_ghost_toggle.assert_called_once_with()
-        win._on_filter_exit.assert_not_called()
+        win._on_search_change.assert_not_called()
 
 
 def test_exit_filter_falls_back_to_local_render_without_callback():
@@ -91,7 +91,7 @@ def test_exit_filter_falls_back_to_local_render_without_callback():
         win = _make_window()
         win._search_active = True
         win._filter_text = "foo"
-        win._on_filter_exit = None
+        win._on_search_change = None
 
         with patch.object(MainWindow, "_do_filter_render") as render:
             win._exit_filter_mode()
@@ -111,6 +111,19 @@ def test_search_click_shows_prompt_before_typing():
         assert win._title_text_label.configure.call_args.kwargs["text"] == "/"
 
 
+def test_enter_search_is_idempotent_and_resupplies_rows_once():
+    """--search must not toggle off; concealed rows are re-supplied on entry only."""
+    with patch("claude_dashboard.ui.main_window.tk"):
+        win = _make_window()
+
+        win.enter_search()
+        win.enter_search()
+
+        assert win._search_active is True
+        win._on_search_change.assert_called_once_with()
+        assert win._window.focus_force.call_count == 2
+
+
 def test_search_click_while_active_exits():
     with patch("claude_dashboard.ui.main_window.tk"):
         win = _make_window()
@@ -120,7 +133,7 @@ def test_search_click_while_active_exits():
 
         assert win._search_active is False
         assert win._filter_text == ""
-        win._on_filter_exit.assert_called_once_with()
+        win._on_search_change.assert_called_once_with()
 
 
 def test_keystroke_renders_immediately():
@@ -187,7 +200,7 @@ def test_row_click_clears_filter():
         win._on_row_left_click.assert_called_once()
         assert win._search_active is False
         assert win._filter_text == ""
-        win._on_filter_exit.assert_called_once_with()
+        win._on_search_change.assert_called_once_with()
 
 
 def test_row_click_without_filter_leaves_view_alone():
@@ -200,4 +213,4 @@ def test_row_click_without_filter_leaves_view_alone():
         win._window.after.call_args.args[1]()
 
         win._on_row_left_click.assert_called_once()
-        win._on_filter_exit.assert_not_called()
+        win._on_search_change.assert_not_called()

@@ -213,7 +213,7 @@ class AppController:
                 on_open_folder=self._open_folder,
                 on_ghost_toggle=self._on_ghost_toggle,
                 on_width_save=self._on_width_save,
-                on_filter_exit=self._refresh_ui,
+                on_search_change=self._refresh_ui,
             ),
         )
 
@@ -260,6 +260,7 @@ class AppController:
         )
         self._tray_state: StatusState | None = None
         self._toggle_requested = False
+        self._search_requested = False
 
         # Session visibility menu (rebuilt dynamically in _on_right_click)
         self._context_menu = tk.Menu(self._root, tearoff=0)
@@ -338,17 +339,19 @@ class AppController:
 
     def _install_toggle_signal(self) -> None:
         """Toggle window visibility on SIGUSR1, same as a tray click.
+        Show the window and open search on SIGUSR2.
 
         Lets a keyboard shortcut run:
             kill -USR1 $(cat ~/.claude/claude-dashboard/dashboard.pid)
 
-        No-op on Windows — SIGUSR1 does not exist there.
+        No-op on Windows — SIGUSR1/SIGUSR2 do not exist there.
         """
         if config.IS_WINDOWS:
             return
         import signal
 
         signal.signal(signal.SIGUSR1, lambda *_: setattr(self, "_toggle_requested", True))
+        signal.signal(signal.SIGUSR2, lambda *_: setattr(self, "_search_requested", True))
 
         # ponytail: poll a flag instead of touching Tk from the handler. Tcl
         # blocks in select(), so Python only runs the handler when a timer
@@ -357,6 +360,9 @@ class AppController:
             if self._toggle_requested:
                 self._toggle_requested = False
                 self._toggle_window()
+            if self._search_requested:
+                self._search_requested = False
+                self._open_search()
             self._root.after(self._SIGNAL_POLL_MS, _pump)
 
         _pump()
@@ -1980,6 +1986,14 @@ class AppController:
             self._main_window.hide()
         else:
             self._main_window.show()
+
+    def _open_search(self):
+        if not self._main_window.toplevel.winfo_viewable():
+            self._main_window.show()
+        # ponytail: after_idle so focus_force lands after deiconify maps the
+        # window; if the WM maps it later than idle, focus is lost — then wait
+        # on <Map> instead.
+        self._root.after_idle(self._main_window.enter_search)
 
     def _show_window(self):
         self._main_window.show()

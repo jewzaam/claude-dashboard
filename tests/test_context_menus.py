@@ -469,6 +469,7 @@ class TestMenuShortcuts:
         with (
             patch.object(main_window, "_posted_menu", menu),
             patch.object(MainWindow, "_apply_filter"),
+            patch.object(MainWindow, "enter_search"),
         ):
             win._on_key(MagicMock(char="c", keysym="c"))
         assert menu.invoked == []
