@@ -78,6 +78,10 @@ def _extract_prompts(results: list[dict], *, key: str, max_chars: int) -> dict[s
         if not prompt_text:
             logger.debug("loki stream %s=%s: empty after xml strip", key, match_val)
             continue
+        if prompt_text == "/login":
+            # Re-auth says nothing about the session's work; show the prior prompt.
+            logger.debug("loki stream %s=%s: skipping /login", key, match_val)
+            continue
         prompts[match_val] = _truncate(prompt_text, max_chars=max_chars)
         logger.debug("loki prompt %s=%s text=%s", key, match_val, prompts[match_val][:60])
     return prompts
