@@ -838,7 +838,18 @@ def discover_sandbox_sessions(*, zombies: list[str] | None = None) -> list[Sessi
 
 # Process names to exclude from terminal activity detection
 _TERMINAL_ACTIVITY_EXCLUDE = frozenset(
-    {"claude-wrapper.sh", "claude", "openshell", "node", "code", "pgrep", "ps", "grep"}
+    {
+        "agent-harness",
+        "claude",
+        "codex",
+        "opencode",
+        "openshell",
+        "node",
+        "code",
+        "pgrep",
+        "ps",
+        "grep",
+    }
 )
 
 
@@ -854,10 +865,10 @@ class TerminalShell:
 def _is_excluded_command(proc: psutil.Process) -> bool:
     """Match by process name and by argv[0]/argv[1] basename.
 
-    argv[1] covers interpreter-run scripts (`bash .../claude-wrapper.sh`,
-    whose comm is truncated to 15 chars). Never substring-match the whole
-    cmdline: paths and arguments like `.../openshell-sandbox/sandbox.sh` or a
-    commit message containing "steps" would hide real commands.
+    argv[1] covers interpreter-run scripts (`bash .../agent-harness`, whose
+    comm is `bash`). Never substring-match the whole cmdline: paths and
+    arguments like `.../openshell-sandbox/sandbox.sh` or a commit message
+    containing "steps" would hide real commands.
     """
     if proc.name() in _TERMINAL_ACTIVITY_EXCLUDE:
         return True

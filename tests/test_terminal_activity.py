@@ -47,7 +47,9 @@ class TestExcludedCommand:
         "name,cmdline",
         [
             ("claude", ["claude"]),
-            ("claude-wrapper.", ["/bin/bash", "/home/u/bin/claude-wrapper.sh"]),
+            ("bash", ["/bin/bash", "/home/u/bin/agent-harness"]),
+            ("codex", ["codex"]),
+            ("opencode", ["opencode"]),
             ("node", ["node", "/usr/lib/node_modules/x/cli.js"]),
         ],
     )
