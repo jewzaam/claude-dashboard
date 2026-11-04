@@ -265,6 +265,19 @@ class TestPollLastPrompts:
             result = poll_last_prompts(loki_url="http://localhost:3100", session_ids=["s1"])
         assert result["s1"] == "review the recording rules"
 
+    def test_skips_login_finds_prior_prompt(self):
+        """A trailing /login is skipped; the prompt before it is shown."""
+        streams = [
+            _stream(session_id="s1", prompt="/login"),
+            _stream(session_id="s1", prompt="review the recording rules"),
+        ]
+        with patch(
+            "claude_dashboard.loki.urllib.request.urlopen",
+            side_effect=_fake_urlopen_factory(streams),
+        ):
+            result = poll_last_prompts(loki_url="http://localhost:3100", session_ids=["s1"])
+        assert result["s1"] == "review the recording rules"
+
     def test_newest_prompt_wins_across_unordered_streams(self):
         """Loki streams arrive in arbitrary order; newest timestamp wins."""
         old_stream = _stream(session_id="s1", prompt="old prompt")
