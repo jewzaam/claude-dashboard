@@ -146,35 +146,49 @@ class TestVSCodeScanResult:
         # No window scan there: every sandbox reads detached, so never sweep.
         c = _controller(_sandbox(unattached=False))
         with patch("claude_dashboard.config.IS_LINUX", False):
-            assert c._update_sandbox_vscode_state() is False
+            assert c._update_sandbox_vscode_state(scan=([], True)) is False
+
+    def test_scan_trust_passes_through(self):
+        c = _controller(_sandbox(unattached=False))
+        with patch("claude_dashboard.config.IS_LINUX", True):
+            assert c._update_sandbox_vscode_state(scan=([], True)) is True
+            assert c._update_sandbox_vscode_state(scan=([], False)) is False
 
     def test_empty_desktop_ok_when_extension_answers(self):
         # Fresh boot, nothing open: the extension answers, so the sweep runs.
-        c = _controller(_sandbox(unattached=False))
+        from claude_dashboard.controller import _scan_windows
+
         with (
-            patch("claude_dashboard.config.IS_LINUX", True),
             patch("claude_dashboard.platform.linux._list_windows_dbus", return_value=[]),
             patch("claude_dashboard.platform.linux.window_calls_available", return_value=True),
         ):
-            assert c._update_sandbox_vscode_state() is True
+            assert _scan_windows(probe=True) == ([], True)
 
     def test_empty_not_ok_when_extension_silent(self):
-        c = _controller(_sandbox(unattached=False))
+        from claude_dashboard.controller import _scan_windows
+
         with (
-            patch("claude_dashboard.config.IS_LINUX", True),
             patch("claude_dashboard.platform.linux._list_windows_dbus", return_value=[]),
             patch("claude_dashboard.platform.linux.window_calls_available", return_value=False),
         ):
-            assert c._update_sandbox_vscode_state() is False
+            assert _scan_windows(probe=True) == ([], False)
+
+    def test_empty_not_probed_off_sandbox_tick(self):
+        from claude_dashboard.controller import _scan_windows
+
+        with (
+            patch("claude_dashboard.platform.linux._list_windows_dbus", return_value=[]),
+            patch("claude_dashboard.platform.linux.window_calls_available") as probe,
+        ):
+            assert _scan_windows(probe=False) == ([], False)
+        probe.assert_not_called()
 
     def test_reports_windows(self):
-        c = _controller(_sandbox(unattached=True))
+        from claude_dashboard.controller import _scan_windows
+
         windows = [{"wm_class": "code", "title": "sb-abc - Visual Studio Code"}]
-        with (
-            patch("claude_dashboard.config.IS_LINUX", True),
-            patch("claude_dashboard.platform.linux._list_windows_dbus", return_value=windows),
-        ):
-            assert c._update_sandbox_vscode_state() is True
+        with patch("claude_dashboard.platform.linux._list_windows_dbus", return_value=windows):
+            assert _scan_windows(probe=False) == (windows, True)
 
 
 class TestPersistence:

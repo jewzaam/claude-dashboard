@@ -875,10 +875,12 @@ def _is_excluded_command(proc: psutil.Process) -> bool:
     return any(os.path.basename(arg) in _TERMINAL_ACTIVITY_EXCLUDE for arg in proc.cmdline()[:2])
 
 
-def scan_terminal_shells(*, session_cwds: list[str], vscode_pid: int) -> list[TerminalShell]:
-    """Return VS Code terminal bash shells whose CWD matches a session CWD.
+def list_terminal_shells(*, vscode_pid: int) -> list[TerminalShell]:
+    """Return every VS Code terminal bash shell, each with its own CWD.
 
-    `busy` is true when the shell has a non-Claude child running.
+    `busy` is true when the shell has a non-Claude child running. Needs no
+    session state, so it can run off the Tk thread; match_terminal_shells()
+    maps the CWDs onto rows afterwards.
     """
     if not config.IS_LINUX or vscode_pid <= 0:
         return []
@@ -898,9 +900,7 @@ def scan_terminal_shells(*, session_cwds: list[str], vscode_pid: int) -> list[Te
             if "shellIntegration-bash" not in cmdline_str and "bash -li" not in cmdline_str:
                 continue
 
-            matched_cwd = _match_cwd(child.cwd(), session_cwds)
-            if not matched_cwd:
-                continue
+            shell_cwd = child.cwd()
 
             busy = False
             for grandchild in child.children(recursive=False):
@@ -911,11 +911,23 @@ def scan_terminal_shells(*, session_cwds: list[str], vscode_pid: int) -> list[Te
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
 
-            shells.append(TerminalShell(pid=child.pid, cwd=matched_cwd, busy=busy))
+            shells.append(TerminalShell(pid=child.pid, cwd=shell_cwd, busy=busy))
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 
     return shells
+
+
+def match_terminal_shells(
+    shells: list[TerminalShell], *, session_cwds: list[str]
+) -> list[TerminalShell]:
+    """Keep shells inside a session CWD, with `cwd` replaced by the matched row's CWD."""
+    matched: list[TerminalShell] = []
+    for shell in shells:
+        matched_cwd = _match_cwd(shell.cwd, session_cwds)
+        if matched_cwd:
+            matched.append(TerminalShell(pid=shell.pid, cwd=matched_cwd, busy=shell.busy))
+    return matched
 
 
 def _match_cwd(terminal_cwd: str, session_cwds: list[str]) -> str | None:

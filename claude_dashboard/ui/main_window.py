@@ -58,6 +58,13 @@ _ELEMENT_GAP = 2  # horizontal gap between adjacent elements
 _COUNTS_RIGHT_PAD = 6  # right padding for counts label
 _HIGHLIGHT_THICKNESS = 1  # title bar border thickness
 _CLICK_DELAY_MS = 200  # delay before single-click fires (allows double-click)
+# Search: rows re-render only after this long with no keystroke. The title
+# prompt still updates per keystroke. Re-filtering a long list on each of the
+# first characters, while a fast typist is mid-word, is what disrupts.
+_FILTER_QUIET_MS = 300
+# Shorter queries filter nothing: one character matches most of a long list,
+# so filtering on it is a full re-render that narrows nothing useful.
+_FILTER_MIN_CHARS = 2
 # ponytail: neither <Leave> nor pointer position can be trusted to dismiss a
 # tooltip. Tk runs under XWayland, where the compositor never reports the global
 # pointer position — winfo_pointerxy() freezes at the last coordinate the pointer
@@ -137,6 +144,32 @@ def _outline_image(image: Any, rgb: tuple[int, int, int]) -> Any:
     border = Image.new("RGBA", padded.size, rgb + (255,))
     border.putalpha(padded.getchannel("A").filter(ImageFilter.MaxFilter(3)))
     return Image.alpha_composite(border, padded)
+
+
+def _configure_changed(row: dict[str, Any], key: str, **options: Any) -> None:
+    """configure() only the options whose value differs from the last one applied.
+
+    Every refresh and every search keystroke re-renders each row; unchanged
+    options still cost a Tk call apiece. PhotoImages have no __eq__, so they
+    compare by identity and a cleared image cache always re-applies.
+    """
+    applied = row.setdefault("_applied", {}).setdefault(key, {})
+    changed = {
+        name: value
+        for name, value in options.items()
+        if name not in applied or applied[name] != value
+    }
+    if changed:
+        row[key].configure(**changed)
+        applied.update(changed)
+
+
+def _set_changed(row: dict[str, Any], key: str, value: str) -> None:
+    """StringVar.set() only on a new value; a same-value set still redraws the label."""
+    applied = row.setdefault("_applied", {})
+    if applied.get(key) != value:
+        row[key].set(value)
+        applied[key] = value
 
 
 def _point_in_widget(widget: Any, x_root: int, y_root: int) -> bool:
@@ -331,6 +364,27 @@ def menu_shortcut(menu: tk.Menu, char: str) -> int | None:
 
 class MainWindow:
     """Dashboard window with a vertical stack of session rows."""
+
+    _filter_after_id: str | None = None  # pending quiet-period filter render
+    # reveals_concealed as of the rows last supplied by the controller
+    _supplied_reveal: bool = False
+    # Effective query the visible rows were last rendered with, and whether a
+    # controller update arrived mid-typing without being rendered
+    _rendered_query: str = ""
+    _rows_stale: bool = False
+
+    @property
+    def reveals_concealed(self) -> bool:
+        """Controller passes concealed rows through only while this is true.
+
+        An empty query filters nothing, so opening search changes nothing:
+        re-supplying and re-rendering every concealed row then is pure cost.
+        """
+        return self._search_active and bool(self._query())
+
+    def _query(self) -> str:
+        """The typed filter once it is long enough to apply, else ""."""
+        return self._filter_text if len(self._filter_text) >= _FILTER_MIN_CHARS else ""
 
     def __init__(
         self,
@@ -641,27 +695,39 @@ class MainWindow:
             self._title_text_label.configure(fg=fg)
         self._title_counts_label.configure(fg=fg)
 
-        # Eye icon: reflects highest-priority git status across all visible rows
+        # Eye icon: reflects highest-priority git status across all visible rows.
+        # Runs on every refresh; cached so a refresh does no PIL work or disk read.
         icon_size = self._icon_size
         git_color = self._title_git_status_color()
-        if git_color:
-            icon_rgb = config.hex_to_rgb(hex_color=git_color)
-            self._title_icon_image = _pil_to_photoimage(
-                generate_icon_image(color=icon_rgb).resize((icon_size, icon_size))
-            )
-        else:
-            blank = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
-            self._title_icon_image = _pil_to_photoimage(blank)
-        self._title_icon.configure(image=self._title_icon_image)
+        eye_key = ("title_eye", git_color, icon_size)
+        eye_image = self._icon_cache.get(eye_key)
+        if eye_image is None:
+            if git_color:
+                icon_rgb = config.hex_to_rgb(hex_color=git_color)
+                eye_image = _pil_to_photoimage(
+                    generate_icon_image(color=icon_rgb).resize((icon_size, icon_size))
+                )
+            else:
+                blank = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
+                eye_image = _pil_to_photoimage(blank)
+            self._icon_cache[eye_key] = eye_image
+        if eye_image is not self._title_icon_image:
+            self._title_icon_image = eye_image
+            self._title_icon.configure(image=self._title_icon_image)
 
         # Update emoji image bg if using PNG
         if self._title_emoji_image:
-            new_emoji_image = _load_title_emoji(
-                emoji_img_size=self._emoji_img_size,
-                bg_hex=bg,
-                label_width=self._emoji_label_width,
-            )
-            if new_emoji_image:
+            emoji_key = ("title_emoji", bg, self._emoji_img_size, self._emoji_label_width)
+            new_emoji_image = self._emoji_image_cache.get(emoji_key)
+            if new_emoji_image is None:
+                new_emoji_image = _load_title_emoji(
+                    emoji_img_size=self._emoji_img_size,
+                    bg_hex=bg,
+                    label_width=self._emoji_label_width,
+                )
+                if new_emoji_image:
+                    self._emoji_image_cache[emoji_key] = new_emoji_image
+            if new_emoji_image and new_emoji_image is not self._title_emoji_image:
                 self._title_emoji_image = new_emoji_image
                 self._title_emoji_label.configure(image=self._title_emoji_image)
 
@@ -1124,14 +1190,10 @@ class MainWindow:
     def enter_search(self):
         """Open search; a no-op beyond grabbing focus if it is already open.
 
-        Public for `claude-dashboard --search`, which must not toggle.
+        Public for `claude-dashboard --search`, which must not toggle. Rows are
+        left alone until there is a query (reveals_concealed).
         """
-        if not self._search_active:
-            self._search_active = True
-            # Controller passes concealed rows through only while searching —
-            # re-supply now so they are searchable before the next 5s poll.
-            if self._on_search_change:
-                self._on_search_change()
+        self._search_active = True
         self._update_search_label()
         self._window.focus_force()
 
@@ -1151,7 +1213,10 @@ class MainWindow:
             return "break"
         char = event.char
         if char and char.isprintable() and len(char) == 1:
-            self.enter_search()
+            # A key event means the window already has focus; enter_search()
+            # would focus_force (an X round trip) on every keystroke.
+            if not self._search_active:
+                self.enter_search()
             self._filter_text += char
             self._apply_filter()
             return "break"
@@ -1163,14 +1228,14 @@ class MainWindow:
             return "break"
 
     def _exit_filter_mode(self):
+        self._cancel_filter_render()
         self._search_active = False
         self._filter_text = ""
         self._update_search_label()
-        # Filter mode reveals concealed ghosts (controller passes them through
-        # while _search_active is set).  Ask the controller to re-supply so the
-        # pre-filter view comes back; rendering _last_sessions here would keep
-        # them on screen until the next 5s poll.
-        if self._on_search_change:
+        # A query revealed concealed ghosts (reveals_concealed).  Ask the
+        # controller to re-supply so the pre-filter view comes back; rendering
+        # _last_sessions here would keep them on screen until the next 5s poll.
+        if self._supplied_reveal and self._on_search_change:
             self._on_search_change()
         else:
             self._do_filter_render()
@@ -1193,18 +1258,38 @@ class MainWindow:
             )
 
     def _apply_filter(self):
-        """Re-render with the current filter — rows are already in memory."""
+        """Show the query now; re-render rows once typing goes quiet."""
         self._update_search_label()
-        self._do_filter_render()
+        self._cancel_filter_render()
+        self._filter_after_id = self._window.after(_FILTER_QUIET_MS, self._flush_filter)
+
+    def _cancel_filter_render(self):
+        if self._filter_after_id is not None:
+            self._window.after_cancel(self._filter_after_id)
+            self._filter_after_id = None
+
+    def _flush_filter(self):
+        self._filter_after_id = None
+        if self.reveals_concealed != self._supplied_reveal and self._on_search_change:
+            # Query went empty<->non-empty: the controller re-supplies, and its
+            # update_sessions() renders with the filter applied.
+            self._on_search_change()
+        elif self._query() != self._rendered_query or self._rows_stale:
+            self._do_filter_render()
+        # else: same effective query, same rows — e.g. a first character
 
     def _do_filter_render(self):
         filtered = self._filtered_sessions(self._last_sessions)
         self._render_sessions(filtered)
 
     def _filtered_sessions(self, sessions: list[SessionRow]) -> list[SessionRow]:
-        if not self._filter_text:
+        """Rows matching the effective query. Callers render the result, so
+        this also records what the visible rows now reflect."""
+        self._rendered_query = self._query()
+        self._rows_stale = False
+        if not self._rendered_query:
             return sessions
-        needle = self._filter_text.lower()
+        needle = self._rendered_query.lower()
         return [s for s in sessions if needle in self._cwd_display(s.session.cwd).lower()]
 
     def _on_right_click_event(self, event: Any):
@@ -1228,6 +1313,11 @@ class MainWindow:
 
     def update_sessions(self, sessions: list[SessionRow]):
         self._last_sessions = sessions
+        self._supplied_reveal = self.reveals_concealed
+        # Mid-typing: the pending filter render shows these rows when it fires
+        if self._filter_after_id is not None:
+            self._rows_stale = True
+            return
         self._render_sessions(self._filtered_sessions(sessions))
 
     def _render_sessions(self, sessions: list[SessionRow]):
@@ -1660,27 +1750,34 @@ class MainWindow:
 
         emoji_image = self._emoji_image(emoji_state_or_path, bg_hex=bg)
         row["status_image"] = emoji_image  # prevent GC
-        row["status_label"].configure(image=emoji_image)
+        _configure_changed(row, "status_label", image=emoji_image)
 
-        row["cwd_var"].set(
-            self._cwd_display(row_data.session.cwd, agent_count=row_data.agent_count)
+        _set_changed(
+            row,
+            "cwd_var",
+            self._cwd_display(row_data.session.cwd, agent_count=row_data.agent_count),
         )
-        row["branch_var"].set(self._branch_display(row_data.branch))
-        row["container_var"].set(container_text)
-        row["cwd_label"].configure(fg=fg, font=self._font_body)
-        row["branch_label"].configure(
-            fg=self._branch_color(merged=row_data.merged, fg=fg), font=self._font_body
+        _set_changed(row, "branch_var", self._branch_display(row_data.branch))
+        _set_changed(row, "container_var", container_text)
+        _configure_changed(row, "cwd_label", fg=fg, font=self._font_body)
+        _configure_changed(
+            row,
+            "branch_label",
+            fg=self._branch_color(merged=row_data.merged, fg=fg),
+            font=self._font_body,
         )
-        row["container_label"].configure(font=self._font_container, fg=self._container_fg(row_data))
+        _configure_changed(
+            row, "container_label", font=self._font_container, fg=self._container_fg(row_data)
+        )
         flag_image = self._flag_icon(row_data, bg_hex=bg)
         row["flag_image"] = flag_image  # prevent GC
-        row["flag_label"].configure(image=flag_image, bg=bg)
+        _configure_changed(row, "flag_label", image=flag_image, bg=bg)
 
         row["last_prompt"] = row_data.last_prompt
 
         # Update row height if settings changed
         try:
-            row["frame"].configure(height=self._row_height())
+            _configure_changed(row, "frame", height=self._row_height())
         except tk.TclError:
             pass
 
@@ -1693,7 +1790,7 @@ class MainWindow:
             "flag_label",
         ):
             try:
-                row[key].configure(bg=bg)
+                _configure_changed(row, key, bg=bg)
             except tk.TclError:
                 pass
 

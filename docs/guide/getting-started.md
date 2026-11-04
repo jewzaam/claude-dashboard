@@ -92,8 +92,8 @@ which toggles within 200 ms. Bind it to a key in your desktop's keyboard setting
 
 `claude-dashboard --search` sends `SIGUSR2` instead: it shows the window if hidden and opens
 search, same as clicking the title bar, so typing filters rows straight away. It never hides
-the window and never closes an open search. Search also reveals rows the ghost toggle
-conceals, so stopped sandboxes are findable.
+the window and never closes an open search. Once you type, search also reveals rows the
+ghost toggle conceals, so stopped sandboxes are findable.
 
 If the dashboard is not running, either flag prints an error and exits 1 — it does not start one.
 

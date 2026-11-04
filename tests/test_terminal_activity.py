@@ -82,12 +82,8 @@ def _scan(
     ]
     if focused_title:
         windows.append({"pid": 1, "wm_class": wm_class, "focus": True, "title": focused_title})
-    with (
-        patch("claude_dashboard.controller.config.IS_LINUX", True),
-        patch("claude_dashboard.platform.linux._list_windows_dbus", return_value=windows),
-        patch("claude_dashboard.controller.scan_terminal_shells", return_value=shells),
-    ):
-        controller._check_terminal_activity()
+    with patch("claude_dashboard.controller.config.IS_LINUX", True):
+        controller._check_terminal_activity(windows=windows, shells=shells)
 
 
 def _run_command(controller: AppController, **kwargs) -> None:
@@ -121,15 +117,10 @@ class TestCommandFinished:
     def test_closed_terminal_does_not_signal(self):
         c, entry = _controller()
         _scan(c, busy=True)
-        with (
-            patch("claude_dashboard.controller.config.IS_LINUX", True),
-            patch(
-                "claude_dashboard.platform.linux._list_windows_dbus",
-                return_value=[{"pid": 1, "wm_class": "com.microsoft.VSCode"}],
-            ),
-            patch("claude_dashboard.controller.scan_terminal_shells", return_value=[]),
-        ):
-            c._check_terminal_activity()
+        with patch("claude_dashboard.controller.config.IS_LINUX", True):
+            c._check_terminal_activity(
+                windows=[{"pid": 1, "wm_class": "com.microsoft.VSCode"}], shells=[]
+            )
         assert entry.state == StatusState.IDLE
 
     def test_dismissed_stale_working_stays_blocked_through_terminal_ready(self):
@@ -255,20 +246,12 @@ class TestConcealedRowsNotMatched:
         ghost.unattached = True
         c._sessions[43] = ghost
         c._settings.hide_ghosts = True
-        seen_cwds: list[str] = []
+        shells = [TerminalShell(pid=7, cwd=_CWD + "/repo", busy=True)]
 
-        def fake_scan(*, session_cwds, vscode_pid):
-            seen_cwds.extend(session_cwds)
-            return []
+        with patch("claude_dashboard.controller.config.IS_LINUX", True):
+            c._check_terminal_activity(
+                windows=[{"pid": 1, "wm_class": "com.microsoft.VSCode"}], shells=shells
+            )
 
-        with (
-            patch("claude_dashboard.controller.config.IS_LINUX", True),
-            patch(
-                "claude_dashboard.platform.linux._list_windows_dbus",
-                return_value=[{"pid": 1, "wm_class": "com.microsoft.VSCode"}],
-            ),
-            patch("claude_dashboard.controller.scan_terminal_shells", side_effect=fake_scan),
-        ):
-            c._check_terminal_activity()
-
-        assert seen_cwds == [_CWD]
+        assert parent.has_terminal_activity is True
+        assert ghost.has_terminal_activity is False

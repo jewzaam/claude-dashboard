@@ -31,7 +31,7 @@ Folding WORKING alone is not enough: **every session_id whose labels match a san
 | `claude_dashboard/otel_state.py` | Prometheus poller for session state metrics from OTEL recording rules |
 | `claude_dashboard/loki.py` | Loki query client for session user prompt extraction (tooltips) |
 | `claude_dashboard/controller.py` | Session lifecycle, OTEL poller wiring, UI coordination, session state persistence, PID file lock |
-| `claude_dashboard/session.py` | Session discovery (Claude + Codex), PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()`, `scan_terminal_shells()` |
+| `claude_dashboard/session.py` | Session discovery (Claude + Codex), PID validation, CWD helpers, `detect_git_status()`, `detect_merged()`, `detect_upstream()`, `list_terminal_shells()` / `match_terminal_shells()` |
 | `claude_dashboard/file_utils.py` | Atomic JSON file writes (shared by settings + state persistence) |
 | `claude_dashboard/ui/main_window.py` | Dashboard window with session rows |
 | `claude_dashboard/ui/settings_window.py` | Modal settings editor |
@@ -276,6 +276,33 @@ Tooltips are also Claude-only: `loki.py` queries
 observer posts the whole hook payload as an unparsed log body, so there is no
 `prompt` field to extract.
 
+### Discovery tick — blocking I/O never runs on the Tk thread
+
+Tk handles no events while its thread is blocked, so any subprocess, D-Bus,
+or HTTP call there stalls typing and clicks for its duration (a cold
+`git status` measured 1.1s; `git fetch` has a 10s timeout). `_discovery_tick`
+runs its reads in three worker hops (`_run_io`) and applies each on the Tk
+thread before the next starts — split where a read needs the previous apply
+(git needs registered rows; Loki needs remote rows the OTEL apply adds).
+Workers get snapshot values only and never touch controller state or Tk.
+`_refresh_ui` calls during a tick (clicks, debounce timer, OTEL changes) are
+held until the tick ends, so a half-applied tick is never drawn — same timing
+the inline tick gave them. Search typing is unaffected: filtering re-renders
+the window's in-memory rows, not the controller's — and only after
+`_FILTER_QUIET_MS` with no keystroke (the prompt updates per key). Deliberate:
+re-filtering a 60-row list on each of a fast typist's first keys disrupts.
+fd02a6a once removed this debounce; do not remove it again. Concealed rows
+are revealed only while the query is at least `_FILTER_MIN_CHARS` (2) long
+— shorter filters nothing (`_query()`) — (`reveals_concealed`): opening
+search with no query renders nothing, since re-rendering every concealed row
+for an unfiltered list was the slow part. When a quiet-period flush changes
+that (empty ↔ non-empty), `_on_search_change` re-supplies immediately — no
+debounce, not held for an in-flight tick.
+**New per-tick I/O goes in a hop's read function, not its apply.** Still
+inline on the Tk thread, accepted because rare: git and container detection
+for a newly registered session, ghost, or sandbox, and the focused-window
+D-Bus call when one opens.
+
 ### Single-instance enforcement
 
 Uses PID file lock (`~/.claude/claude-dashboard/dashboard.pid`) to prevent multiple dashboard instances. Stale PID files (process dead) are removed on startup. Replaces previous port-based lock (hook server socket binding).
@@ -306,12 +333,12 @@ Feature specs in `specs/<nnn>-<name>/`, project-wide design notes in `docs/`, us
 - `sys.excepthook` captures uncaught stack traces in log files
 - Makefile `run` target logs to `~/.claude/claude-dashboard/dashboard.log`
 - Single-instance enforcement via PID file lock
-- **No stored per-session visibility.** No `hidden` field, no Hide menu item, nothing about visibility in `session-state.json`. Row visibility is recomputed every render from `_is_concealed()`, so nothing stays concealed once the condition that concealed it clears. The only control is the `hide_ghosts` setting (title-bar middle-click, or "Show ghost sessions" in the right-click menu); the keyboard filter is a transient exception that reveals concealed rows rather than hiding anything
+- **No stored per-session visibility.** No `hidden` field, no Hide menu item, nothing about visibility in `session-state.json`. Row visibility is recomputed every render from `_is_concealed()`, so nothing stays concealed once the condition that concealed it clears. The only control is the `hide_ghosts` setting (title-bar middle-click, or "Show ghost sessions" in the right-click menu); the keyboard filter is a transient exception that reveals concealed rows (only while its query is non-empty) rather than hiding anything
 - Headless runs are not discovered at all: `discover_sessions()` skips `HEADLESS_ENTRYPOINTS` (`sdk-cli`, written by `claude -p` and the Agent SDK). Verified against Claude Code 2.1.226 — the interactive TUI writes `cli`. Unknown entrypoints stay visible so a new one never vanishes silently. OTEL telemetry is emitted by Claude Code itself and is unaffected
 
 ### Terminal Activity Detection
 
-`scan_terminal_shells()` (`session.py`) scans VS Code terminal bash shells — psutil-based, Linux-only, every discovery tick. A shell with a non-Claude child shows the arrow. A shell's CWD goes to the deepest *non-concealed* row containing it (`_match_cwd()`), so a subdirectory rolls up to its parent row and a hidden ghost at the exact CWD cannot swallow it. Excluded names live in `_TERMINAL_ACTIVITY_EXCLUDE` and match process name or argv[0]/argv[1] basename only — a substring match on the whole cmdline once hid `sandbox.sh --upload` (path contains `openshell`) and any commit message containing `ps`. `_check_terminal_activity()` runs on the Tk UI thread via `_discovery_tick` (scheduled through `root.after`, every 5s); measured on the user's host, `gdbus` window List is ~6ms and `psutil` `children(recursive=True)` is ~15ms (it scans the whole process table), but all VS Code windows share one main-process pid so the walk happens once per tick regardless of window count — ~21ms per tick total, plus one more walk per additional editor process (e.g. Cursor).
+`list_terminal_shells()` (`session.py`) scans VS Code terminal bash shells — psutil-based, Linux-only, every discovery tick — and `match_terminal_shells()` maps their CWDs onto rows. A shell with a non-Claude child shows the arrow. A shell's CWD goes to the deepest *non-concealed* row containing it (`_match_cwd()`), so a subdirectory rolls up to its parent row and a hidden ghost at the exact CWD cannot swallow it. Excluded names live in `_TERMINAL_ACTIVITY_EXCLUDE` and match process name or argv[0]/argv[1] basename only — a substring match on the whole cmdline once hid `sandbox.sh --upload` (path contains `openshell`) and any commit message containing `ps`. The window list and shell scan run on the tick's worker thread; `_check_terminal_activity()` applies them on the Tk thread (every 5s). Measured on the user's host, `gdbus` window List is ~6ms and `psutil` `children(recursive=True)` is ~15ms (it scans the whole process table), but all VS Code windows share one main-process pid so the walk happens once per tick regardless of window count — ~21ms per tick total, plus one more walk per additional editor process (e.g. Cursor).
 
 **Terminal command finished → READY.** A non-OTEL READY source, deliberate — not a custom state hook. Only a command **seen running at a scan** counts: a shell busy at one tick and idle at the next moves an IDLE row to READY (`_mark_terminal_finished()`). Anything shorter than a tick (`ls`, empty Enter; `cd` is a builtin and never forks) is ignored on purpose — the user wanted signals for long commands (commit, `gpm`), and was still at the terminal for a quick one. **Suppressed when the focused VS Code window's workspace equals the row's CWD basename** (`_vscode_workspace()`, exact match, not the sandbox check's substring) — window-level focus is the agreed boundary; the focused terminal tab is not observable. A title that doesn't parse fails toward notifying. **A newly started command clears READY → IDLE** via `_dismiss_state()` (the guard keeps the stale 30m OTEL READY from re-applying) — the user is evidently working in that session. Only the start (shell not busy at the last scan) clears; READY arriving mid-command stays. WORKING and sticky states are left alone; ghost rows are skipped because they render the unattached color whatever their state. Rejected alternatives: a `.bashrc` pre/post-command hook (brittle across many machines) and a VS Code extension using the shell-execution API (another component to maintain or trust).
 
