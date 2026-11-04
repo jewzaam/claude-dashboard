@@ -12,8 +12,11 @@ import time
 
 import threading
 import tkinter as tk
+from concurrent.futures import Future
+from dataclasses import dataclass, field
 from pathlib import Path
 from tkinter import filedialog
+from typing import Any, Callable
 
 
 from claude_dashboard import config
@@ -36,8 +39,10 @@ from claude_dashboard.session import (
     discover_codex_sessions,
     discover_sessions,
     git_check,
+    TerminalShell,
+    list_terminal_shells,
+    match_terminal_shells,
     read_trunk_info,
-    scan_terminal_shells,
     sandbox_git_check,
     validate_pid,
 )
@@ -77,6 +82,162 @@ _TITLE_GIT_PRIORITY = {
 }
 
 _DEBOUNCE_MS = 300  # Debounce window for state display updates (FR-043)
+_IO_POLL_MS = 20  # How often the Tk thread checks whether a tick's I/O hop finished
+
+
+@dataclass
+class _DiscoveryRead:
+    """Tick I/O that needs no session state, read off the Tk thread."""
+
+    discovered: list[SessionInfo]
+    sandbox_sessions: list[SessionInfo]
+    zombies: list[str]
+    windows: list[dict]
+    # Window scan trustworthy (see _update_sandbox_vscode_state); only read
+    # on sandbox VS Code ticks
+    windows_ok: bool
+    shells: list[TerminalShell]
+
+
+@dataclass
+class _GitJob:
+    """One entry's git refresh, snapshotted on the Tk thread."""
+
+    key: int
+    cwd: str
+    sandbox: bool
+    fetch: bool
+    remote: str
+    trunk_branch: str
+    trunk_ref: str
+
+
+@dataclass
+class _GitRead:
+    # (key, cwd, branch or None, (git_status, merged) or None) — None leaves the field as is
+    results: list[tuple[int, str, str | None, tuple[GitStatus, bool] | None]] = field(
+        default_factory=list
+    )
+    fetched: bool = False
+    # None when the tick deadline skipped the OTEL poll
+    states: dict[str, SessionState] | None = None
+
+
+def _is_vscode_window(window: dict) -> bool:
+    """VS Code or Cursor, by wm_class substring.
+
+    Substring because VS Code now reports wm_class "com.microsoft.VSCode",
+    which an exact "code" missed.
+    """
+    wm_class = (window.get("wm_class") or "").lower()
+    return "code" in wm_class or "cursor" in wm_class
+
+
+def _vscode_windows(windows: list[dict]) -> tuple[set[int], str]:
+    """VS Code/Cursor window pids, and the focused one's lowercased workspace."""
+    vscode_pids = set()
+    focused_workspace = ""
+    for w in windows:
+        if _is_vscode_window(w) and w.get("pid"):
+            vscode_pids.add(w["pid"])
+            if w.get("focus"):
+                focused_workspace = _vscode_workspace(title=w.get("title") or "")
+    return vscode_pids, focused_workspace
+
+
+def _list_vscode_terminal_shells(vscode_pids: set[int]) -> list[TerminalShell]:
+    shells: list[TerminalShell] = []
+    for vscode_pid in vscode_pids:
+        shells += list_terminal_shells(vscode_pid=vscode_pid)
+    return shells
+
+
+def _scan_windows(*, probe: bool) -> tuple[list[dict], bool]:
+    """D-Bus window list and whether it can be trusted. Linux only.
+
+    An empty list is also what a failed call returns. Only then, and only
+    with `probe`, pay for a second call asking the extension directly;
+    without it an empty list reads as untrusted.
+    """
+    from claude_dashboard.platform.linux import _list_windows_dbus, window_calls_available
+
+    windows = _list_windows_dbus()
+    return windows, bool(windows) or (probe and window_calls_available())
+
+
+def _read_discovery(*, sandbox_vscode_tick: bool) -> _DiscoveryRead:
+    """First I/O hop of a tick. Runs on a worker thread: touches no controller state."""
+    discovered = discover_sessions() + discover_codex_sessions()
+    zombies: list[str] = []
+    sandbox_sessions = discover_sandbox_sessions(zombies=zombies)
+    windows: list[dict] = []
+    windows_ok = False
+    shells: list[TerminalShell] = []
+    if config.IS_LINUX:
+        # Trust is only read on sandbox VS Code ticks, so only they probe
+        windows, windows_ok = _scan_windows(probe=sandbox_vscode_tick)
+        vscode_pids, _ = _vscode_windows(windows)
+        if vscode_pids:
+            shells = _list_vscode_terminal_shells(vscode_pids)
+    return _DiscoveryRead(
+        discovered=discovered,
+        sandbox_sessions=sandbox_sessions,
+        zombies=zombies,
+        windows=windows,
+        windows_ok=windows_ok,
+        shells=shells,
+    )
+
+
+_TICK_DEADLINE_SECONDS = 8
+
+
+def _tick_expired(tick_start: float) -> bool:
+    return time.monotonic() - tick_start > _TICK_DEADLINE_SECONDS
+
+
+def _read_git_and_otel(jobs: list[_GitJob], *, tick_start: float, prometheus_url: str) -> _GitRead:
+    """Second I/O hop. Runs on a worker thread: touches no controller state."""
+    read = _GitRead()
+    for job in jobs:
+        if _tick_expired(tick_start):
+            logger.debug("tick deadline: skipping remaining git checks")
+            break
+        cwd = job.cwd
+        if job.fetch:
+            read.fetched = True
+            if job.remote:
+                try:
+                    subprocess.run(
+                        ["git", "fetch", job.remote],
+                        cwd=cwd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=10,
+                        creationflags=config.SUBPROCESS_FLAGS,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+
+        # Update branch, git status, and merge status
+        if job.sandbox:
+            start = time.monotonic()
+            new_git_status, new_merged, new_branch = sandbox_git_check(sandbox_dir=cwd)
+            elapsed = time.monotonic() - start
+            if elapsed <= 2.0:
+                read.results.append((job.key, cwd, new_branch, (new_git_status, new_merged)))
+        else:
+            branch = detect_branch(cwd=cwd, trunk_branch=job.trunk_branch)
+            start = time.monotonic()
+            new_git_status, new_merged = git_check(cwd=cwd, trunk_ref=job.trunk_ref, branch=branch)
+            elapsed = time.monotonic() - start
+            git = (new_git_status, new_merged) if elapsed <= 0.5 else None
+            read.results.append((job.key, cwd, branch, git))
+
+    # Poll Prometheus for session states from OTEL recording rules
+    if not _tick_expired(tick_start):
+        read.states = poll_session_states(prometheus_url=prometheus_url)
+    return read
 
 
 def _vscode_workspace(*, title: str) -> str:
@@ -168,6 +329,12 @@ class _SessionEntry:
 class AppController:
     """Central controller — discovers sessions, receives hook events, updates UI."""
 
+    # True from a tick's start until its last apply. Renders requested in
+    # between wait for the end (_refresh_ui), so a half-applied tick is never
+    # drawn — the old inline tick held every Tk event until it finished.
+    _tick_in_flight = False
+    _refresh_deferred = False
+
     def __init__(
         self,
         *,
@@ -213,7 +380,7 @@ class AppController:
                 on_open_folder=self._open_folder,
                 on_ghost_toggle=self._on_ghost_toggle,
                 on_width_save=self._on_width_save,
-                on_search_change=self._refresh_ui,
+                on_search_change=self._on_search_change,
             ),
         )
 
@@ -367,76 +534,25 @@ class AppController:
 
         _pump()
 
-    _TICK_DEADLINE_SECONDS = 8
-
-    def _tick_expired(self, tick_start: float) -> bool:
-        return time.monotonic() - tick_start > self._TICK_DEADLINE_SECONDS
-
     def _discovery_tick(self):
         """Discover new sessions and remove dead ones.
 
         Flow: discover → register new → ghost dead → prune deleted CWDs →
         git status (all sessions) → OTEL poll → Loki poll → refresh UI.
 
+        Blocking I/O runs in three hops off the Tk thread (_run_io), each
+        applied on the Tk thread before the next starts, so the order above
+        holds and controller state stays single-threaded. Hops are split where
+        a read needs the previous apply: git needs the registered rows, and
+        Loki needs any remote row the OTEL apply registered.
+
         A per-tick deadline ensures the tick completes within
         _TICK_DEADLINE_SECONDS. Phases that exceed the budget are skipped
         and catch up on subsequent ticks.
         """
         try:
+            self._tick_in_flight = True
             tick_start = time.monotonic()
-            discovered = discover_sessions() + discover_codex_sessions()
-            alive_keys = set()
-
-            # 1. Register new live sessions
-            for session in discovered:
-                session_key = self._register_live_session(session)
-                if session_key is not None:
-                    alive_keys.add(session_key)
-
-            # 2. Convert dead sessions to ghosts (skip sandbox entries)
-            dead_keys = set(self._sessions) - alive_keys
-            for key in dead_keys:
-                entry = self._sessions.get(key)
-                if entry and not entry.unattached and not entry.sandbox and not entry.remote_host:
-                    cwd = entry.session.cwd
-                    flagged = entry.flagged
-                    last_active = entry.last_active
-                    self._remove_session(key)
-                    self._create_ghost(cwd=cwd, flagged=flagged, last_active=last_active)
-
-            # 2b. Discover and reconcile sandbox sessions
-            zombies: list[str] = []
-            sandbox_sessions = discover_sandbox_sessions(zombies=zombies)
-            # ponytail: a failed openshell list reads as 0 zombies for that tick
-            self._zombie_count = len(zombies)
-            sandbox_ids = {s.session_id for s in sandbox_sessions}
-            self._reconcile_sandbox_phases(sandbox_sessions)
-            # Remove sandboxes that disappeared from openshell list.
-            # Skip removal when discovery returns empty — likely a transient
-            # openshell failure, not all sandboxes vanishing simultaneously.
-            existing_sandbox_count = sum(1 for e in self._sessions.values() if e.sandbox)
-            if sandbox_ids or existing_sandbox_count == 0:
-                gone_pids = [
-                    e.session.pid
-                    for e in self._sessions.values()
-                    if e.sandbox and e.session.session_id not in sandbox_ids
-                ]
-                for pid in gone_pids:
-                    entry = self._sessions.get(pid)
-                    if entry:
-                        self._session_id_to_pid.pop(entry.session.session_id, None)
-                        logger.info(
-                            "sandbox %s removed (no longer in openshell)",
-                            entry.session.session_id,
-                        )
-                    self._sessions.pop(pid, None)
-            elif existing_sandbox_count > 0:
-                logger.debug(
-                    "skipping sandbox removal: openshell returned empty but %d sandboxes known",
-                    existing_sandbox_count,
-                )
-
-            # 2c. Update sandbox VS Code connection state
             self._sandbox_vscode_tick_counter += 1
             sandbox_vscode_tick = (
                 not self._first_tick_done
@@ -444,125 +560,245 @@ class AppController:
             )
             if sandbox_vscode_tick:
                 self._sandbox_vscode_tick_counter = 0
-                scan_ok = self._update_sandbox_vscode_state()
-                self._stop_idle_sandboxes(scan_ok=scan_ok)
-
-            # 2d. Terminal activity every tick — commit/push finish in seconds.
-            self._check_terminal_activity()
-
-            # 3. On first tick, create unattached placeholders from state file
-            if not self._first_tick_done:
-                self._create_unattached_from_state(alive_keys)
-
-            # 4. Prune ghosts whose CWD no longer exists
-            stale_pids = [
-                pid
-                for pid, entry in self._sessions.items()
-                if entry.unattached and not Path(entry.session.cwd).is_dir()
-            ]
-            for pid in stale_pids:
-                cwd = self._sessions[pid].session.cwd
-                self._sessions.pop(pid, None)
-                logger.info("pruned ghost for deleted directory %s", cwd)
-
-            # 5. Update git state for all sessions.
-            # Live: git_check every tick, fetch every ~60s.
-            # Ghosts: both every ~5 min.
-            self._fetch_tick_counter += 1
-            fetch_tick = self._fetch_tick_counter >= self._fetch_tick_interval
-            if fetch_tick:
-                self._fetch_tick_counter = 0
-            self._ghost_git_tick_counter += 1
-            ghost_tick = self._ghost_git_tick_counter >= self._ghost_git_tick_interval
-            if ghost_tick:
-                self._ghost_git_tick_counter = 0
-
-            fetched_cwds: set[str] = set()
-            for entry in self._sessions.values():
-                if self._tick_expired(tick_start):
-                    logger.debug("tick deadline: skipping remaining git checks")
-                    break
-                if entry.remote_host:
-                    continue  # no local working tree to inspect
-                is_ghost = entry.unattached
-                if is_ghost and entry.sandbox and not sandbox_vscode_tick:
-                    continue
-                if is_ghost and not entry.sandbox and not ghost_tick:
-                    continue
-
-                cwd = entry.session.cwd
-
-                # Fetch remote refs on the appropriate tick (deduplicated by CWD)
-                should_fetch = ghost_tick if is_ghost else fetch_tick
-                if (
-                    should_fetch
-                    and entry.git_status == config.GitStatus.PUSHED_NOT_MERGED
-                    and cwd not in fetched_cwds
-                ):
-                    fetched_cwds.add(cwd)
-                    if cwd not in self._trunk_cache:
-                        self._populate_trunk_cache(cwd)
-                    remote = self._trunk_cache[cwd].get("remote", "")
-                    if remote:
-                        try:
-                            subprocess.run(
-                                ["git", "fetch", remote],
-                                cwd=cwd,
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                                timeout=10,
-                                creationflags=config.SUBPROCESS_FLAGS,
-                            )
-                        except (OSError, subprocess.TimeoutExpired):
-                            pass
-
-                # Update branch, git status, and merge status
-                if entry.sandbox:
-                    start = time.monotonic()
-                    new_git_status, new_merged, new_branch = sandbox_git_check(sandbox_dir=cwd)
-                    elapsed = time.monotonic() - start
-                    if elapsed <= 2.0:
-                        entry.git_status = new_git_status
-                        entry.merged = new_merged
-                        entry.branch = new_branch
-                else:
-                    trunk_branch = self._trunk_branch(cwd)
-                    entry.branch = detect_branch(cwd=cwd, trunk_branch=trunk_branch)
-                    trunk_ref = self._trunk_ref(cwd)
-                    start = time.monotonic()
-                    new_git_status, new_merged = git_check(
-                        cwd=cwd, trunk_ref=trunk_ref, branch=entry.branch
-                    )
-                    elapsed = time.monotonic() - start
-                    if elapsed <= 0.5:
-                        entry.git_status = new_git_status
-                        entry.merged = new_merged
-
-            if fetched_cwds:
-                # Clear trunk cache after fetch so newly-added remotes are detected
-                self._trunk_cache.clear()
-
-            # Poll Prometheus for session states from OTEL recording rules
-            if not self._tick_expired(tick_start):
-                self._update_states_from_otel()
-            else:
-                logger.debug("tick deadline: skipping OTEL poll")
-
-            # Poll Loki for last user prompt per session (tooltip data)
-            if not self._tick_expired(tick_start):
-                self._update_last_prompts()
-            else:
-                logger.debug("tick deadline: skipping Loki poll")
-
-            # Always refresh UI even if data phases were skipped
-            self._refresh_ui()
-            self._first_tick_done = True
-
+            self._run_io(
+                lambda: _read_discovery(sandbox_vscode_tick=sandbox_vscode_tick),
+                lambda read: self._apply_discovery(
+                    read, tick_start=tick_start, sandbox_vscode_tick=sandbox_vscode_tick
+                ),
+            )
         except Exception as exc:
-            logger.error("discovery tick failed error=%s", exc)
+            self._end_tick(error=exc)
 
+    def _run_io(self, work: Callable[[], Any], then: Callable[[Any], None]) -> None:
+        """Run `work` on a worker thread, then `then(result)` on the Tk thread.
+
+        Tk handles no events while the Tk thread is blocked, so keystrokes
+        queue behind git, openshell, D-Bus, and HTTP calls. A failure in
+        either half ends the tick, as an exception in the old inline tick did.
+        Daemon thread, not an executor: quitting must not wait on a 10s fetch.
+        """
+        future: Future = Future()
+
+        def _work() -> None:
+            # BaseException: an unset future leaves _poll re-arming forever.
+            # Wrapped so _poll's `except Exception` still ends the tick.
+            try:
+                future.set_result(work())
+            except Exception as exc:
+                future.set_exception(exc)
+            except BaseException as exc:
+                future.set_exception(RuntimeError(f"tick I/O worker raised {exc!r}"))
+
+        threading.Thread(target=_work, daemon=True, name="tick-io").start()
+
+        def _poll() -> None:
+            if not future.done():
+                self._root.after(_IO_POLL_MS, _poll)
+                return
+            try:
+                then(future.result())
+            except Exception as exc:
+                self._end_tick(error=exc)
+
+        self._root.after(_IO_POLL_MS, _poll)
+
+    def _end_tick(self, *, error: Exception | None = None) -> None:
+        self._tick_in_flight = False
+        if error is not None:
+            logger.error("discovery tick failed error=%s", error)
+        if self._refresh_deferred:
+            self._refresh_ui()
         tick_ms = self._settings.poll_interval_seconds * 1000
         self._root.after(tick_ms, self._discovery_tick)
+
+    def _apply_discovery(
+        self, read: _DiscoveryRead, *, tick_start: float, sandbox_vscode_tick: bool
+    ) -> None:
+        alive_keys = set()
+
+        # 1. Register new live sessions
+        for session in read.discovered:
+            session_key = self._register_live_session(session)
+            if session_key is not None:
+                alive_keys.add(session_key)
+
+        # 2. Convert dead sessions to ghosts (skip sandbox entries)
+        dead_keys = set(self._sessions) - alive_keys
+        for key in dead_keys:
+            entry = self._sessions.get(key)
+            if entry and not entry.unattached and not entry.sandbox and not entry.remote_host:
+                cwd = entry.session.cwd
+                flagged = entry.flagged
+                last_active = entry.last_active
+                self._remove_session(key)
+                self._create_ghost(cwd=cwd, flagged=flagged, last_active=last_active)
+
+        # 2b. Reconcile sandbox sessions
+        sandbox_sessions = read.sandbox_sessions
+        # ponytail: a failed openshell list reads as 0 zombies for that tick
+        self._zombie_count = len(read.zombies)
+        sandbox_ids = {s.session_id for s in sandbox_sessions}
+        self._reconcile_sandbox_phases(sandbox_sessions)
+        # Remove sandboxes that disappeared from openshell list.
+        # Skip removal when discovery returns empty — likely a transient
+        # openshell failure, not all sandboxes vanishing simultaneously.
+        existing_sandbox_count = sum(1 for e in self._sessions.values() if e.sandbox)
+        if sandbox_ids or existing_sandbox_count == 0:
+            gone_pids = [
+                e.session.pid
+                for e in self._sessions.values()
+                if e.sandbox and e.session.session_id not in sandbox_ids
+            ]
+            for pid in gone_pids:
+                entry = self._sessions.get(pid)
+                if entry:
+                    self._session_id_to_pid.pop(entry.session.session_id, None)
+                    logger.info(
+                        "sandbox %s removed (no longer in openshell)",
+                        entry.session.session_id,
+                    )
+                self._sessions.pop(pid, None)
+        elif existing_sandbox_count > 0:
+            logger.debug(
+                "skipping sandbox removal: openshell returned empty but %d sandboxes known",
+                existing_sandbox_count,
+            )
+
+        # 2c. Update sandbox VS Code connection state (~30s)
+        if sandbox_vscode_tick:
+            scan_ok = self._update_sandbox_vscode_state(scan=(read.windows, read.windows_ok))
+            self._stop_idle_sandboxes(scan_ok=scan_ok)
+
+        # 2d. Terminal activity every tick — commit/push finish in seconds.
+        self._check_terminal_activity(windows=read.windows, shells=read.shells)
+
+        # 3. On first tick, create unattached placeholders from state file
+        if not self._first_tick_done:
+            self._create_unattached_from_state(alive_keys)
+
+        # 4. Prune ghosts whose CWD no longer exists
+        stale_pids = [
+            pid
+            for pid, entry in self._sessions.items()
+            if entry.unattached and not Path(entry.session.cwd).is_dir()
+        ]
+        for pid in stale_pids:
+            cwd = self._sessions[pid].session.cwd
+            self._sessions.pop(pid, None)
+            logger.info("pruned ghost for deleted directory %s", cwd)
+
+        jobs = self._git_jobs(sandbox_vscode_tick=sandbox_vscode_tick)
+        prometheus_url = config.resolve_prometheus_url(settings_url=self._settings.prometheus_url)
+        self._run_io(
+            lambda: _read_git_and_otel(jobs, tick_start=tick_start, prometheus_url=prometheus_url),
+            lambda read_git: self._apply_git_and_otel(read_git, tick_start=tick_start),
+        )
+
+    def _git_jobs(self, *, sandbox_vscode_tick: bool) -> list[_GitJob]:
+        """5. Snapshot which entries get a git refresh this tick.
+
+        Live: git_check every tick, fetch every ~60s. Ghosts: both every ~5 min.
+        Trunk cache reads stay here on the Tk thread; the worker gets values.
+        """
+        self._fetch_tick_counter += 1
+        fetch_tick = self._fetch_tick_counter >= self._fetch_tick_interval
+        if fetch_tick:
+            self._fetch_tick_counter = 0
+        self._ghost_git_tick_counter += 1
+        ghost_tick = self._ghost_git_tick_counter >= self._ghost_git_tick_interval
+        if ghost_tick:
+            self._ghost_git_tick_counter = 0
+
+        jobs: list[_GitJob] = []
+        fetched_cwds: set[str] = set()
+        for key, entry in self._sessions.items():
+            if entry.remote_host:
+                continue  # no local working tree to inspect
+            is_ghost = entry.unattached
+            if is_ghost and entry.sandbox and not sandbox_vscode_tick:
+                continue
+            if is_ghost and not entry.sandbox and not ghost_tick:
+                continue
+
+            cwd = entry.session.cwd
+
+            # Fetch remote refs on the appropriate tick (deduplicated by CWD)
+            should_fetch = ghost_tick if is_ghost else fetch_tick
+            fetch = (
+                should_fetch
+                and entry.git_status == config.GitStatus.PUSHED_NOT_MERGED
+                and cwd not in fetched_cwds
+            )
+            remote = ""
+            if fetch:
+                fetched_cwds.add(cwd)
+                if cwd not in self._trunk_cache:
+                    self._populate_trunk_cache(cwd)
+                remote = self._trunk_cache[cwd].get("remote", "")
+            jobs.append(
+                _GitJob(
+                    key=key,
+                    cwd=cwd,
+                    sandbox=entry.sandbox,
+                    fetch=fetch,
+                    remote=remote,
+                    trunk_branch="" if entry.sandbox else self._trunk_branch(cwd),
+                    trunk_ref="" if entry.sandbox else self._trunk_ref(cwd),
+                )
+            )
+        return jobs
+
+    def _apply_git_and_otel(self, read: _GitRead, *, tick_start: float) -> None:
+        for key, cwd, branch, git in read.results:
+            entry = self._sessions.get(key)
+            # Gone or replaced since the snapshot (dismissed, deleted)
+            if entry is None or entry.session.cwd != cwd:
+                continue
+            if branch is not None:
+                entry.branch = branch
+            if git is not None:
+                entry.git_status, entry.merged = git
+
+        if read.fetched:
+            # Clear trunk cache after fetch so newly-added remotes are detected
+            self._trunk_cache.clear()
+
+        if read.states is not None:
+            self._update_states_from_otel(states=read.states)
+        else:
+            logger.debug("tick deadline: skipping OTEL poll")
+
+        # Poll Loki for last user prompt per session (tooltip data)
+        if _tick_expired(tick_start):
+            logger.debug("tick deadline: skipping Loki poll")
+            self._finish_tick()
+            return
+        query = self._last_prompts_query()
+        if query is None:
+            self._finish_tick()
+            return
+        loki_url, local_ids, sandbox_sources, source_to_pid = query
+        self._run_io(
+            lambda: poll_last_prompts(
+                loki_url=loki_url,
+                session_ids=local_ids or None,
+                sandbox_sources=sandbox_sources or None,
+            ),
+            lambda prompts: self._apply_prompts_and_finish(prompts, source_to_pid=source_to_pid),
+        )
+
+    def _apply_prompts_and_finish(
+        self, prompts: dict[str, str], *, source_to_pid: dict[str, int]
+    ) -> None:
+        self._apply_last_prompts(prompts, source_to_pid=source_to_pid)
+        self._finish_tick()
+
+    def _finish_tick(self) -> None:
+        # Always refresh UI even if data phases were skipped
+        self._tick_in_flight = False
+        self._refresh_ui()
+        self._first_tick_done = True
+        self._end_tick()
 
     # ------------------------------------------------------------------
     # Session lifecycle
@@ -804,18 +1040,20 @@ class AppController:
         from claude_dashboard.platform.linux import _list_windows_dbus
 
         for w in _list_windows_dbus():
-            wm_class = (w.get("wm_class") or "").lower()
-            if ("code" in wm_class or "cursor" in wm_class) and w.get("focus"):
+            if _is_vscode_window(w) and w.get("focus"):
                 return _vscode_workspace(title=w.get("title") or "")
         return ""
 
-    def _update_sandbox_vscode_state(self) -> bool:
+    def _update_sandbox_vscode_state(self, *, scan: tuple[list[dict], bool]) -> bool:
         """Check which sandboxes have VS Code connected and update unattached state.
 
         Returns whether the scan is trustworthy, which the idle-stop sweep needs
         to tell "every window closed" from "scan failed". Always False off
         Linux: there is no window scan there, every sandbox reads as detached,
         and acting on that would stop all of them.
+
+        `scan` is a `(windows, trustworthy)` pair read off the Tk thread
+        (`_scan_windows`).
         """
         sandbox_entries = [e for e in self._sessions.values() if e.sandbox]
         if not sandbox_entries:
@@ -823,12 +1061,7 @@ class AppController:
 
         scan_ok = False
         if config.IS_LINUX:
-            from claude_dashboard.platform.linux import _list_windows_dbus, window_calls_available
-
-            windows = _list_windows_dbus()
-            # An empty list is also what a failed call returns. Only then pay
-            # for a second call asking the extension directly.
-            scan_ok = bool(windows) or window_calls_available()
+            windows, scan_ok = scan
         else:
             windows = []
 
@@ -837,8 +1070,7 @@ class AppController:
 
         vscode_titles = set()
         for w in windows:
-            wm_class = (w.get("wm_class") or "").lower()
-            if "code" in wm_class or "cursor" in wm_class:
+            if _is_vscode_window(w):
                 vscode_titles.add((w.get("title") or "").lower())
 
         for entry in sandbox_entries:
@@ -917,30 +1149,26 @@ class AppController:
         except OSError as exc:
             logger.warning("sandbox idle stop failed to launch sandbox=%s error=%s", os_name, exc)
 
-    def _check_terminal_activity(self):
+    def _check_terminal_activity(
+        self,
+        *,
+        windows: list[dict],
+        shells: list[TerminalShell],
+    ):
         """Detect commands running or finished in VS Code terminals matching session CWDs.
 
         Running → arrow icon. A newly started command clears READY → IDLE (you
         are in that session working). A command seen running at the last scan that has
         since ended → IDLE row goes READY, unless that project's VS Code window
         has focus (you are already looking at it).
+
+        `windows` and `shells` (every VS Code terminal shell, unmatched) are
+        read off the Tk thread by the tick (`_read_discovery`).
         """
         if not config.IS_LINUX:
             return
 
-        from claude_dashboard.platform.linux import _list_windows_dbus
-
-        windows = _list_windows_dbus()
-        # Substring, same test as _update_sandbox_vscode_state(): VS Code now
-        # reports wm_class "com.microsoft.VSCode", which an exact "code" missed.
-        vscode_pids = set()
-        focused_workspace = ""
-        for w in windows:
-            wm_class = (w.get("wm_class") or "").lower()
-            if ("code" in wm_class or "cursor" in wm_class) and w.get("pid"):
-                vscode_pids.add(w["pid"])
-                if w.get("focus"):
-                    focused_workspace = _vscode_workspace(title=w.get("title") or "")
+        vscode_pids, focused_workspace = _vscode_windows(windows)
         if not vscode_pids:
             return
 
@@ -950,9 +1178,7 @@ class AppController:
         if not session_cwds:
             return
 
-        shells = []
-        for vscode_pid in vscode_pids:
-            shells += scan_terminal_shells(session_cwds=session_cwds, vscode_pid=vscode_pid)
+        shells = match_terminal_shells(shells, session_cwds=session_cwds)
 
         active_cwds = {shell.cwd for shell in shells if shell.busy}
         # ponytail: only commands seen running at a scan count, so anything that
@@ -1167,10 +1393,8 @@ class AppController:
     # OTEL state polling (replaces hook server)
     # ------------------------------------------------------------------
 
-    def _update_states_from_otel(self):
-        """Poll Prometheus for session state metrics and update entries."""
-        url = config.resolve_prometheus_url(settings_url=self._settings.prometheus_url)
-        states = poll_session_states(prometheus_url=url)
+    def _update_states_from_otel(self, *, states: dict[str, SessionState]):
+        """Apply session state metrics polled off the Tk thread (`_read_git_and_otel`)."""
         changed = False
         # Several session_ids can resolve to one row (every session in a
         # sandbox matches its row by labels). The session with the newest
@@ -1324,8 +1548,8 @@ class AppController:
         logger.info("remote session registered host=%s cwd=%s", host, cwd)
         return synthetic_pid
 
-    def _update_last_prompts(self):
-        """Poll Loki for last user prompt per session and cache in entries."""
+    def _last_prompts_query(self) -> tuple[str, list[str], list[str], dict[str, int]] | None:
+        """`(loki_url, local_ids, sandbox_sources, source_to_pid)`; None if nothing to ask."""
         local_ids: list[str] = []
         sandbox_sources: list[str] = []
         # Map sandbox_source back to a PID (the source is the sandbox dir name)
@@ -1347,7 +1571,7 @@ class AppController:
 
         if not local_ids and not sandbox_sources:
             logger.debug("last_prompts: no active sessions to query")
-            return
+            return None
 
         loki_url = config.resolve_loki_url(settings_url=self._settings.loki_url)
         logger.debug(
@@ -1356,11 +1580,9 @@ class AppController:
             local_ids,
             sandbox_sources,
         )
-        prompts = poll_last_prompts(
-            loki_url=loki_url,
-            session_ids=local_ids or None,
-            sandbox_sources=sandbox_sources or None,
-        )
+        return loki_url, local_ids, sandbox_sources, source_to_pid
+
+    def _apply_last_prompts(self, prompts: dict[str, str], *, source_to_pid: dict[str, int]):
         logger.debug("last_prompts: got %d prompts: %s", len(prompts), list(prompts.keys()))
 
         for key, text in prompts.items():
@@ -1419,8 +1641,24 @@ class AppController:
             ),
         )
 
+    def _on_search_change(self):
+        """A query started or stopped revealing concealed rows: re-supply now.
+
+        Not debounced, and not held while a tick is in flight: the user just
+        stopped typing and is waiting on the filtered list. Cost, accepted: mid
+        tick, this render can show a tick's earlier applies before later ones.
+        """
+        if self._debounce_id is not None:
+            self._root.after_cancel(self._debounce_id)
+            self._debounce_id = None
+        self._do_refresh_ui(self._sorted_entries())
+
     def _refresh_ui(self):
         """Debounced UI refresh. High-priority states bypass debounce (FR-043)."""
+        if self._tick_in_flight:
+            self._refresh_deferred = True
+            return
+        self._refresh_deferred = False
         all_entries = self._sorted_entries()
         bypass = any(
             entry.state in (StatusState.PERMISSION_REQUIRED, StatusState.AWAITING_INPUT)
@@ -1436,7 +1674,7 @@ class AppController:
             self._do_refresh_ui(all_entries)
         else:
             had_pending = self._debounce_id is not None
-            if had_pending:
+            if self._debounce_id is not None:
                 self._root.after_cancel(self._debounce_id)
             self._debounce_id = self._root.after(
                 _DEBOUNCE_MS,
@@ -1451,6 +1689,9 @@ class AppController:
     def _do_refresh_ui_deferred(self):
         """Called by debounce timer — re-reads current state to avoid staleness."""
         self._debounce_id = None
+        if self._tick_in_flight:
+            self._refresh_deferred = True
+            return
         self._do_refresh_ui(self._sorted_entries())
 
     def _do_refresh_ui(self, all_entries: list["_SessionEntry"]):
@@ -1487,7 +1728,7 @@ class AppController:
                 remote_host=entry.remote_host,
             )
             for entry in all_entries
-            if (not self._is_concealed(entry) or self._main_window._search_active)
+            if (not self._is_concealed(entry) or self._main_window.reveals_concealed)
             and (self._settings.show_remote or not entry.remote_host)
         ]
         self._main_window.update_sessions(visible_states)

@@ -534,7 +534,7 @@ class TestSandboxVSCodeDisconnect:
     def _close_vscode(controller):
         # No windows reported == VS Code gone. IS_LINUX off keeps D-Bus out.
         with patch("claude_dashboard.config.IS_LINUX", False):
-            controller._update_sandbox_vscode_state()
+            controller._update_sandbox_vscode_state(scan=([], False))
 
     def test_dismissed_ready_stays_idle_after_vscode_closes(self):
         from claude_dashboard.config import StatusState

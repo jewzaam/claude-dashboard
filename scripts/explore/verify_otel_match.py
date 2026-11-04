@@ -99,7 +99,7 @@ def main() -> int:
     )
 
     with patch("claude_dashboard.config.LOCAL_HOSTNAME", args.local_hostname):
-        controller._update_states_from_otel()
+        controller._update_states_from_otel(states=states)
 
     print(f"\njoin result (LOCAL_HOSTNAME={args.local_hostname!r}):")
     failures = 0

@@ -56,9 +56,8 @@ def _poll(
 ) -> None:
     """Run one OTEL poll. `at` is the wall clock the poll sees — advance it
     past REMOTE_METRIC_GRACE_SECONDS to age a missing remote row out."""
-    with patch("claude_dashboard.controller.poll_session_states", return_value=states):
-        with patch("claude_dashboard.controller._now_epoch", return_value=at):
-            controller._update_states_from_otel()
+    with patch("claude_dashboard.controller._now_epoch", return_value=at):
+        controller._update_states_from_otel(states=states)
 
 
 _AFTER_GRACE = 1000.0 + config.REMOTE_METRIC_GRACE_SECONDS

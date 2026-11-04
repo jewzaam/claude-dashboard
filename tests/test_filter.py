@@ -21,6 +21,7 @@ def _make_window():
     win._dragged = False
     win._search_active = False
     win._filter_text = ""
+    win._filter_after_id = None
     win._last_sessions = []
     win._on_ghost_toggle = MagicMock()
     win._on_search_change = MagicMock()
@@ -42,6 +43,7 @@ def test_title_click_clears_filter_and_restores_view():
         win = _make_window()
         win._search_active = True
         win._filter_text = "foo"
+        win._supplied_reveal = True
 
         win._on_title_click(MagicMock())
 
@@ -66,6 +68,7 @@ def test_middle_click_clears_filter_without_toggling_ghosts():
         win = _make_window()
         win._search_active = True
         win._filter_text = "foo"
+        win._supplied_reveal = True
 
         win._on_ghost_toggle_click(MagicMock())
 
@@ -111,23 +114,106 @@ def test_search_click_shows_prompt_before_typing():
         assert win._title_text_label.configure.call_args.kwargs["text"] == "/"
 
 
-def test_enter_search_is_idempotent_and_resupplies_rows_once():
-    """--search must not toggle off; concealed rows are re-supplied on entry only."""
+def test_enter_search_is_idempotent_and_leaves_rows_alone():
+    """--search must not toggle off; an empty query re-supplies and renders nothing."""
     with patch("claude_dashboard.ui.main_window.tk"):
-        win = _make_window()
+        from claude_dashboard.ui.main_window import MainWindow
 
-        win.enter_search()
-        win.enter_search()
+        win = _make_window()
+        with patch.object(MainWindow, "_render_sessions") as render:
+            win.enter_search()
+            win.enter_search()
 
         assert win._search_active is True
-        win._on_search_change.assert_called_once_with()
+        assert win.reveals_concealed is False
+        win._on_search_change.assert_not_called()
+        render.assert_not_called()
         assert win._window.focus_force.call_count == 2
+
+
+def test_empty_search_exit_renders_locally_without_resupply():
+    with patch("claude_dashboard.ui.main_window.tk"):
+        from claude_dashboard.ui.main_window import MainWindow
+
+        win = _make_window()
+        win.enter_search()
+        with patch.object(MainWindow, "_render_sessions"):
+            win._on_filter_clear()
+
+        win._on_search_change.assert_not_called()
+
+
+def test_query_going_nonempty_then_empty_resupplies_each_time():
+    """Concealed rows are revealed only while there is an effective query."""
+    with patch("claude_dashboard.ui.main_window.tk"):
+        from claude_dashboard.ui.main_window import MainWindow
+
+        win = _make_window()
+        win._window.after.side_effect = lambda ms, fn: "id"
+
+        def flush():  # quiet period ends
+            win._window.after.call_args.args[1]()
+
+        with patch.object(MainWindow, "_render_sessions") as render:
+            _key(win, "a")
+            _key(win, "b")
+            flush()
+            win._on_search_change.assert_called_once_with()
+            render.assert_not_called()  # the controller's re-supply renders
+
+            win.update_sessions([])  # that re-supply, with concealed rows
+            assert win._supplied_reveal is True
+            _key(win, "c")
+            flush()
+            assert win._on_search_change.call_count == 1  # still revealed: local render
+            assert render.call_count == 2
+
+            backspace = MagicMock(keysym="BackSpace", char="")
+            win._on_key(backspace)
+            win._on_key(backspace)  # "a": below the minimum, filters nothing
+            flush()
+            assert win._on_search_change.call_count == 2  # hide them again
+
+
+def test_single_character_filters_nothing():
+    """One character matches most of a long list: no render, no re-supply."""
+    with patch("claude_dashboard.ui.main_window.tk"):
+        from claude_dashboard.ui import main_window as mw
+
+        win = _make_window()
+        win._window.after.side_effect = lambda ms, fn: "id"
+        with patch.object(mw.MainWindow, "_render_sessions") as render:
+            _key(win, "a")
+            win._window.after.call_args.args[1]()
+
+        assert mw._FILTER_MIN_CHARS == 2
+        assert win._title_text_label.configure.call_args.kwargs["text"] == "/a"
+        assert win.reveals_concealed is False
+        render.assert_not_called()
+        win._on_search_change.assert_not_called()
+
+
+def test_rows_updated_mid_typing_still_render_below_minimum():
+    """A tick update held back during typing must not be dropped by the skip."""
+    with patch("claude_dashboard.ui.main_window.tk"):
+        from claude_dashboard.ui import main_window as mw
+
+        win = _make_window()
+        win._window.after.side_effect = lambda ms, fn: "id"
+        with patch.object(mw.MainWindow, "_render_sessions") as render:
+            _key(win, "a")
+            win.update_sessions(["row"])  # type: ignore[list-item]
+            win._window.after.call_args.args[1]()
+
+        render.assert_called_once_with(["row"])
 
 
 def test_search_click_while_active_exits():
     with patch("claude_dashboard.ui.main_window.tk"):
         win = _make_window()
         win._search_active = True
+        win._filter_text = "foo"
+        win._supplied_reveal = True
 
         win._on_search_click()
 
@@ -136,23 +222,52 @@ def test_search_click_while_active_exits():
         win._on_search_change.assert_called_once_with()
 
 
-def test_keystroke_renders_immediately():
-    """No debounce — one keystroke, one render off the in-memory rows."""
+def _key(win, char):
+    event = MagicMock()
+    event.keysym = event.char = char
+    win._on_key(event)
+
+
+def test_fast_typing_renders_once_after_quiet_period():
+    """Each key updates the prompt; rows re-render only once typing stops."""
+    with patch("claude_dashboard.ui.main_window.tk"):
+        from claude_dashboard.ui import main_window as mw
+
+        win = _make_window()
+        win._window.after.side_effect = lambda ms, fn: f"id-{ms}"
+
+        with patch.object(mw.MainWindow, "_render_sessions") as render:
+            _key(win, "a")
+            _key(win, "b")
+            assert win._title_text_label.configure.call_args.kwargs["text"] == "/ab"
+            render.assert_not_called()
+            # second key restarted the quiet period
+            assert win._window.after_cancel.call_count == 1
+            ms, flush = win._window.after.call_args.args
+            assert ms == mw._FILTER_QUIET_MS
+
+            win.update_sessions([])  # a tick refresh mid-typing waits too
+            render.assert_not_called()
+
+            flush()
+            render.assert_called_once_with([])
+
+            win.update_sessions([])  # quiet again: ticks render as usual
+            assert render.call_count == 2
+
+
+def test_escape_cancels_pending_filter_render():
     with patch("claude_dashboard.ui.main_window.tk"):
         from claude_dashboard.ui.main_window import MainWindow
 
         win = _make_window()
-        event = MagicMock()
-        event.keysym = "a"
-        event.char = "a"
+        with patch.object(MainWindow, "_render_sessions"):
+            _key(win, "a")
+            win._on_filter_clear()
 
-        with patch.object(MainWindow, "_render_sessions") as render:
-            win._on_key(event)
-
-        assert win._search_active is True
-        assert win._filter_text == "a"
-        render.assert_called_once_with([])
-        win._window.after.assert_not_called()
+        win._window.after_cancel.assert_called_once()
+        assert win._filter_after_id is None
+        assert win._filter_text == ""
 
 
 def _row_click_handler(win):
@@ -190,6 +305,7 @@ def test_row_click_clears_filter():
         win = _make_window()
         win._search_active = True
         win._filter_text = "foo"
+        win._supplied_reveal = True
         win._double_clicked_pid = None
         win._on_row_left_click = MagicMock()
 
@@ -214,3 +330,39 @@ def test_row_click_without_filter_leaves_view_alone():
 
         win._on_row_left_click.assert_called_once()
         win._on_search_change.assert_not_called()
+
+
+def test_typing_while_searching_does_not_refocus():
+    """A key event means the window has focus; no focus_force per keystroke."""
+    with patch("claude_dashboard.ui.main_window.tk"):
+        from claude_dashboard.ui.main_window import MainWindow
+
+        win = _make_window()
+        win._search_active = True
+        with patch.object(MainWindow, "_render_sessions"):
+            for char in "ab":
+                event = MagicMock()
+                event.keysym = event.char = char
+                win._on_key(event)
+
+        assert win._filter_text == "ab"
+        win._window.focus_force.assert_not_called()
+        assert win._title_text_label.configure.call_args.kwargs["text"] == "/ab"
+
+
+def test_row_widgets_configured_only_on_change():
+    from claude_dashboard.ui.main_window import _configure_changed, _set_changed
+
+    row = {"label": MagicMock(), "var": MagicMock()}
+    _configure_changed(row, "label", fg="#fff", font=("Noto Sans", 10))
+    _configure_changed(row, "label", fg="#fff", font=("Noto Sans", 10))
+    _configure_changed(row, "label", fg="#000", font=("Noto Sans", 10))
+    assert [c.kwargs for c in row["label"].configure.call_args_list] == [
+        {"fg": "#fff", "font": ("Noto Sans", 10)},
+        {"fg": "#000"},
+    ]
+
+    _set_changed(row, "var", "~/a")
+    _set_changed(row, "var", "~/a")
+    _set_changed(row, "var", "~/b")
+    assert [c.args for c in row["var"].set.call_args_list] == [("~/a",), ("~/b",)]
