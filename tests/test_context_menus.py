@@ -539,3 +539,130 @@ class TestSandboxRename:
         with patch("claude_dashboard.controller.shutil.which", return_value=None):
             ctrl._run_sandbox_rename("/home/u/sandboxes/old", "new")
         assert "not found" in ctrl._root.after.call_args.args[2]
+
+
+class TestSandboxRenameCarriesRowState:
+    """Rename keeps the row (and its flag) through the recreate, and reopens
+    VS Code if it was open."""
+
+    @staticmethod
+    def _stub(entry: _SessionEntry):
+        from claude_dashboard.controller import AppController
+
+        stub = object.__new__(AppController)
+        stub._root = MagicMock()
+        stub._context_menu = MagicMock()
+        stub._context_menu_open = False
+        stub._sessions = {entry.session.pid: entry}
+        stub._session_id_to_pid = {entry.session.session_id: entry.session.pid}
+        stub._renaming = set()
+        return stub
+
+    @staticmethod
+    def _sandbox(*, flagged: bool, attached: bool) -> _SessionEntry:
+        entry = _SessionEntry(_make_session(pid=-5, cwd="/home/u/sandboxes/old"))
+        entry.sandbox = True
+        entry.flagged = flagged
+        entry.unattached = not attached
+        return entry
+
+    def _click_rename(self, stub, entry):
+        with (
+            patch("claude_dashboard.controller.popup_menu_clamped"),
+            patch("claude_dashboard.controller.simpledialog.askstring", return_value="new"),
+            patch("claude_dashboard.controller.threading.Thread") as thread,
+        ):
+            stub._show_sandbox_context_menu(entry.session, 0, 0)
+            rename = next(
+                c.kwargs["command"]
+                for c in stub._context_menu.add_command.call_args_list
+                if c.kwargs.get("label") == "Rename..."
+            )
+            rename()
+        return thread.call_args.kwargs["args"]
+
+    def test_click_holds_the_row(self):
+        entry = self._sandbox(flagged=True, attached=False)
+        stub = self._stub(entry)
+        args = self._click_rename(stub, entry)
+        assert stub._renaming == {entry.session.session_id}
+        assert args[:3] == (entry.session.session_id, "/home/u/sandboxes/old", "new")
+
+    def test_held_row_survives_recreate_delete_with_flag(self):
+        entry = self._sandbox(flagged=True, attached=False)
+        other = _SessionEntry(_make_session(pid=-9, cwd="/home/u/sandboxes/other"))
+        other.sandbox = True
+        other.session.session_id = "sandbox-other"
+        stub = self._stub(entry)
+        stub._sessions[-9] = other
+        stub._session_id_to_pid["sandbox-other"] = -9
+        stub._renaming.add(entry.session.session_id)
+
+        stub._remove_gone_sandboxes({"sandbox-other"})  # renamed one absent
+        assert stub._sessions[-5] is entry
+        assert entry.flagged is True
+
+        stub._renaming.clear()
+        stub._remove_gone_sandboxes({"sandbox-other"})
+        assert -5 not in stub._sessions
+
+    def test_hold_released_after_rename_even_on_error(self):
+        entry = self._sandbox(flagged=False, attached=False)
+        stub = self._stub(entry)
+        stub._renaming.add(entry.session.session_id)
+        with patch.object(stub, "_run_sandbox_rename", side_effect=RuntimeError("boom")):
+            try:
+                stub._run_tracked_sandbox_rename(
+                    entry.session.session_id, "/home/u/sandboxes/old", "new", False
+                )
+            except RuntimeError:
+                pass
+        _, release, session_id = stub._root.after.call_args.args
+        release(session_id)
+        assert stub._renaming == set()
+
+    def test_reopen_follows_attachment_at_click_time(self):
+        attached = self._sandbox(flagged=False, attached=True)
+        assert self._click_rename(self._stub(attached), attached)[3] is True
+        detached = self._sandbox(flagged=False, attached=False)
+        assert self._click_rename(self._stub(detached), detached)[3] is False
+
+    def test_success_with_reopen_launches_vscode_on_new_dir(self):
+        entry = self._sandbox(flagged=False, attached=True)
+        stub = self._stub(entry)
+        done = MagicMock(returncode=0, stderr="")
+        with (
+            patch("claude_dashboard.controller.shutil.which", return_value="/bin/sandbox.sh"),
+            patch("claude_dashboard.controller.subprocess.run", return_value=done),
+            patch.object(stub, "_launch_vscode") as launch,
+        ):
+            stub._run_sandbox_rename("/home/u/sandboxes/old", "new", True)
+            stub._root.after.call_args.args[1]()  # run the Tk-thread callback
+        launch.assert_called_once_with(folder="/home/u/sandboxes/new")
+
+    def test_failure_with_reopen_does_not_launch(self):
+        entry = self._sandbox(flagged=False, attached=True)
+        stub = self._stub(entry)
+        failed = MagicMock(returncode=1, stderr="boom\n")
+        with (
+            patch("claude_dashboard.controller.shutil.which", return_value="/bin/sandbox.sh"),
+            patch("claude_dashboard.controller.subprocess.run", return_value=failed),
+        ):
+            stub._run_sandbox_rename("/home/u/sandboxes/old", "new", True)
+        assert stub._root.after.call_args.args[1] == stub._show_rename_error
+
+    def test_row_kept_across_recreate_follows_new_dir_and_keeps_flag(self):
+        entry = self._sandbox(flagged=True, attached=False)
+        entry.sandbox_phase = "Ready"
+        stub = self._stub(entry)
+        moved = SessionInfo(
+            pid=0,
+            session_id=entry.session.session_id,
+            cwd="/home/u/sandboxes/new",
+            started_at=0,
+            entrypoint="sandbox",
+            sandbox_phase="Ready",
+        )
+        stub._reconcile_sandbox_phases([moved])
+        assert entry.session.cwd == "/home/u/sandboxes/new"
+        assert entry.flagged is True

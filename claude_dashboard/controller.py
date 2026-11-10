@@ -391,6 +391,9 @@ class AppController:
         self._sandbox_stops: dict[str, subprocess.Popen] = {}
         # Running sandboxes with no host directory, shown in the title bar
         self._zombie_count = 0
+        # sandbox session_ids with a rename subprocess running; their rows
+        # survive recreate's delete step instead of dropping out of the list
+        self._renaming: set[str] = set()
         # session_id -> internal session key for OTEL state correlation
         self._session_id_to_pid: dict[str, int] = {}
         self._first_tick_done = False
@@ -639,30 +642,7 @@ class AppController:
         self._zombie_count = len(read.zombies)
         sandbox_ids = {s.session_id for s in sandbox_sessions}
         self._reconcile_sandbox_phases(sandbox_sessions)
-        # Remove sandboxes that disappeared from openshell list.
-        # Skip removal when discovery returns empty — likely a transient
-        # openshell failure, not all sandboxes vanishing simultaneously.
-        existing_sandbox_count = sum(1 for e in self._sessions.values() if e.sandbox)
-        if sandbox_ids or existing_sandbox_count == 0:
-            gone_pids = [
-                e.session.pid
-                for e in self._sessions.values()
-                if e.sandbox and e.session.session_id not in sandbox_ids
-            ]
-            for pid in gone_pids:
-                entry = self._sessions.get(pid)
-                if entry:
-                    self._session_id_to_pid.pop(entry.session.session_id, None)
-                    logger.info(
-                        "sandbox %s removed (no longer in openshell)",
-                        entry.session.session_id,
-                    )
-                self._sessions.pop(pid, None)
-        elif existing_sandbox_count > 0:
-            logger.debug(
-                "skipping sandbox removal: openshell returned empty but %d sandboxes known",
-                existing_sandbox_count,
-            )
+        self._remove_gone_sandboxes(sandbox_ids)
 
         # 2c. Update sandbox VS Code connection state (~30s)
         if sandbox_vscode_tick:
@@ -966,6 +946,35 @@ class AppController:
             synthetic_pid,
         )
 
+    def _remove_gone_sandboxes(self, sandbox_ids: set[str]) -> None:
+        """Drop rows whose sandbox left the openshell list."""
+        # Remove sandboxes that disappeared from openshell list.
+        # Skip removal when discovery returns empty — likely a transient
+        # openshell failure, not all sandboxes vanishing simultaneously.
+        existing_sandbox_count = sum(1 for e in self._sessions.values() if e.sandbox)
+        if sandbox_ids or existing_sandbox_count == 0:
+            gone_pids = [
+                e.session.pid
+                for e in self._sessions.values()
+                if e.sandbox
+                and e.session.session_id not in sandbox_ids
+                and e.session.session_id not in self._renaming
+            ]
+            for pid in gone_pids:
+                entry = self._sessions.get(pid)
+                if entry:
+                    self._session_id_to_pid.pop(entry.session.session_id, None)
+                    logger.info(
+                        "sandbox %s removed (no longer in openshell)",
+                        entry.session.session_id,
+                    )
+                self._sessions.pop(pid, None)
+        elif existing_sandbox_count > 0:
+            logger.debug(
+                "skipping sandbox removal: openshell returned empty but %d sandboxes known",
+                existing_sandbox_count,
+            )
+
     def _reconcile_sandbox_phases(self, sandbox_sessions: list[SessionInfo]) -> None:
         """Register new sandboxes, track phase changes, signal ones that became Ready.
 
@@ -999,6 +1008,16 @@ class AppController:
                     if ready:
                         became_ready.append(sb_session.session_id)
                 entry.sandbox_profile = sb_session.sandbox_profile
+                # --rename keeps the sb-<hash>, so a row seen across the
+                # recreate keeps its flag; only its directory moves.
+                if entry.session.cwd != sb_session.cwd:
+                    logger.info(
+                        "sandbox %s moved %s -> %s",
+                        sb_session.session_id,
+                        entry.session.cwd,
+                        sb_session.cwd,
+                    )
+                    entry.session.cwd = sb_session.cwd
 
         if not became_ready:
             return
@@ -1928,9 +1947,11 @@ class AppController:
             if not new_name or new_name == sandbox_name:
                 return
             logger.info("sandbox %s rename to %s requested", sandbox_name, new_name)
+            reopen = bool(entry and not entry.unattached)
+            self._renaming.add(session.session_id)
             threading.Thread(
-                target=self._run_sandbox_rename,
-                args=(session.cwd, new_name),
+                target=self._run_tracked_sandbox_rename,
+                args=(session.session_id, session.cwd, new_name, reopen),
                 daemon=True,
             ).start()
 
@@ -1980,13 +2001,30 @@ class AppController:
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.warning("sandbox delete failed name=%s error=%s", sandbox_name, exc)
 
-    def _run_sandbox_rename(self, sandbox_dir: str, new_name: str) -> None:
+    def _run_tracked_sandbox_rename(
+        self, session_id: str, sandbox_dir: str, new_name: str, reopen: bool
+    ) -> None:
+        """Run the rename, then let the row be removed again if openshell drops it.
+
+        The recreate deletes the sandbox before creating it under the same
+        sb-<hash>, so without the hold the row vanishes for minutes mid-rename
+        and its flag goes with it.
+        """
+        try:
+            self._run_sandbox_rename(sandbox_dir, new_name, reopen)
+        finally:
+            self._root.after(0, self._renaming.discard, session_id)
+
+    def _run_sandbox_rename(self, sandbox_dir: str, new_name: str, reopen: bool = False) -> None:
         """Run `sandbox.sh --rename NEW --no-connect` from the sandbox dir in a worker thread.
 
         sandbox.sh takes the old name from its CWD and asks before recreating;
         the dialog was that confirmation, so its "y" goes on stdin. No timeout:
         a recreate takes minutes, and a killed one is finished by the next
         connect (recreate_pending). Failures surface in a dialog, not just the log.
+        reopen: VS Code had the sandbox open at rename time, so open the new
+        directory once the recreate succeeds (the old window points at a path
+        that no longer exists).
         """
         sandbox_sh = shutil.which("sandbox.sh")
         if not sandbox_sh:
@@ -2016,6 +2054,9 @@ class AppController:
             self._root.after(0, self._show_rename_error, tail or f"exit {result.returncode}")
             return
         logger.info("sandbox rename completed dir=%s new=%s", sandbox_dir, new_name)
+        if reopen:
+            new_dir = str(Path(sandbox_dir).parent / new_name)
+            self._root.after(0, lambda: self._launch_vscode(folder=new_dir))
 
     def _show_rename_error(self, detail: str) -> None:
         messagebox.showerror("Rename sandbox failed", detail, parent=self._root)
