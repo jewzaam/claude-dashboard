@@ -34,7 +34,7 @@ The menu depends on the row type. Every menu opens with the row's path as a disa
 
 While a menu is open, the letter in parentheses (underlined in the menu) invokes that item. Every right-click menu has these. Delete Sandbox is X, not D, so a ghost-row Dismiss habit cannot delete a sandbox.
 
-Dismiss removes a ghost row. Delete Sandbox removes the OpenShell sandbox itself. Rename... asks for a new name and runs `sandbox.sh --rename NEW --no-connect` from the sandbox directory. That is a recreate, so the row disappears and comes back under the new name; a failure opens an error dialog with the end of sandbox.sh's output. There is no Hide: an active session is always visible.
+Dismiss removes a ghost row. Delete Sandbox removes the OpenShell sandbox itself. Rename... asks for a new name and runs `sandbox.sh --rename NEW --no-connect` from the sandbox directory. That is a recreate, but the row stays for the whole run: it moves to the new name once the directory is renamed and is kept through the recreate's delete step, so a flag carries over. If VS Code had the sandbox open when you renamed it, VS Code opens the renamed directory once the recreate finishes. A failure opens an error dialog with the end of sandbox.sh's output. There is no Hide: an active session is always visible.
 
 ## Title Bar
 
