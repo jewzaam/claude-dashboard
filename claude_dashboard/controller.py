@@ -15,7 +15,7 @@ import tkinter as tk
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from pathlib import Path
-from tkinter import filedialog
+from tkinter import filedialog, messagebox, simpledialog
 from typing import Any, Callable
 
 
@@ -1890,7 +1890,7 @@ class AppController:
         popup_menu_clamped(self._context_menu, x=x, y=y)
 
     def _show_sandbox_context_menu(self, session: SessionInfo, x: int, y: int):
-        """Live sandbox menu: Clear State, Delete Sandbox."""
+        """Live sandbox menu: Clear State, Rename..., Delete Sandbox."""
         if not self._begin_context_menu():
             return
 
@@ -1916,9 +1916,28 @@ class AppController:
                 daemon=True,
             ).start()
 
+        def rename_sandbox():
+            new_name = simpledialog.askstring(
+                "Rename sandbox",
+                f"Renaming recreates {sandbox_name}: repos and agent state are\n"
+                "downloaded, the container is rebuilt, and every session in it ends.\n\n"
+                "New name:",
+                initialvalue=sandbox_name,
+                parent=self._root,
+            )
+            if not new_name or new_name == sandbox_name:
+                return
+            logger.info("sandbox %s rename to %s requested", sandbox_name, new_name)
+            threading.Thread(
+                target=self._run_sandbox_rename,
+                args=(session.cwd, new_name),
+                daemon=True,
+            ).start()
+
         self._context_menu.add_command(label=f"Sandbox: {cwd_display}", state=tk.DISABLED)
         self._context_menu.add_separator()
         self._context_menu.add_command(label="Clear State", underline=0, command=clear_state)
+        self._context_menu.add_command(label="Rename...", underline=0, command=rename_sandbox)
         # "x", not "d": D is Dismiss on ghost rows, one row over
         self._context_menu.add_command(label="Delete Sandbox", underline=13, command=delete_sandbox)
 
@@ -1960,6 +1979,46 @@ class AppController:
             logger.info("sandbox delete completed name=%s", sandbox_name)
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.warning("sandbox delete failed name=%s error=%s", sandbox_name, exc)
+
+    def _run_sandbox_rename(self, sandbox_dir: str, new_name: str) -> None:
+        """Run `sandbox.sh --rename NEW --no-connect` from the sandbox dir in a worker thread.
+
+        sandbox.sh takes the old name from its CWD and asks before recreating;
+        the dialog was that confirmation, so its "y" goes on stdin. No timeout:
+        a recreate takes minutes, and a killed one is finished by the next
+        connect (recreate_pending). Failures surface in a dialog, not just the log.
+        """
+        sandbox_sh = shutil.which("sandbox.sh")
+        if not sandbox_sh:
+            self._root.after(0, self._show_rename_error, "sandbox.sh not found on PATH")
+            return
+        try:
+            result = subprocess.run(
+                [sandbox_sh, "--rename", new_name, "--no-connect"],
+                cwd=sandbox_dir,
+                input="y\n",
+                capture_output=True,
+                text=True,
+                creationflags=config.SUBPROCESS_FLAGS,
+            )
+        except OSError as exc:
+            self._root.after(0, self._show_rename_error, str(exc))
+            return
+        if result.returncode != 0:
+            logger.warning(
+                "sandbox rename failed dir=%s new=%s rc=%d stderr=%s",
+                sandbox_dir,
+                new_name,
+                result.returncode,
+                result.stderr,
+            )
+            tail = "\n".join(result.stderr.strip().splitlines()[-8:])
+            self._root.after(0, self._show_rename_error, tail or f"exit {result.returncode}")
+            return
+        logger.info("sandbox rename completed dir=%s new=%s", sandbox_dir, new_name)
+
+    def _show_rename_error(self, detail: str) -> None:
+        messagebox.showerror("Rename sandbox failed", detail, parent=self._root)
 
     def _recover_and_open_sandbox(self, os_name: str, folder: str) -> None:
         """One click on an Error row: start the container, then open VS Code."""

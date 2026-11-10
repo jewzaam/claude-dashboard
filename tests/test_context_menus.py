@@ -424,6 +424,7 @@ _SANDBOX_MENU = [
     ("command", "Sandbox: ~/x", -1, "disabled"),
     ("separator", "", -1, "normal"),
     ("command", "Clear State", 0, "normal"),
+    ("command", "Rename...", 0, "normal"),
     ("command", "Delete Sandbox", 13, "normal"),
 ]
 
@@ -436,7 +437,8 @@ class TestMenuShortcuts:
 
         menu = _FakeMenu(_SANDBOX_MENU)
         assert menu_shortcut(menu, "c") == 2
-        assert menu_shortcut(menu, "X") == 3
+        assert menu_shortcut(menu, "r") == 3
+        assert menu_shortcut(menu, "X") == 4
         assert menu_shortcut(menu, "d") is None  # Delete is underlined on x
         assert menu_shortcut(menu, "s") is None  # disabled header
         assert menu_shortcut(_FakeMenu([]), "c") is None
@@ -492,3 +494,48 @@ class TestMenuShortcuts:
             assert main_window._posted_menu is menu
         key_window.focus_force.assert_called_once_with()
         menu.tk_popup.assert_called_once_with(10, 10)
+
+
+class TestSandboxRename:
+    """Rename runs sandbox.sh from the sandbox dir; failures reach a dialog."""
+
+    @staticmethod
+    def _controller():
+        from claude_dashboard.controller import AppController
+
+        ctrl = object.__new__(AppController)
+        ctrl._root = MagicMock()
+        return ctrl
+
+    def test_runs_rename_from_sandbox_dir_with_confirmation(self):
+        ctrl = self._controller()
+        done = MagicMock(returncode=0, stderr="")
+        with (
+            patch("claude_dashboard.controller.shutil.which", return_value="/bin/sandbox.sh"),
+            patch("claude_dashboard.controller.subprocess.run", return_value=done) as run,
+        ):
+            ctrl._run_sandbox_rename("/home/u/sandboxes/old", "new")
+        args, kwargs = run.call_args
+        assert args[0] == ["/bin/sandbox.sh", "--rename", "new", "--no-connect"]
+        assert kwargs["cwd"] == "/home/u/sandboxes/old"
+        assert kwargs["input"] == "y\n"
+        assert "timeout" not in kwargs
+        ctrl._root.after.assert_not_called()
+
+    def test_failure_shows_stderr_tail(self):
+        ctrl = self._controller()
+        failed = MagicMock(returncode=1, stderr="noise\nError: /x/new already exists\n")
+        with (
+            patch("claude_dashboard.controller.shutil.which", return_value="/bin/sandbox.sh"),
+            patch("claude_dashboard.controller.subprocess.run", return_value=failed),
+        ):
+            ctrl._run_sandbox_rename("/home/u/sandboxes/old", "new")
+        _, callback, detail = ctrl._root.after.call_args.args
+        assert callback == ctrl._show_rename_error
+        assert "already exists" in detail
+
+    def test_missing_sandbox_sh_shows_error(self):
+        ctrl = self._controller()
+        with patch("claude_dashboard.controller.shutil.which", return_value=None):
+            ctrl._run_sandbox_rename("/home/u/sandboxes/old", "new")
+        assert "not found" in ctrl._root.after.call_args.args[2]
