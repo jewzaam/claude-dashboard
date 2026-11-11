@@ -542,7 +542,7 @@ class TestSandboxRename:
 
 
 class TestSandboxRenameCarriesRowState:
-    """Rename keeps the row (and its flag) through the recreate, and reopens
+    """Rename keeps the row (and its flag) as its directory moves, and reopens
     VS Code if it was open."""
 
     @staticmethod
@@ -555,7 +555,6 @@ class TestSandboxRenameCarriesRowState:
         stub._context_menu_open = False
         stub._sessions = {entry.session.pid: entry}
         stub._session_id_to_pid = {entry.session.session_id: entry.session.pid}
-        stub._renaming = set()
         return stub
 
     @staticmethod
@@ -581,51 +580,17 @@ class TestSandboxRenameCarriesRowState:
             rename()
         return thread.call_args.kwargs["args"]
 
-    def test_click_holds_the_row(self):
+    def test_click_runs_rename_from_sandbox_dir(self):
         entry = self._sandbox(flagged=True, attached=False)
         stub = self._stub(entry)
         args = self._click_rename(stub, entry)
-        assert stub._renaming == {entry.session.session_id}
-        assert args[:3] == (entry.session.session_id, "/home/u/sandboxes/old", "new")
-
-    def test_held_row_survives_recreate_delete_with_flag(self):
-        entry = self._sandbox(flagged=True, attached=False)
-        other = _SessionEntry(_make_session(pid=-9, cwd="/home/u/sandboxes/other"))
-        other.sandbox = True
-        other.session.session_id = "sandbox-other"
-        stub = self._stub(entry)
-        stub._sessions[-9] = other
-        stub._session_id_to_pid["sandbox-other"] = -9
-        stub._renaming.add(entry.session.session_id)
-
-        stub._remove_gone_sandboxes({"sandbox-other"})  # renamed one absent
-        assert stub._sessions[-5] is entry
-        assert entry.flagged is True
-
-        stub._renaming.clear()
-        stub._remove_gone_sandboxes({"sandbox-other"})
-        assert -5 not in stub._sessions
-
-    def test_hold_released_after_rename_even_on_error(self):
-        entry = self._sandbox(flagged=False, attached=False)
-        stub = self._stub(entry)
-        stub._renaming.add(entry.session.session_id)
-        with patch.object(stub, "_run_sandbox_rename", side_effect=RuntimeError("boom")):
-            try:
-                stub._run_tracked_sandbox_rename(
-                    entry.session.session_id, "/home/u/sandboxes/old", "new", False
-                )
-            except RuntimeError:
-                pass
-        _, release, session_id = stub._root.after.call_args.args
-        release(session_id)
-        assert stub._renaming == set()
+        assert args[:2] == ("/home/u/sandboxes/old", "new")
 
     def test_reopen_follows_attachment_at_click_time(self):
         attached = self._sandbox(flagged=False, attached=True)
-        assert self._click_rename(self._stub(attached), attached)[3] is True
+        assert self._click_rename(self._stub(attached), attached)[2] is True
         detached = self._sandbox(flagged=False, attached=False)
-        assert self._click_rename(self._stub(detached), detached)[3] is False
+        assert self._click_rename(self._stub(detached), detached)[2] is False
 
     def test_success_with_reopen_launches_vscode_on_new_dir(self):
         entry = self._sandbox(flagged=False, attached=True)

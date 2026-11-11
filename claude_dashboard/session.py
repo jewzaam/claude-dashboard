@@ -783,19 +783,19 @@ def discover_sandbox_sessions(*, zombies: list[str] | None = None) -> list[Sessi
         if not name or phase == "Deleting":
             continue
 
-        sandbox_dir: Path | None = None
-
-        # The source.directory label sandbox.sh sets at create time
-        labels = sb.get("labels") or {}
-        source_dir = labels.get("source.directory", "")
-        if source_dir:
-            candidate = SANDBOXES_DIR / source_dir
-            if candidate.is_dir():
-                sandbox_dir = candidate
-
-        # Otherwise the manifest's openshell_name
-        if sandbox_dir is None and name in manifest_map:
-            sandbox_dir = manifest_map[name]
+        # The manifest's openshell_name is authoritative. The source.directory
+        # label is fixed at create and goes stale on `sandbox.sh --rename`
+        # (openshell cannot change labels), so it is only a fallback, and
+        # never for a directory whose manifest names a different container:
+        # that is the old name reused after a rename.
+        sandbox_dir: Path | None = manifest_map.get(name)
+        if sandbox_dir is None:
+            labels = sb.get("labels") or {}
+            source_dir = labels.get("source.directory", "")
+            if source_dir:
+                candidate = SANDBOXES_DIR / source_dir
+                if candidate.is_dir() and candidate not in manifest_map.values():
+                    sandbox_dir = candidate
 
         if sandbox_dir is None:
             logger.info("sandbox %s skipped: no matching directory found", name)

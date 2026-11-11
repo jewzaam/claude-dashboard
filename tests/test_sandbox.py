@@ -287,19 +287,20 @@ class TestDiscoverSandboxSessions:
         assert len(sessions) == 1
         assert sessions[0].cwd == str(sandbox_dir)
 
-    def test_label_takes_priority_over_manifest(self, tmp_path):
-        label_dir = tmp_path / "from-label"
+    def test_manifest_takes_priority_over_label(self, tmp_path):
+        """A renamed sandbox keeps its create-time label; the manifest moved."""
+        label_dir = tmp_path / "old-name"
         label_dir.mkdir()
-        manifest_dir = tmp_path / "from-manifest"
+        manifest_dir = tmp_path / "new-name"
         manifest_dir.mkdir()
-        manifest = {"name": "from-manifest", "openshell_name": "sb-priority123"}
+        manifest = {"name": "new-name", "openshell_name": "sb-priority123"}
         (manifest_dir / "manifest.json").write_text(json.dumps(manifest))
 
         json_out = _make_sandbox_json(
             [
                 {
                     "name": "sb-priority123",
-                    "labels": {"source.directory": "from-label"},
+                    "labels": {"source.directory": "old-name"},
                 }
             ]
         )
@@ -312,7 +313,42 @@ class TestDiscoverSandboxSessions:
             sessions = discover_sandbox_sessions()
 
         assert len(sessions) == 1
-        assert sessions[0].cwd == str(label_dir)
+        assert sessions[0].cwd == str(manifest_dir)
+
+    def test_stale_label_never_claims_another_sandboxes_directory(self, tmp_path):
+        """Rename foo -> bar, then create a new foo: bar's container still
+        carries label foo, and must not map onto the new foo's directory."""
+        bar_dir = tmp_path / "bar"
+        bar_dir.mkdir()
+        (bar_dir / "manifest.json").write_text(
+            json.dumps({"name": "bar", "openshell_name": "sb-0000000000ba"})
+        )
+        foo_dir = tmp_path / "foo"
+        foo_dir.mkdir()
+        (foo_dir / "manifest.json").write_text(
+            json.dumps({"name": "foo", "openshell_name": "sb-000000000f00"})
+        )
+        orphan = {"name": "sb-0000000000aa", "labels": {"source.directory": "foo"}}
+        json_out = _make_sandbox_json(
+            [
+                {"name": "sb-0000000000ba", "labels": {"source.directory": "foo"}},
+                {"name": "sb-000000000f00", "labels": {"source.directory": "foo"}},
+                orphan,
+            ]
+        )
+        mock_result = MagicMock(returncode=0, stdout=json_out)
+
+        with (
+            patch("claude_dashboard.session.SANDBOXES_DIR", tmp_path),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            sessions = discover_sandbox_sessions()
+
+        by_id = {s.session_id: s.cwd for s in sessions}
+        assert by_id == {
+            "sandbox-sb-0000000000ba": str(bar_dir),
+            "sandbox-sb-000000000f00": str(foo_dir),
+        }
 
     def test_skips_hash_name_without_manifest(self, tmp_path):
         json_out = _make_sandbox_json([{"name": "sb-000000000000"}])
